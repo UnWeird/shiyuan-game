@@ -169,9 +169,10 @@ export const GameBoard: React.FC = () => {
         if (deployMachine(deployUnitType, hex)) {
           const unitName = deployUnitType === UnitType.BALLISTA ? '弩车' : '战车';
           addLog(`部署了${unitName}`, 'deploy');
-          setActionMode(null);
-          setDeployUnitType(null);
-          setHighlightedHexes([]);
+          // 保持部署模式，允许连续部署同类型单位
+          // setActionMode(null);
+          // setDeployUnitType(null);
+          // setHighlightedHexes([]);
         }
       } else {
         // 普通单位部署
@@ -180,9 +181,10 @@ export const GameBoard: React.FC = () => {
                           deployUnitType === UnitType.CAVALRY ? '骑兵' :
                           deployUnitType === UnitType.ARCHER ? '弓箭手' : '将军';
           addLog(`部署了${unitName}`, 'deploy');
-          setActionMode(null);
-          setDeployUnitType(null);
-          setHighlightedHexes([]);
+          // 保持部署模式，允许连续部署同类型单位
+          // setActionMode(null);
+          // setDeployUnitType(null);
+          // setHighlightedHexes([]);
         }
       }
       return;

@@ -90,10 +90,7 @@ export const ArmyBuild: React.FC = () => {
     if (currentPlayer === Player.PLAYER1) {
       // 切换到玩家2配兵
       useGameStore.setState({ currentPlayer: Player.PLAYER2 });
-      // 重置输入
-      setInfantry(player2Army.infantry);
-      setCavalry(player2Army.cavalry);
-      setArcher(player2Army.archer);
+      // useEffect 会自动加载 player2Army 的配置
     } else if (currentPlayer === Player.PLAYER2) {
       // 两个玩家都配好了，重置为玩家1，进入设置大本营阶段
       useGameStore.setState({ currentPlayer: Player.PLAYER1 });

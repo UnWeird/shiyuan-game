@@ -125,18 +125,6 @@ export const GameBoard: React.FC = () => {
   // 获取当前玩家的配置
   const army = currentPlayer === Player.PLAYER1 ? player1Army : player2Army;
 
-  // 计算可部署的起始区域
-  const deployableHexes = useMemo(() => {
-    if (actionMode !== 'deploy') return [];
-    const allHexes = generateHexMap(5);
-    const playerSide = currentPlayer === Player.PLAYER1 ? 'top' : 'bottom';
-    return allHexes.filter(hex => {
-      const inStartZone = isInStartZone(hex, playerSide);
-      const occupied = Object.values(units).some(u => hexEquals(u.position, hex));
-      return inStartZone && !occupied;
-    });
-  }, [actionMode, currentPlayer, units]);
-
   // 开始部署阶段时掷骰子
   const handleRollDice = () => {
     rollDice(currentPlayer);
@@ -394,7 +382,17 @@ export const GameBoard: React.FC = () => {
   const handleStartDeploy = (unitType: UnitType) => {
     setDeployUnitType(unitType);
     setActionMode('deploy');
-    setHighlightedHexes(deployableHexes);
+
+    // 计算可部署区域
+    const allHexes = generateHexMap(5);
+    const playerSide = currentPlayer === Player.PLAYER1 ? 'top' : 'bottom';
+    const availableHexes = allHexes.filter(hex => {
+      const inStartZone = isInStartZone(hex, playerSide);
+      const occupied = Object.values(units).some(u => hexEquals(u.position, hex));
+      return inStartZone && !occupied;
+    });
+
+    setHighlightedHexes(availableHexes);
     selectUnit(null);
   };
 

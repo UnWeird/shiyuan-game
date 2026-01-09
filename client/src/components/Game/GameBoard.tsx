@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { HexCoord, UnitType, Direction, GamePhase, Player, GeneralType } from '../../types';
+import { HexCoord, UnitType, Direction, GamePhase, Player } from '../../types';
 import type { Unit } from '../../types';
 import { useGameStore } from '../../stores/gameStore';
 import { useGameActions } from '../../hooks/useGameActions';
@@ -43,7 +43,7 @@ export const GameBoard: React.FC = () => {
     rollDice,
     endTurn,
     modifyDiceResult,
-    useRerollToken,
+    rerollDice,
     updateUnit,
     removeUnit,
     consumeActionPoint,
@@ -490,7 +490,7 @@ export const GameBoard: React.FC = () => {
 
     if (rerollMode) {
       // 重投模式：直接重投该骰子
-      useRerollToken(player, diceIndex);
+      rerollDice(player, diceIndex);
       addLog(`重投骰子 #${diceIndex + 1}`, 'info');
       setRerollMode(false);
       return;

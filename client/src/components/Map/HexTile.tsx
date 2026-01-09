@@ -1,6 +1,6 @@
 import React from 'react';
 import { HexCoord } from '../../types';
-import { hexToPixel, hexCorners, isInStartZone, isInBattleZone } from '../../utils/hexUtils';
+import { hexToPixel, hexCorners } from '../../utils/hexUtils';
 
 interface HexTileProps {
   hex: HexCoord;

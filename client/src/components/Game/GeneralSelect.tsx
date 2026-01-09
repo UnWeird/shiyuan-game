@@ -12,7 +12,6 @@ interface GeneralCardProps {
 }
 
 const GeneralCard: React.FC<GeneralCardProps> = ({
-  general,
   name,
   ability,
   passive,

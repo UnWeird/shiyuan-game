@@ -39,7 +39,7 @@ interface GameStore extends GameState {
 
   // 重投次数操作
   addRerollToken: (player: Player) => void;
-  useRerollToken: (player: Player, diceIndex: number) => void;
+  rerollDice: (player: Player, diceIndex: number) => void;
 
   // 回合控制
   nextTurn: () => void;
@@ -174,7 +174,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   removeUnit: (unitId: string) => {
     set(state => {
-      const { [unitId]: _, ...rest } = state.units;
+      const { [unitId]: _removed, ...rest } = state.units;
       return { units: rest };
     });
   },
@@ -332,7 +332,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
-  useRerollToken: (player: Player, diceIndex: number) => {
+  rerollDice: (player: Player, diceIndex: number) => {
     const state = get();
 
     // 检查是否有重投次数

@@ -3,6 +3,17 @@ import type { GameState, HexCoord, Unit } from '../types';
 import { GamePhase, Player, UnitType, GeneralType } from '../types';
 
 interface GameStore extends GameState {
+  // 在线模式相关
+  isOnlineMode: boolean;
+  myPlayerRole: 'player1' | 'player2' | null;
+
+  // 无双扇形攻击状态（需要显式声明以覆盖可选类型）
+  wushuangFanAttackActive: boolean;
+  wushuangAttackingPlayer: string;
+  wushuangAttackPhase: 'select-direction' | 'second-roll' | 'second-attack' | 'third-roll' | 'third-attack';
+  wushuangSelectedDirection: number | null;
+  wushuangDiceRolls: number[];
+
   // 初始化游戏
   initGame: () => void;
 
@@ -93,13 +104,34 @@ const initialState: GameState = {
   player1KilledThisTurn: false,
   player2KilledThisTurn: false,
 
+  player1DeployedValue: 0,
+  player2DeployedValue: 0,
+
   selectedUnitId: null,
+
+  // 无双扇形攻击状态
+  wushuangFanAttackActive: false,
+  wushuangAttackingPlayer: '',
+  wushuangAttackPhase: 'select-direction',
+  wushuangSelectedDirection: null,
+  wushuangDiceRolls: [],
 
   history: [],
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
   ...initialState,
+
+  // 在线模式初始值
+  isOnlineMode: false,
+  myPlayerRole: null,
+
+  // 无双扇形攻击状态初始值
+  wushuangFanAttackActive: false,
+  wushuangAttackingPlayer: '',
+  wushuangAttackPhase: 'select-direction',
+  wushuangSelectedDirection: null,
+  wushuangDiceRolls: [],
 
   initGame: () => {
     set(initialState);

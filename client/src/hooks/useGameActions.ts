@@ -125,12 +125,24 @@ export const useGameActions = () => {
     return possibleMoves.filter(hex => {
       if (hexEquals(hex, unit.position)) return false;
 
-      // 检查是否有其他单位占用
-      const occupied = Object.values(units).some(u =>
+      // 检查是否有其他单位的核心位置占用
+      const occupiedByCore = Object.values(units).some(u =>
         hexEquals(u.position, hex) && u.id !== unit.id
       );
 
-      return !occupied && hexDistance(unit.position, hex) <= range;
+      if (occupiedByCore) return false;
+
+      // 检查是否有机关单位的体积占用（弩车和战车占用多个格子）
+      const occupiedByMachine = Object.values(units).some(u => {
+        if (u.id === unit.id) return false;
+        if (u.type !== UnitType.BALLISTA && u.type !== UnitType.CHARIOT) return false;
+
+        const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
+        const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+        return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
+      });
+
+      return !occupiedByMachine && hexDistance(unit.position, hex) <= range;
     });
   };
 
@@ -312,10 +324,10 @@ export const useGameActions = () => {
 
     consumeActionPoint(currentPlayer);
 
-    // 检查是否触碰到敌方大本营
+    // 检查是否触碰到敌方大本营（战车除外）
     const enemyBase = unit.owner === Player.PLAYER1 ? player2Base : player1Base;
-    if (enemyBase && hexEquals(to, enemyBase)) {
-      // 胜利！
+    if (enemyBase && hexEquals(to, enemyBase) && unit.type !== UnitType.CHARIOT) {
+      // 非战车单位触底，直接获胜！
       alert(`${unit.owner === Player.PLAYER1 ? '玩家1' : '玩家2'} 获胜！`);
       setPhase('end' as any);
     }
@@ -944,8 +956,83 @@ export const useGameActions = () => {
     // 战车移动到目标位置
     const newHp = chariot.hp - killedCount;
 
+    // 检查是否触底（到达敌方大本营）
+    const enemyBase = chariot.owner === Player.PLAYER1 ? player2Base : player1Base;
+    const reachedBase = enemyBase && hexEquals(to, enemyBase);
+
+    if (reachedBase) {
+      // 战车触底：崩解为2个可行动的步兵，剩余血量转为行动点
+      removeUnit(chariot.id);
+
+      // 将剩余血量转为行动点
+      const actionPoints = currentPlayer === Player.PLAYER1 ? player1ActionPoints : player2ActionPoints;
+      if (currentPlayer === Player.PLAYER1) {
+        useGameStore.setState({ player1ActionPoints: actionPoints + newHp });
+      } else {
+        useGameStore.setState({ player2ActionPoints: actionPoints + newHp });
+      }
+
+      // 生成2个满血可行动步兵
+      const infantry1: Unit = {
+        id: `unit-${Date.now()}-${Math.random()}`,
+        type: UnitType.INFANTRY,
+        owner: currentPlayer,
+        position: to,
+        hp: 2,
+        maxHp: 2,
+        direction: chariot.direction,
+        actionsThisTurn: 0, // 可以行动
+        hasMoved: false,
+        hasAttacked: false,
+        isFlipped: false,
+      };
+
+      const neighbors = hexNeighbors(to);
+      const emptyPos = neighbors.find(pos => {
+        // 检查是否有单位占用
+        const hasUnit = Object.values(units).some(u => hexEquals(u.position, pos));
+        if (hasUnit) return false;
+
+        // 检查是否被机关单位占据
+        const occupiedByMachine = Object.values(units).some(u => {
+          if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
+            const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
+            const occupied = getMachineOccupiedHexes(u.position, machineType);
+            return occupied.some(hex => hexEquals(hex, pos));
+          }
+          return false;
+        });
+
+        return !occupiedByMachine;
+      });
+
+      if (emptyPos) {
+        const infantry2: Unit = {
+          id: `unit-${Date.now()}-${Math.random()}-2`,
+          type: UnitType.INFANTRY,
+          owner: currentPlayer,
+          position: emptyPos,
+          hp: 2,
+          maxHp: 2,
+          direction: chariot.direction,
+          actionsThisTurn: 0, // 可以行动
+          hasMoved: false,
+          hasAttacked: false,
+          isFlipped: false,
+        };
+        addUnit(infantry1);
+        addUnit(infantry2);
+      } else {
+        // 没有空位，只生成1个步兵
+        addUnit(infantry1);
+      }
+
+      consumeActionPoint(currentPlayer);
+      return true;
+    }
+
     if (newHp <= 0) {
-      // 战车崩毁（血量≤0），变为2个满血步兵
+      // 战车崩毁（血量≤0，被击杀崩毁），变为2个不可行动的满血步兵
       removeUnit(chariot.id);
 
       // 战车崩毁奖励：如果碾死过人，神机将军的拥有者获得1次重投机会
@@ -956,7 +1043,7 @@ export const useGameActions = () => {
         useGameStore.getState().addRerollToken(currentPlayer);
       }
 
-      // 生成2个满血步兵
+      // 生成2个满血步兵（本回合不能再行动）
       const infantry1: Unit = {
         id: `unit-${Date.now()}-${Math.random()}`,
         type: UnitType.INFANTRY,

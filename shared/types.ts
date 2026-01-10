@@ -146,12 +146,15 @@ export interface GameState {
   player1KilledThisTurn: boolean;
   player2KilledThisTurn: boolean;
 
-  // 部署价值（用于显示和调试）
-  player1DeployedValue: number;
-  player2DeployedValue: number;
-
   // 选中的单位
   selectedUnitId: string | null;
+
+  // 无双扇形攻击状态
+  wushuangFanAttackActive?: boolean;
+  wushuangAttackingPlayer?: string;
+  wushuangAttackPhase?: 'select-direction' | 'second-roll' | 'second-attack' | 'third-roll' | 'third-attack';
+  wushuangSelectedDirection?: number | null;
+  wushuangDiceRolls?: number[];
 
   // 历史记录 (用于回放和撤销)
   history: GameState[];

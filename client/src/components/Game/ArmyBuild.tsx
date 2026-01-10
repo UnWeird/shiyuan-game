@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Player } from '../../types';
 import { useGameStore } from '../../stores/gameStore';
+import { colyseusService } from '../../services/ColyseusService';
 
 const UNIT_COSTS = {
   infantry: 0.1,  // 一角
@@ -53,24 +54,53 @@ export const ArmyBuild: React.FC = () => {
     player2Army,
     setArmy,
     nextPhase,
+    isOnlineMode,
+    myPlayerRole,
   } = useGameStore();
 
   const [infantry, setInfantry] = useState(0);
   const [cavalry, setCavalry] = useState(0);
   const [archer, setArcher] = useState(0);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
 
-  // 加载当前玩家的配置
+  // 获取我的军队和对手的军队
+  const myArmy = isOnlineMode && myPlayerRole
+    ? (myPlayerRole === 'player1' ? player1Army : player2Army)
+    : (currentPlayer === Player.PLAYER1 ? player1Army : player2Army);
+
+  const opponentArmy = isOnlineMode && myPlayerRole
+    ? (myPlayerRole === 'player1' ? player2Army : player1Army)
+    : null;
+
+  // 加载当前配置（仅在初始化或角色改变时加载）
   useEffect(() => {
-    if (currentPlayer === Player.PLAYER1) {
-      setInfantry(player1Army.infantry);
-      setCavalry(player1Army.cavalry);
-      setArcher(player1Army.archer);
-    } else if (currentPlayer === Player.PLAYER2) {
-      setInfantry(player2Army.infantry);
-      setCavalry(player2Army.cavalry);
-      setArcher(player2Army.archer);
+    if (isOnlineMode && myPlayerRole) {
+      // 在线模式：只在初始化时加载自己的配置
+      if (infantry === 0 && cavalry === 0 && archer === 0) {
+        // 只在当前配置为空时才从状态加载
+        setInfantry(myArmy.infantry);
+        setCavalry(myArmy.cavalry);
+        setArcher(myArmy.archer);
+      }
+
+      // 检查是否已提交（配置不为0说明已提交）
+      if (myArmy.infantry > 0 || myArmy.cavalry > 0 || myArmy.archer > 0) {
+        setHasSubmitted(true);
+      }
+    } else {
+      // 单机模式：根据当前玩家加载
+      if (currentPlayer === Player.PLAYER1) {
+        setInfantry(player1Army.infantry);
+        setCavalry(player1Army.cavalry);
+        setArcher(player1Army.archer);
+      } else if (currentPlayer === Player.PLAYER2) {
+        setInfantry(player2Army.infantry);
+        setCavalry(player2Army.cavalry);
+        setArcher(player2Army.archer);
+      }
     }
-  }, [currentPlayer, player1Army, player2Army]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPlayer, isOnlineMode, myPlayerRole]); // 只依赖这些关键变量，不依赖army状态
 
   const totalCost = infantry * UNIT_COSTS.infantry +
                     cavalry * UNIT_COSTS.cavalry +
@@ -85,20 +115,30 @@ export const ArmyBuild: React.FC = () => {
   };
 
   const handleConfirm = () => {
-    setArmy(currentPlayer, infantry, cavalry, archer);
+    if (isOnlineMode) {
+      // 在线模式：发送给服务器
+      colyseusService.buildArmy({ infantry, cavalry, archer });
+      setHasSubmitted(true);
+    } else {
+      // 单机模式：原有逻辑
+      setArmy(currentPlayer, infantry, cavalry, archer);
 
-    if (currentPlayer === Player.PLAYER1) {
-      // 切换到玩家2配兵
-      useGameStore.setState({ currentPlayer: Player.PLAYER2 });
-      // useEffect 会自动加载 player2Army 的配置
-    } else if (currentPlayer === Player.PLAYER2) {
-      // 两个玩家都配好了，重置为玩家1，进入设置大本营阶段
-      useGameStore.setState({ currentPlayer: Player.PLAYER1 });
-      nextPhase();
+      if (currentPlayer === Player.PLAYER1) {
+        // 切换到玩家2配兵
+        useGameStore.setState({ currentPlayer: Player.PLAYER2 });
+      } else if (currentPlayer === Player.PLAYER2) {
+        // 两个玩家都配好了，重置为玩家1，进入设置大本营阶段
+        useGameStore.setState({ currentPlayer: Player.PLAYER1 });
+        nextPhase();
+      }
     }
   };
 
-  const canConfirm = Math.abs(totalCost - BUDGET) < 0.01; // 精确使用预算
+  const canConfirm = Math.abs(totalCost - BUDGET) < 0.01 && !hasSubmitted; // 精确使用预算且未提交
+
+  // 判断对手是否已配置
+  const opponentDone = opponentArmy && (opponentArmy.infantry > 0 || opponentArmy.cavalry > 0 || opponentArmy.archer > 0);
+  const waitingForOpponent = isOnlineMode && hasSubmitted && !opponentDone;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex items-center justify-center p-8">
@@ -106,8 +146,16 @@ export const ArmyBuild: React.FC = () => {
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold mb-2">配置部队</h1>
           <p className="text-xl text-gray-600">
-            {currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 请分配你的 4 元预算
+            {isOnlineMode
+              ? `${myPlayerRole === 'player1' ? '玩家 1' : '玩家 2'} (你) 请分配你的 4 元预算`
+              : `${currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 请分配你的 4 元预算`
+            }
           </p>
+          {isOnlineMode && opponentArmy && (
+            <p className="text-sm text-gray-500 mt-2">
+              对手配兵状态: {opponentDone ? '✅ 已完成' : '⏳ 配置中...'}
+            </p>
+          )}
         </div>
 
         {/* 推荐配置 */}
@@ -155,14 +203,16 @@ export const ArmyBuild: React.FC = () => {
               <div className="flex items-center gap-4">
                 <button
                   onClick={() => setInfantry(Math.max(0, infantry - 1))}
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                  disabled={hasSubmitted}
+                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   -
                 </button>
                 <span className="text-2xl font-bold w-12 text-center">{infantry}</span>
                 <button
                   onClick={() => setInfantry(infantry + 1)}
-                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                  disabled={hasSubmitted}
+                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   +
                 </button>
@@ -183,14 +233,16 @@ export const ArmyBuild: React.FC = () => {
               <div className="flex items-center gap-4">
                 <button
                   onClick={() => setCavalry(Math.max(0, cavalry - 1))}
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                  disabled={hasSubmitted}
+                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   -
                 </button>
                 <span className="text-2xl font-bold w-12 text-center">{cavalry}</span>
                 <button
                   onClick={() => setCavalry(cavalry + 1)}
-                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                  disabled={hasSubmitted}
+                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   +
                 </button>
@@ -211,14 +263,16 @@ export const ArmyBuild: React.FC = () => {
               <div className="flex items-center gap-4">
                 <button
                   onClick={() => setArcher(Math.max(0, archer - 1))}
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                  disabled={hasSubmitted}
+                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   -
                 </button>
                 <span className="text-2xl font-bold w-12 text-center">{archer}</span>
                 <button
                   onClick={() => setArcher(archer + 1)}
-                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                  disabled={hasSubmitted}
+                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   +
                 </button>
@@ -228,7 +282,22 @@ export const ArmyBuild: React.FC = () => {
         </div>
 
         <div className="flex flex-col items-center gap-4">
-          {!canConfirm && (
+          {waitingForOpponent && (
+            <div className="text-center">
+              <div className="flex justify-center mb-4">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+              </div>
+              <p className="text-blue-600 font-semibold">
+                ✅ 你的配置已提交！等待对手完成配置...
+              </p>
+            </div>
+          )}
+          {hasSubmitted && opponentDone && (
+            <p className="text-green-600 font-semibold">
+              ✅ 双方配置完成！即将进入大本营设置阶段...
+            </p>
+          )}
+          {!canConfirm && !hasSubmitted && (
             <p className="text-red-500 font-semibold">
               {remaining < 0 ? '预算超支！' : '请用完所有预算！'}
             </p>
@@ -244,7 +313,10 @@ export const ArmyBuild: React.FC = () => {
               }
             `}
           >
-            {currentPlayer === Player.PLAYER1 ? '确认配置（玩家2配兵）' : '确认配置（设置大本营）'}
+            {isOnlineMode
+              ? (hasSubmitted ? '已提交配置' : '确认配置')
+              : (currentPlayer === Player.PLAYER1 ? '确认配置（玩家2配兵）' : '确认配置（设置大本营）')
+            }
           </button>
         </div>
       </div>

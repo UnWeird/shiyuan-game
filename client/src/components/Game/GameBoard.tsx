@@ -1975,16 +1975,16 @@ export const GameBoard: React.FC = () => {
                 <button
                   className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
                   onClick={() => handleStartDeploy(UnitType.INFANTRY)}
-                  disabled={!isMyTurn || army.infantry <= 0 || currentActionPoints < 1}
+                  disabled={!isMyTurn || deployedCounts.infantry >= army.infantry || currentActionPoints < 1}
                 >
-                  步兵 ({army.infantry}/{army.infantry + deployedCounts.infantry}) {!isMyTurn ? '(非你的回合)' : ''}
+                  步兵 ({deployedCounts.infantry}/{army.infantry}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
                   className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
                   onClick={() => handleStartDeploy(UnitType.CAVALRY)}
-                  disabled={!isMyTurn || army.cavalry <= 0 || currentActionPoints < 1}
+                  disabled={!isMyTurn || deployedCounts.cavalry >= army.cavalry || currentActionPoints < 1}
                 >
-                  骑兵 ({army.cavalry}/{army.cavalry + deployedCounts.cavalry}) {!isMyTurn ? '(非你的回合)' : ''}
+                  骑兵 ({deployedCounts.cavalry}/{army.cavalry}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
                   className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"

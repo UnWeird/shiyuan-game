@@ -3,6 +3,7 @@ import { UnitType, Direction, GamePhase, Player } from '../../types';
 import type { Unit, HexCoord } from '../../types';
 import { useGameStore } from '../../stores/gameStore';
 import { useGameActions } from '../../hooks/useGameActions';
+import { useIsMobile } from '../../hooks/useMobile';
 import { HexMap } from '../Map/HexMap';
 import { UnitPiece } from '../Unit/UnitPiece';
 import { BattleLog } from '../UI/BattleLog';
@@ -91,6 +92,9 @@ export const GameBoard: React.FC = () => {
   const [shenjiAbilityActive, setShenjiAbilityActive] = useState(false);
   const [selectedDiceIndex, setSelectedDiceIndex] = useState<number | null>(null);
   const [rerollMode, setRerollMode] = useState(false);
+
+  // 移动端检测
+  const isMobile = useIsMobile();
   // 扇形攻击本地状态（单机模式使用）
   const [localWushuangFanAttackActive, setLocalWushuangFanAttackActive] = useState(false);
   const [localWushuangSelectedDirection, setLocalWushuangSelectedDirection] = useState<Direction | null>(null);
@@ -1344,12 +1348,19 @@ export const GameBoard: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-4">
+        <div className={isMobile ? "flex flex-col gap-4" : "grid grid-cols-4 gap-4"}>
           {/* 地图区域 */}
-          <div className="col-span-3 bg-white rounded-lg shadow-lg p-4" style={{ height: '700px', position: 'relative' }}>
+          <div
+            className={isMobile ? "bg-white rounded-lg shadow-lg p-2" : "col-span-3 bg-white rounded-lg shadow-lg p-4"}
+            style={{
+              height: isMobile ? '400px' : '700px',
+              position: 'relative',
+              touchAction: 'none' // 防止移动端滚动干扰
+            }}
+          >
             <HexMap
               radius={5}
-              hexSize={40}
+              hexSize={isMobile ? 30 : 40}
               onHexClick={handleHexClick}
               highlightedHexes={highlightedHexes}
             />
@@ -1359,7 +1370,7 @@ export const GameBoard: React.FC = () => {
               height="100%"
               viewBox={(() => {
                 const radius = 5;
-                const hexSize = 40;
+                const hexSize = isMobile ? 30 : 40;
                 const maxX = hexSize * Math.sqrt(3) * radius;
                 const maxY = hexSize * 1.5 * radius;
                 const padding = hexSize;
@@ -1369,7 +1380,14 @@ export const GameBoard: React.FC = () => {
                 const height = (maxY + padding) * 2;
                 return `${minX} ${minY} ${width} ${height}`;
               })()}
-              style={{ position: 'absolute', top: '1rem', left: '1rem', width: 'calc(100% - 2rem)', height: 'calc(100% - 2rem)', pointerEvents: 'none' }}
+              style={{
+                position: 'absolute',
+                top: isMobile ? '0.5rem' : '1rem',
+                left: isMobile ? '0.5rem' : '1rem',
+                width: isMobile ? 'calc(100% - 1rem)' : 'calc(100% - 2rem)',
+                height: isMobile ? 'calc(100% - 1rem)' : 'calc(100% - 2rem)',
+                pointerEvents: 'none'
+              }}
             >
               {/* 渲染射击路径 */}
               {actionMode === 'rotate' && rotationPaths.size > 0 && (() => {
@@ -1397,13 +1415,13 @@ export const GameBoard: React.FC = () => {
                   return (
                     <g key={dir}>
                       {path.map((hex, i) => {
-                        const pixel = hexToPixel(hex, 40);
+                        const pixel = hexToPixel(hex, isMobile ? 30 : 40);
                         return (
                           <circle
                             key={`${hex.q}-${hex.r}-${hex.s}`}
                             cx={pixel.x}
                             cy={pixel.y}
-                            r={15}
+                            r={isMobile ? 11 : 15}
                             fill={pathColors[index]}
                             opacity={0.4}
                             style={{ pointerEvents: 'auto', cursor: 'pointer' }}
@@ -1421,7 +1439,7 @@ export const GameBoard: React.FC = () => {
 
               {/* 渲染机关单位占用的格子 */}
               {Object.values(units).filter(u => u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT).map(unit => {
-                const hexSize = 40;
+                const hexSize = isMobile ? 30 : 40;
                 const machineTypeStr = unit.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
                 const occupiedHexes = getMachineOccupiedHexes(unit.position, machineTypeStr);
 
@@ -1435,7 +1453,7 @@ export const GameBoard: React.FC = () => {
                           key={`${unit.id}-hex-${index}`}
                           cx={pixel.x}
                           cy={pixel.y}
-                          r={12}
+                          r={isMobile ? 9 : 12}
                           fill={unit.owner === Player.PLAYER1 ? '#fbbf24' : '#60a5fa'}
                         />
                       );
@@ -1448,7 +1466,7 @@ export const GameBoard: React.FC = () => {
                 <g key={unit.id} style={{ pointerEvents: 'auto' }}>
                   <UnitPiece
                     unit={unit}
-                    hexSize={40}
+                    hexSize={isMobile ? 30 : 40}
                     onClick={() => handleUnitClick(unit.id)}
                     isSelected={unit.id === selectedUnitId}
                   />

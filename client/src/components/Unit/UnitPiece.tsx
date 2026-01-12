@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useCallback } from 'react';
 import { Unit, UnitType, Player, Direction } from '../../types';
 import { hexToPixel } from '../../utils/hexUtils';
 
@@ -17,6 +17,36 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
 }) => {
   const center = hexToPixel(unit.position, hexSize);
   const size = hexSize * 0.7; // 增大单位尺寸
+
+  // 处理触摸事件（移动端兜底）
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (!onClick) return;
+    const touch = e.touches[0];
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  }, [onClick]);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (!onClick || !touchStartRef.current) return;
+
+    const touch = e.changedTouches[0];
+    const deltaX = Math.abs(touch.clientX - touchStartRef.current.x);
+    const deltaY = Math.abs(touch.clientY - touchStartRef.current.y);
+
+    // 只有在没有明显滑动的情况下才触发点击（防止误触）
+    if (deltaX < 10 && deltaY < 10) {
+      e.preventDefault(); // 防止触发 click 事件导致双重触发
+      onClick(unit);
+    }
+
+    touchStartRef.current = null;
+  }, [onClick, unit]);
+
+  const handleClick = useCallback(() => {
+    if (!onClick) return;
+    onClick(unit);
+  }, [onClick, unit]);
 
   // 根据玩家确定颜色
   const getUnitColor = () => {
@@ -305,7 +335,15 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
   };
 
   return (
-    <g onClick={() => onClick?.(unit)} style={{ cursor: onClick ? 'pointer' : 'default' }}>
+    <g
+      onClick={handleClick}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      style={{
+        cursor: onClick ? 'pointer' : 'default',
+        touchAction: 'none', // 防止默认的触摸行为（如滚动）
+      }}
+    >
       {/* 选中高亮 */}
       {isSelected && (
         <>

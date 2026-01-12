@@ -199,9 +199,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   addUnit: (unit: Unit) => {
-    set(state => ({
-      units: { ...state.units, [unit.id]: unit },
-    }));
+    set(state => {
+      // 计算单位价值（元）
+      let unitValue = 0;
+      if (unit.type === UnitType.INFANTRY) unitValue = 0.1;
+      else if (unit.type === UnitType.CAVALRY) unitValue = 0.2;
+      else if (unit.type === UnitType.ARCHER) unitValue = 0.5;
+      else if (unit.type === UnitType.BALLISTA) unitValue = 0.9;
+      else if (unit.type === UnitType.CHARIOT) unitValue = 0.6;
+      // 将军不计入部署价值
+
+      // 累加部署价值（不会因单位死亡而减少）
+      const newState: any = {
+        units: { ...state.units, [unit.id]: unit },
+      };
+
+      if (unit.owner === Player.PLAYER1 && unit.type !== UnitType.GENERAL) {
+        newState.player1DeployedValue = state.player1DeployedValue + unitValue;
+      } else if (unit.owner === Player.PLAYER2 && unit.type !== UnitType.GENERAL) {
+        newState.player2DeployedValue = state.player2DeployedValue + unitValue;
+      }
+
+      return newState;
+    });
   },
 
   removeUnit: (unitId: string) => {
@@ -439,20 +459,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     // 回合1结束: 玩家1部署结束,切换到玩家2
     if (state.turn === 1 && state.currentPlayer === Player.PLAYER1) {
-      // 计算玩家1部署的数额来决定玩家2的骰子数
-      const player1DeployedValue = Object.values(state.units)
-        .filter(u => u.owner === Player.PLAYER1 && u.type !== UnitType.GENERAL)
-        .reduce((sum, u) => {
-          if (u.type === UnitType.INFANTRY) return sum + 0.1;
-          if (u.type === UnitType.CAVALRY) return sum + 0.2;
-          if (u.type === UnitType.ARCHER) return sum + 0.5;
-          if (u.type === UnitType.BALLISTA) return sum + 0.9;
-          if (u.type === UnitType.CHARIOT) return sum + 0.6;
-          return sum;
-        }, 0);
-
       // 部署阶段特殊规则：先手者每1元给后手者1颗骰子
-      const player2DiceCount = Math.floor(player1DeployedValue);
+      // 使用累加的部署价值（即使单位死亡也不减少）
+      const player2DiceCount = Math.floor(state.player1DeployedValue);
 
       set({
         currentPlayer: Player.PLAYER2,
@@ -481,17 +490,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const newPhase = GamePhase.ACTION;
 
     // 计算下一个玩家的骰子数量 (保底1颗 + 每2元加1颗)
+    // 使用累加的部署价值（即使单位死亡也不减少）
     const calculateDiceCount = (player: Player) => {
-      const deployedValue = Object.values(state.units)
-        .filter(u => u.owner === player && u.type !== UnitType.GENERAL)
-        .reduce((sum, u) => {
-          if (u.type === UnitType.INFANTRY) return sum + 0.1;
-          if (u.type === UnitType.CAVALRY) return sum + 0.2;
-          if (u.type === UnitType.ARCHER) return sum + 0.5;
-          if (u.type === UnitType.BALLISTA) return sum + 0.9;
-          if (u.type === UnitType.CHARIOT) return sum + 0.6;
-          return sum;
-        }, 0);
+      const deployedValue = player === Player.PLAYER1
+        ? state.player1DeployedValue
+        : state.player2DeployedValue;
 
       // 检查将军是否存活（决定保底骰子）
       const generalAlive = Object.values(state.units).some(u =>

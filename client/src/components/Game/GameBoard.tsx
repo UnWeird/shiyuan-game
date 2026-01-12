@@ -1339,28 +1339,6 @@ export const GameBoard: React.FC = () => {
                 >
                   结束回合
                 </button>
-
-                {/* 开发用：重置技能按钮 */}
-                <button
-                  onClick={() => {
-                    // 找到当前玩家的将领
-                    const general = Object.values(units).find(u =>
-                      u.owner === currentPlayer &&
-                      u.type === UnitType.GENERAL
-                    );
-
-                    if (general) {
-                      updateUnit(general.id, {
-                        abilityUsed: false,
-                        bonusActionLimit: 0,
-                      } as any);
-                      addLog('[DEV] 技能已重置', 'info');
-                    }
-                  }}
-                  className="px-4 py-3 bg-purple-500 text-white rounded-lg font-bold hover:bg-purple-600 text-sm"
-                >
-                  [DEV] 重置技能
-                </button>
               </div>
             </div>
           </div>

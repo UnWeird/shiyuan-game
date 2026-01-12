@@ -211,8 +211,35 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
           </p>
           <button
             onClick={() => {
-              navigator.clipboard.writeText(roomId);
-              alert('房间ID已复制到剪贴板！');
+              // 降级方案：支持非HTTPS环境
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(roomId)
+                  .then(() => alert('房间ID已复制到剪贴板！'))
+                  .catch(() => {
+                    // 如果失败，使用旧方法
+                    fallbackCopy(roomId);
+                  });
+              } else {
+                // 使用旧方法
+                fallbackCopy(roomId);
+              }
+
+              function fallbackCopy(text: string) {
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                  document.execCommand('copy');
+                  alert('房间ID已复制到剪贴板！');
+                } catch (err) {
+                  alert('复制失败，请手动复制房间ID：' + text);
+                }
+                document.body.removeChild(textArea);
+              }
             }}
             className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition duration-200"
           >

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 140">
+  <!-- 六边形底座 -->
+  <path d="M 60,10 L 95,30 L 95,70 L 60,90 L 25,70 L 25,30 Z"
+        fill="#16a34a"
+        stroke="#15803d"
+        stroke-width="3"/>
+
+  <!-- 内层装饰 -->
+  <path d="M 60,18 L 87,33 L 87,63 L 60,78 L 33,63 L 33,33 Z"
+        fill="#22c55e"
+        stroke="#16a34a"
+        stroke-width="2"
+        opacity="0.8"/>
+
+  <!-- 将军标识圆形 -->
+  <circle cx="60" cy="50" r="22"
+          fill="#f0fdf4"
+          stroke="#16a34a"
+          stroke-width="2"/>
+
+  <!-- "仁" 字 -->
+  <g transform="translate(60, 50)" fill="#15803d">
+    <!-- 左单人旁 -->
+    <rect x="-10" y="-8" width="3" height="16" rx="1"/>
+    <path d="M -10,-6 L -4,-2" stroke="#15803d" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+    <!-- 右侧"二" -->
+    <rect x="0" y="-6" width="12" height="3" rx="1"/>
+    <rect x="0" y="3" width="12" height="3" rx="1"/>
+  </g>
+
+  <!-- 底部文字标签 -->
+  <rect x="20" y="100" width="80" height="30" rx="5" fill="#16a34a"/>
+  <text x="60" y="120" font-family="sans-serif" font-size="16" font-weight="bold" fill="white" text-anchor="middle">
+    仁德
+  </text>
+
+  <!-- 装饰性光效 -->
+  <ellipse cx="60" cy="50" rx="26" ry="26" fill="none" stroke="#86efac" stroke-width="1.5" opacity="0.4"/>
+</svg>

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 140">
+  <!-- 六边形底座 -->
+  <path d="M 60,10 L 95,30 L 95,70 L 60,90 L 25,70 L 25,30 Z"
+        fill="#dc2626"
+        stroke="#991b1b"
+        stroke-width="3"/>
+
+  <!-- 内层装饰 -->
+  <path d="M 60,18 L 87,33 L 87,63 L 60,78 L 33,63 L 33,33 Z"
+        fill="#ef4444"
+        stroke="#dc2626"
+        stroke-width="2"
+        opacity="0.8"/>
+
+  <!-- 将军标识圆形 -->
+  <circle cx="60" cy="50" r="22"
+          fill="#fef2f2"
+          stroke="#dc2626"
+          stroke-width="2"/>
+
+  <!-- "无" 字 -->
+  <g transform="translate(60, 50)" fill="#991b1b">
+    <!-- 上横 -->
+    <rect x="-10" y="-10" width="20" height="3" rx="1"/>
+    <!-- 中竖 -->
+    <rect x="-1.5" y="-10" width="3" height="20" rx="1"/>
+    <!-- 左撇 -->
+    <path d="M -8,-4 L -12,8" stroke="#991b1b" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <!-- 右撇 -->
+    <path d="M 8,-4 L 12,8" stroke="#991b1b" stroke-width="3" stroke-linecap="round" fill="none"/>
+  </g>
+
+  <!-- 底部文字标签 -->
+  <rect x="20" y="100" width="80" height="30" rx="5" fill="#dc2626"/>
+  <text x="60" y="120" font-family="sans-serif" font-size="16" font-weight="bold" fill="white" text-anchor="middle">
+    无双
+  </text>
+
+  <!-- 装饰性光效 -->
+  <ellipse cx="60" cy="50" rx="26" ry="26" fill="none" stroke="#fca5a5" stroke-width="1.5" opacity="0.4"/>
+</svg>

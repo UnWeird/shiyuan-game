@@ -7,12 +7,13 @@ interface RoomLobbyProps {
 }
 
 export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
-  const [mode, setMode] = useState<'menu' | 'create' | 'join'>('menu');
+  const [mode, setMode] = useState<'menu' | 'create' | 'join' | 'spectate'>('menu');
   const [roomId, setRoomId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [waitingForOpponent, setWaitingForOpponent] = useState(false);
   const [opponentJoined, setOpponentJoined] = useState(false);
+  const [isSpectator, setIsSpectator] = useState(false);
   const phase = useGameStore(state => state.phase);
 
   // 监听游戏开始消息（当对手加入时服务器会发送）
@@ -60,7 +61,7 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
     setLoading(true);
     setError('');
     try {
-      await colyseusService.joinRoom(roomId.trim());
+      await colyseusService.joinRoom(roomId.trim(), isSpectator);
       onRoomJoined();
     } catch (err: any) {
       setError(err.message || '加入房间失败');
@@ -93,11 +94,25 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
             </button>
 
             <button
-              onClick={() => setMode('join')}
+              onClick={() => {
+                setMode('join');
+                setIsSpectator(false);
+              }}
               disabled={loading}
               className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              加入房间
+              加入对战
+            </button>
+
+            <button
+              onClick={() => {
+                setMode('spectate');
+                setIsSpectator(true);
+              }}
+              disabled={loading}
+              className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              观战房间
             </button>
 
             <button
@@ -116,12 +131,12 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
     );
   }
 
-  if (mode === 'join') {
+  if (mode === 'join' || mode === 'spectate') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center p-4">
         <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full">
           <h2 className="text-3xl font-bold text-center mb-6 text-gray-800">
-            加入房间
+            {mode === 'spectate' ? '观战房间' : '加入房间'}
           </h2>
 
           {error && (
@@ -145,12 +160,20 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
               />
             </div>
 
+            {mode === 'spectate' && (
+              <div className="bg-purple-50 border-2 border-purple-300 rounded-lg p-4">
+                <p className="text-purple-800 text-sm">
+                  你将以<span className="font-bold">观战者</span>身份加入，可以观看对局但不能操作
+                </p>
+              </div>
+            )}
+
             <button
               onClick={handleJoinRoom}
               disabled={loading || !roomId.trim()}
-              className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`w-full ${mode === 'spectate' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'} text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              {loading ? '加入中...' : '加入游戏'}
+              {loading ? '加入中...' : (mode === 'spectate' ? '观战' : '加入游戏')}
             </button>
 
             <button
@@ -158,6 +181,7 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
                 setMode('menu');
                 setError('');
                 setRoomId('');
+                setIsSpectator(false);
               }}
               disabled={loading}
               className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"

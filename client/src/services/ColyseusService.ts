@@ -9,7 +9,7 @@ import { GeneralType, Player } from '../types';
 class ColyseusService {
   private client: Client;
   private room: Room | null = null;
-  private myPlayerRole: 'player1' | 'player2' | null = null;
+  private myPlayerRole: 'player1' | 'player2' | 'spectator' | null = null;
 
   constructor() {
     // 连接到本地服务器
@@ -34,11 +34,11 @@ class ColyseusService {
   /**
    * 加入已有房间
    */
-  async joinRoom(roomId: string): Promise<void> {
+  async joinRoom(roomId: string, asSpectator: boolean = false): Promise<void> {
     try {
-      this.room = await this.client.joinById(roomId);
+      this.room = await this.client.joinById(roomId, { spectator: asSpectator });
       this.setupRoomListeners();
-      console.log('✅ 加入房间成功:', roomId);
+      console.log(`✅ 加入房间成功 (${asSpectator ? '观战者' : '玩家'}):`, roomId);
     } catch (error) {
       console.error('❌ 加入房间失败:', error);
       throw error;
@@ -52,7 +52,7 @@ class ColyseusService {
     if (!this.room) return;
 
     // 监听玩家角色分配
-    this.room.onMessage('role', (data: { role: 'player1' | 'player2'; message: string }) => {
+    this.room.onMessage('role', (data: { role: 'player1' | 'player2' | 'spectator'; message: string }) => {
       this.myPlayerRole = data.role;
       console.log('👤 我的角色:', data.role);
 
@@ -99,6 +99,11 @@ class ColyseusService {
     this.room.onMessage('gameEnd', (data: { winner: string; message: string }) => {
       console.log('🏆 游戏结束:', data.message);
       alert(`游戏结束！${data.message}`);
+    });
+
+    // 监听观战者加入
+    this.room.onMessage('spectatorJoined', (data: { spectatorCount: number; message: string }) => {
+      console.log('👁️  观战者加入:', data);
     });
 
     // 监听仁德击杀确认请求
@@ -260,8 +265,15 @@ class ColyseusService {
   /**
    * 获取我的角色
    */
-  getMyRole(): 'player1' | 'player2' | null {
+  getMyRole(): 'player1' | 'player2' | 'spectator' | null {
     return this.myPlayerRole;
+  }
+
+  /**
+   * 是否是观战者
+   */
+  isSpectator(): boolean {
+    return this.myPlayerRole === 'spectator';
   }
 
   /**

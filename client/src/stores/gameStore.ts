@@ -5,7 +5,7 @@ import { GamePhase, Player, UnitType, GeneralType } from '../types';
 interface GameStore extends GameState {
   // 在线模式相关
   isOnlineMode: boolean;
-  myPlayerRole: 'player1' | 'player2' | null;
+  myPlayerRole: 'player1' | 'player2' | 'spectator' | null;
 
   // 无双扇形攻击状态（需要显式声明以覆盖可选类型）
   wushuangFanAttackActive: boolean;

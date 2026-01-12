@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 140">
+  <!-- 六边形底座 -->
+  <path d="M 60,10 L 95,30 L 95,70 L 60,90 L 25,70 L 25,30 Z"
+        fill="#2563eb"
+        stroke="#1e40af"
+        stroke-width="3"/>
+
+  <!-- 内层装饰 -->
+  <path d="M 60,18 L 87,33 L 87,63 L 60,78 L 33,63 L 33,33 Z"
+        fill="#3b82f6"
+        stroke="#2563eb"
+        stroke-width="2"
+        opacity="0.8"/>
+
+  <!-- 将军标识圆形 -->
+  <circle cx="60" cy="50" r="22"
+          fill="#eff6ff"
+          stroke="#2563eb"
+          stroke-width="2"/>
+
+  <!-- "神" 字 -->
+  <g transform="translate(60, 50)" fill="#1e40af">
+    <!-- 左竖 -->
+    <rect x="-10" y="-10" width="3" height="20" rx="1"/>
+    <!-- 中横 -->
+    <rect x="-10" y="-2" width="20" height="3" rx="1"/>
+    <!-- 右侧"申" -->
+    <rect x="2" y="-10" width="3" height="20" rx="1"/>
+    <rect x="-2" y="-8" width="10" height="2" rx="0.5"/>
+    <rect x="-2" y="6" width="10" height="2" rx="0.5"/>
+  </g>
+
+  <!-- 底部文字标签 -->
+  <rect x="20" y="100" width="80" height="30" rx="5" fill="#2563eb"/>
+  <text x="60" y="120" font-family="sans-serif" font-size="16" font-weight="bold" fill="white" text-anchor="middle">
+    神机
+  </text>
+
+  <!-- 装饰性光效 -->
+  <ellipse cx="60" cy="50" rx="26" ry="26" fill="none" stroke="#93c5fd" stroke-width="1.5" opacity="0.4"/>
+</svg>

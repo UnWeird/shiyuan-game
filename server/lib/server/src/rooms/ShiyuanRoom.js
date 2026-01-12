@@ -7,14 +7,15 @@ const GameState_1 = require("../schema/GameState");
 const hexUtils_1 = require("../../../shared/utils/hexUtils");
 /**
  * 十元（Shiyuan）游戏房间
- * 处理2名玩家的回合制对战
+ * 处理2名玩家的回合制对战 + 无限观战者
  */
 class ShiyuanRoom extends core_1.Room {
     constructor() {
         super(...arguments);
-        this.maxClients = 2;
+        this.maxClients = 100; // 2名玩家 + 最多98名观战者
         // 玩家角色映射
         this.playerRoles = new Map();
+        this.spectators = new Set(); // 观战者集合
     }
     onCreate(options) {
         this.setState(new GameState_1.GameStateSchema());
@@ -30,14 +31,28 @@ class ShiyuanRoom extends core_1.Room {
         });
     }
     onJoin(client, options) {
-        const playerCount = this.clients.length;
-        if (playerCount === 1) {
+        const isSpectator = options.spectator === true;
+        // 计算当前玩家数量（不包括观战者）
+        const playerCount = Array.from(this.playerRoles.values()).filter(role => role !== 'spectator').length;
+        if (isSpectator || playerCount >= 2) {
+            // 作为观战者加入
+            this.playerRoles.set(client.sessionId, 'spectator');
+            this.spectators.add(client.sessionId);
+            client.send("role", { role: "spectator", message: "你是观战者" });
+            console.log(`👁️  观战者加入: ${client.sessionId} (观战者数: ${this.spectators.size})`);
+            // 通知所有人有观战者加入
+            this.broadcast("spectatorJoined", {
+                spectatorCount: this.spectators.size,
+                message: "有观战者加入"
+            }, { except: client });
+        }
+        else if (playerCount === 0) {
             // 第一个玩家
             this.playerRoles.set(client.sessionId, 'player1');
             client.send("role", { role: "player1", message: "你是玩家1" });
             console.log(`👤 玩家1加入: ${client.sessionId}`);
         }
-        else if (playerCount === 2) {
+        else if (playerCount === 1) {
             // 第二个玩家
             this.playerRoles.set(client.sessionId, 'player2');
             client.send("role", { role: "player2", message: "你是玩家2" });
@@ -51,7 +66,8 @@ class ShiyuanRoom extends core_1.Room {
                 gameName: "十元",
                 players: 2,
                 maxPlayers: 2,
-                status: "playing"
+                status: "playing",
+                spectators: this.spectators.size
             });
         }
     }
@@ -59,6 +75,12 @@ class ShiyuanRoom extends core_1.Room {
         const role = this.playerRoles.get(client.sessionId);
         console.log(`👋 ${role} 离开房间`);
         this.playerRoles.delete(client.sessionId);
+        // 如果是观战者离开
+        if (role === 'spectator') {
+            this.spectators.delete(client.sessionId);
+            console.log(`👁️  观战者离开 (剩余: ${this.spectators.size})`);
+            return;
+        }
         // 如果游戏进行中玩家离开，通知另一方
         if (this.state.phase !== "general_select" && this.state.phase !== "end") {
             this.broadcast("playerLeft", {
@@ -165,7 +187,9 @@ class ShiyuanRoom extends core_1.Room {
      * 获取客户端的玩家角色
      */
     getPlayerRole(client) {
-        return this.playerRoles.get(client.sessionId) || null;
+        const role = this.playerRoles.get(client.sessionId);
+        // 观战者返回 null，只有玩家可以操作
+        return (role === 'player1' || role === 'player2') ? role : null;
     }
     /**
      * 添加战斗日志

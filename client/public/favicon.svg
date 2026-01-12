@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- 背景圆形 -->
+  <circle cx="50" cy="50" r="48" fill="#1e40af" stroke="#1e3a8a" stroke-width="2"/>
+
+  <!-- 六边形棋盘元素 -->
+  <g transform="translate(50, 50)">
+    <!-- 中心六边形 -->
+    <path d="M 0,-20 L 17,-10 L 17,10 L 0,20 L -17,10 L -17,-10 Z"
+          fill="#60a5fa"
+          stroke="#fff"
+          stroke-width="2"/>
+
+    <!-- 左上六边形 -->
+    <path d="M -26,-15 L -18,-20 L -9,-15 L -9,-5 L -18,0 L -26,-5 Z"
+          fill="#93c5fd"
+          stroke="#fff"
+          stroke-width="1.5"/>
+
+    <!-- 右上六边形 -->
+    <path d="M 9,-15 L 18,-20 L 26,-15 L 26,-5 L 18,0 L 9,-5 Z"
+          fill="#93c5fd"
+          stroke="#fff"
+          stroke-width="1.5"/>
+
+    <!-- 左下六边形 -->
+    <path d="M -26,5 L -18,0 L -9,5 L -9,15 L -18,20 L -26,15 Z"
+          fill="#93c5fd"
+          stroke="#fff"
+          stroke-width="1.5"/>
+
+    <!-- 右下六边形 -->
+    <path d="M 9,5 L 18,0 L 26,5 L 26,15 L 18,20 L 9,15 Z"
+          fill="#93c5fd"
+          stroke="#fff"
+          stroke-width="1.5"/>
+  </g>
+
+  <!-- "十" 字标识 -->
+  <g transform="translate(50, 50)">
+    <rect x="-2" y="-12" width="4" height="24" fill="#fff" rx="1"/>
+    <rect x="-12" y="-2" width="24" height="4" fill="#fff" rx="1"/>
+  </g>
+
+  <!-- 装饰性边框 -->
+  <circle cx="50" cy="50" r="48" fill="none" stroke="#cbd5e1" stroke-width="1" opacity="0.3"/>
+</svg>

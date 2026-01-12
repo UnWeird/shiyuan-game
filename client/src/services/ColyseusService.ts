@@ -191,11 +191,11 @@ class ColyseusService {
     }
 
     // 转换骰子结果
-    const player1DiceResults = state.player1DiceResults ? Array.from(state.player1DiceResults) : [];
-    const player2DiceResults = state.player2DiceResults ? Array.from(state.player2DiceResults) : [];
+    const player1DiceResults = state.player1DiceResults ? Array.from(state.player1DiceResults) as number[] : [];
+    const player2DiceResults = state.player2DiceResults ? Array.from(state.player2DiceResults) as number[] : [];
 
     // 转换扇形攻击状态
-    const wushuangDiceRolls = state.wushuangDiceRolls ? Array.from(state.wushuangDiceRolls) : [];
+    const wushuangDiceRolls = state.wushuangDiceRolls ? Array.from(state.wushuangDiceRolls) as number[] : [];
 
     // 保存当前选中的单位ID（避免状态同步时清空选中）
     const currentSelectedUnitId = useGameStore.getState().selectedUnitId;

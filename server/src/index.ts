@@ -5,7 +5,8 @@ import cors from 'cors';
 import { ShiyuanRoom } from './rooms/ShiyuanRoom';
 
 const app = express();
-const port = 2567;
+const port = Number(process.env.PORT) || 2567;
+const host = process.env.HOST || '0.0.0.0';  // 允许外网访问
 
 // 允许跨域（开发环境）
 app.use(cors());
@@ -14,7 +15,7 @@ app.use(express.json());
 // 创建 Colyseus 服务器
 const gameServer = new Server({
   transport: new WebSocketTransport({
-    server: app.listen(port)
+    server: app.listen(port, host)
   })
 });
 

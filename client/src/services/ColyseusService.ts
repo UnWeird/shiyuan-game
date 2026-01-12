@@ -12,8 +12,10 @@ class ColyseusService {
   private myPlayerRole: 'player1' | 'player2' | 'spectator' | null = null;
 
   constructor() {
-    // 连接到本地服务器
-    this.client = new Client('ws://localhost:2567');
+    // 连接到服务器（支持环境变量配置）
+    const serverUrl = import.meta.env.VITE_SERVER_URL || 'ws://localhost:2567';
+    this.client = new Client(serverUrl);
+    console.log('🔗 连接到服务器:', serverUrl);
   }
 
   /**

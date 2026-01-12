@@ -1162,6 +1162,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         } else {
           this.addBattleLog(`战车崩毁为1个满血步兵（无相邻空位）`);
         }
+
+        // 战车已崩毁，不继续后续逻辑（避免重复触发触底逻辑）
+        return;
       }
     }
 

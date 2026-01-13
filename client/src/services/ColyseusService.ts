@@ -228,6 +228,17 @@ class ColyseusService {
         archer: state.player2Archer,
       },
 
+      player1ConsumedStock: {
+        infantry: state.player1ConsumedInfantry || 0,
+        cavalry: state.player1ConsumedCavalry || 0,
+        archer: state.player1ConsumedArcher || 0,
+      },
+      player2ConsumedStock: {
+        infantry: state.player2ConsumedInfantry || 0,
+        cavalry: state.player2ConsumedCavalry || 0,
+        archer: state.player2ConsumedArcher || 0,
+      },
+
       units,
 
       player1Dice: state.player1Dice,

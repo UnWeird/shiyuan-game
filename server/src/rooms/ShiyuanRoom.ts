@@ -437,28 +437,39 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // TODO: 验证位置是否在起始区
 
-    // 验证库存：检查是否还有该类型的单位可以部署
+    // 验证库存：检查是否还有该类型的单位可以部署（基于已消耗库存而非场上数量）
     if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer") {
-      // 统计已部署的该类型单位数量
-      const deployedCount = Array.from(this.state.units.values()).filter(u =>
-        u.owner === role && u.type === unitType
-      ).length;
-
-      // 获取该玩家该类型单位的库存上限
+      // 获取该玩家该类型单位的已消耗库存和配置上限
+      let consumedCount = 0;
       let maxCount = 0;
+
       if (role === "player1") {
-        if (unitType === "infantry") maxCount = this.state.player1Infantry;
-        else if (unitType === "cavalry") maxCount = this.state.player1Cavalry;
-        else if (unitType === "archer") maxCount = this.state.player1Archer;
+        if (unitType === "infantry") {
+          consumedCount = this.state.player1ConsumedInfantry;
+          maxCount = this.state.player1Infantry;
+        } else if (unitType === "cavalry") {
+          consumedCount = this.state.player1ConsumedCavalry;
+          maxCount = this.state.player1Cavalry;
+        } else if (unitType === "archer") {
+          consumedCount = this.state.player1ConsumedArcher;
+          maxCount = this.state.player1Archer;
+        }
       } else {
-        if (unitType === "infantry") maxCount = this.state.player2Infantry;
-        else if (unitType === "cavalry") maxCount = this.state.player2Cavalry;
-        else if (unitType === "archer") maxCount = this.state.player2Archer;
+        if (unitType === "infantry") {
+          consumedCount = this.state.player2ConsumedInfantry;
+          maxCount = this.state.player2Infantry;
+        } else if (unitType === "cavalry") {
+          consumedCount = this.state.player2ConsumedCavalry;
+          maxCount = this.state.player2Cavalry;
+        } else if (unitType === "archer") {
+          consumedCount = this.state.player2ConsumedArcher;
+          maxCount = this.state.player2Archer;
+        }
       }
 
-      // 检查是否超过库存
-      if (deployedCount >= maxCount) {
-        client.send("error", { message: `${unitType}单位已全部部署，库存不足` });
+      // 检查是否超过库存：剩余 = 配置上限 - 已消耗
+      if (consumedCount >= maxCount) {
+        client.send("error", { message: `${unitType}单位库存已耗尽，无法部署` });
         return;
       }
     }
@@ -513,6 +524,27 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 添加到地图
     this.state.units.set(unit.id, unit);
+
+    // 增加已消耗库存（只对三个基础兵种）
+    if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer") {
+      if (role === "player1") {
+        if (unitType === "infantry") {
+          this.state.player1ConsumedInfantry++;
+        } else if (unitType === "cavalry") {
+          this.state.player1ConsumedCavalry++;
+        } else if (unitType === "archer") {
+          this.state.player1ConsumedArcher++;
+        }
+      } else {
+        if (unitType === "infantry") {
+          this.state.player2ConsumedInfantry++;
+        } else if (unitType === "cavalry") {
+          this.state.player2ConsumedCavalry++;
+        } else if (unitType === "archer") {
+          this.state.player2ConsumedArcher++;
+        }
+      }
+    }
 
     // 扣除行动点
     if (role === "player1") {

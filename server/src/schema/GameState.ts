@@ -59,6 +59,11 @@ export class GameStateSchema extends Schema {
   @type("number") player1Cavalry: number = 0;
   @type("number") player1Archer: number = 0;
 
+  // 玩家1已消耗库存（永久消耗，不会因单位死亡而减少）
+  @type("number") player1ConsumedInfantry: number = 0;
+  @type("number") player1ConsumedCavalry: number = 0;
+  @type("number") player1ConsumedArcher: number = 0;
+
   // 玩家2配置
   @type("string") player2General: string = "";
   @type("number") player2BaseQ: number = 0;
@@ -67,6 +72,11 @@ export class GameStateSchema extends Schema {
   @type("number") player2Infantry: number = 0;
   @type("number") player2Cavalry: number = 0;
   @type("number") player2Archer: number = 0;
+
+  // 玩家2已消耗库存（永久消耗，不会因单位死亡而减少）
+  @type("number") player2ConsumedInfantry: number = 0;
+  @type("number") player2ConsumedCavalry: number = 0;
+  @type("number") player2ConsumedArcher: number = 0;
 
   // 地图上的单位（MapSchema 会自动同步增删改）
   @type({ map: UnitSchema }) units = new MapSchema<UnitSchema>();

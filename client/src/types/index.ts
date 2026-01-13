@@ -123,6 +123,18 @@ export interface GameState {
     archer: number;
   };
 
+  // 已消耗库存 (永久消耗，不会因单位死亡而减少)
+  player1ConsumedStock: {
+    infantry: number;  // 已消耗步兵数
+    cavalry: number;   // 已消耗骑兵数
+    archer: number;    // 已消耗弓箭手数
+  };
+  player2ConsumedStock: {
+    infantry: number;
+    cavalry: number;
+    archer: number;
+  };
+
   // 地图上的单位
   units: Record<string, Unit>;
 

@@ -84,6 +84,17 @@ const initialState: GameState = {
     archer: 0,
   },
 
+  player1ConsumedStock: {
+    infantry: 0,
+    cavalry: 0,
+    archer: 0,
+  },
+  player2ConsumedStock: {
+    infantry: 0,
+    cavalry: 0,
+    archer: 0,
+  },
+
   units: {},
 
   player1Dice: 0,

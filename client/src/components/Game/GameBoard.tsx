@@ -40,6 +40,8 @@ export const GameBoard: React.FC = () => {
     player2General,
     player1Army,
     player2Army,
+    player1ConsumedStock,
+    player2ConsumedStock,
     player1Base,
     player2Base,
     player1RerollTokens,
@@ -170,8 +172,23 @@ export const GameBoard: React.FC = () => {
     }
   };
 
-  // 计算已部署的单位数量
+  // 计算已消耗的库存（基于consumedStock而非场上数量）
   const deployedCounts = useMemo(() => {
+    const consumedStock = currentPlayer === Player.PLAYER1
+      ? player1ConsumedStock
+      : player2ConsumedStock;
+
+    // 在线模式：使用服务器同步的consumedStock
+    if (isOnlineMode && consumedStock) {
+      return {
+        infantry: consumedStock.infantry || 0,
+        cavalry: consumedStock.cavalry || 0,
+        archer: consumedStock.archer || 0,
+        general: Object.values(units).filter(u => u.owner === currentPlayer && u.type === UnitType.GENERAL).length,
+      };
+    }
+
+    // 单机模式：继续使用场上数量（单机模式暂不实施consumedStock）
     const myUnits = Object.values(units).filter(u => u.owner === currentPlayer);
     return {
       infantry: myUnits.filter(u => u.type === UnitType.INFANTRY).length,
@@ -179,7 +196,7 @@ export const GameBoard: React.FC = () => {
       archer: myUnits.filter(u => u.type === UnitType.ARCHER).length,
       general: myUnits.filter(u => u.type === UnitType.GENERAL).length,
     };
-  }, [units, currentPlayer]);
+  }, [units, currentPlayer, player1ConsumedStock, player2ConsumedStock, isOnlineMode]);
 
   // 获取当前玩家的配置
   const army = currentPlayer === Player.PLAYER1 ? player1Army : player2Army;

@@ -1374,11 +1374,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
 
       // 非仁德阵营 或 仁德击杀中立单位：直接击杀
-      // 如果被击杀的是战车，先生成2个不可移动的步兵
+      // 如果被击杀的是战车，先生成2个不可移动的步兵，再删除战车
       if (target.type === 'chariot') {
+        this.handleChariotDeath(target);
         this.state.units.delete(data.targetId);
         this.addBattleLog(`${target.owner}的战车被击杀，崩毁！`);
-        this.handleChariotDeath(target);
       } else {
         // 非战车单位：直接击杀
         this.state.units.delete(data.targetId);
@@ -1521,11 +1521,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       // 检查是否击杀
       if (target.hp <= 0) {
-        // 如果击杀的是战车，需要先生成2个不可行动的步兵
+        // 如果击杀的是战车，先生成2个不可行动的步兵，再删除战车
         if (target.type === 'chariot') {
+          this.handleChariotDeath(target);
           this.state.units.delete(target.id);
           this.addBattleLog(`${target.owner}的战车被弩车贯穿击杀，崩毁！`);
-          this.handleChariotDeath(target);
         } else {
           // 非战车单位：直接删除
           this.state.units.delete(target.id);
@@ -1642,11 +1642,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 检查是否击杀
     if (target.hp <= 0) {
-      // 如果击杀的是战车，需要先生成2个不可行动的步兵
+      // 如果击杀的是战车，先生成2个不可行动的步兵，再删除战车
       if (target.type === 'chariot') {
+        this.handleChariotDeath(target);
         this.state.units.delete(data.targetId);
         this.addBattleLog(`${target.owner}的战车被弩车近战击杀，崩毁！`);
-        this.handleChariotDeath(target);
       } else {
         // 非战车单位：直接删除
         this.state.units.delete(data.targetId);

@@ -231,6 +231,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     this.onMessage("rendeSpareAsNeutral", (client, data) => {
       this.handleRendeSpareAsNeutral(client, data);
     });
+
+    this.onMessage("surrender", (client) => {
+      this.handleSurrender(client);
+    });
   }
 
   /**
@@ -2865,5 +2869,30 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}将${target.type}转为中立标记（消耗1点）`);
       client.send("info", { message: "已转为中立标记" });
     }
+  }
+
+  /**
+   * 处理认输
+   */
+  private handleSurrender(client: Client) {
+    const role = this.getPlayerRole(client);
+    if (!role) {
+      client.send("error", { message: "你不是玩家" });
+      return;
+    }
+
+    // 宣布对手获胜
+    const winner = role === "player1" ? "player2" : "player1";
+    this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}认输，${winner === "player1" ? "玩家1" : "玩家2"}获胜！`);
+
+    // 广播游戏结束
+    this.broadcast("gameEnd", {
+      winner,
+      reason: "surrender",
+      message: `${role === "player1" ? "玩家1" : "玩家2"}认输，${winner === "player1" ? "玩家1" : "玩家2"}获胜！`
+    });
+
+    // 设置游戏阶段为结束
+    this.state.phase = "end";
   }
 }

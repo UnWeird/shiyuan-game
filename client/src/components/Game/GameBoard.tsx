@@ -702,6 +702,19 @@ export const GameBoard: React.FC = () => {
     setWushuangAttackPhase('select-direction');
   };
 
+  // 认输
+  const handleSurrender = () => {
+    if (!isOnlineMode) {
+      alert('单机模式不支持认输功能');
+      return;
+    }
+
+    const confirmed = window.confirm('确定要认输吗？');
+    if (confirmed) {
+      colyseusService.surrender();
+    }
+  };
+
   // 神机技能：修改骰子点数
   const handleShenjiAbility = () => {
     setShenjiAbilityActive(true);
@@ -1186,7 +1199,10 @@ export const GameBoard: React.FC = () => {
   const diceResults = currentPlayer === Player.PLAYER1 ? player1DiceResults : player2DiceResults;
   const hasRolled = diceResults && diceResults.length > 0;
 
-  if (phase === GamePhase.DEPLOY && currentActionPoints === 0 && !hasRolled) {
+  // 检查是否已经部署过单位（如果部署过，即使行动点为0也应该继续显示正常界面，而不是"掷骰子开始"）
+  const hasDeployed = Object.values(units).some(u => u.owner === currentPlayer);
+
+  if (phase === GamePhase.DEPLOY && currentActionPoints === 0 && !hasRolled && !hasDeployed) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex items-center justify-center">
         <div className="bg-white rounded-lg shadow-xl p-8 text-center">
@@ -1353,7 +1369,7 @@ export const GameBoard: React.FC = () => {
                 <button
                   onClick={handleEndTurn}
                   disabled={!isMyTurn}
-                  className={`px-6 py-3 rounded-lg font-bold ${
+                  className={`flex-1 px-6 py-3 rounded-lg font-bold ${
                     isMyTurn
                       ? 'bg-red-500 text-white hover:bg-red-600 cursor-pointer'
                       : 'bg-gray-300 text-gray-500 cursor-not-allowed'
@@ -1361,6 +1377,14 @@ export const GameBoard: React.FC = () => {
                 >
                   结束回合
                 </button>
+                {isOnlineMode && (
+                  <button
+                    onClick={handleSurrender}
+                    className="px-6 py-3 rounded-lg font-bold bg-gray-600 text-white hover:bg-gray-700 cursor-pointer"
+                  >
+                    认输
+                  </button>
+                )}
               </div>
             </div>
           </div>

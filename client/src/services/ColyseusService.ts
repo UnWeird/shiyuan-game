@@ -534,6 +534,14 @@ class ColyseusService {
   }
 
   /**
+   * 认输
+   */
+  surrender() {
+    if (!this.room) return;
+    this.room.send('surrender', {});
+  }
+
+  /**
    * 离开房间
    */
   leaveRoom() {

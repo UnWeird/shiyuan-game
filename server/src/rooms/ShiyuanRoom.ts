@@ -2549,22 +2549,22 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 添加到地图
     this.state.units.set(machine.id, machine);
 
-    // 消耗兵力库存
+    // 增加已消耗库存（永久消耗）
     if (data.machineType === 'ballista') {
       // 弩车：消耗4步兵 + 1弓箭手库存
       if (role === 'player1') {
-        this.state.player1Infantry -= 4;
-        this.state.player1Archer -= 1;
+        this.state.player1ConsumedInfantry += 4;
+        this.state.player1ConsumedArcher += 1;
       } else {
-        this.state.player2Infantry -= 4;
-        this.state.player2Archer -= 1;
+        this.state.player2ConsumedInfantry += 4;
+        this.state.player2ConsumedArcher += 1;
       }
     } else if (data.machineType === 'chariot') {
       // 战车：消耗6步兵库存
       if (role === 'player1') {
-        this.state.player1Infantry -= 6;
+        this.state.player1ConsumedInfantry += 6;
       } else {
-        this.state.player2Infantry -= 6;
+        this.state.player2ConsumedInfantry += 6;
       }
     }
 

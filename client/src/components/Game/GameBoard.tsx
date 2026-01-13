@@ -172,8 +172,9 @@ export const GameBoard: React.FC = () => {
     }
   };
 
-  // 计算已消耗的库存（基于consumedStock而非场上数量）
-  const deployedCounts = useMemo(() => {
+  // 计算剩余可用库存（基于 剩余 = 上限 - 已消耗）
+  const remainingCounts = useMemo(() => {
+    const army = currentPlayer === Player.PLAYER1 ? player1Army : player2Army;
     const consumedStock = currentPlayer === Player.PLAYER1
       ? player1ConsumedStock
       : player2ConsumedStock;
@@ -181,22 +182,22 @@ export const GameBoard: React.FC = () => {
     // 在线模式：使用服务器同步的consumedStock
     if (isOnlineMode && consumedStock) {
       return {
-        infantry: consumedStock.infantry || 0,
-        cavalry: consumedStock.cavalry || 0,
-        archer: consumedStock.archer || 0,
-        general: Object.values(units).filter(u => u.owner === currentPlayer && u.type === UnitType.GENERAL).length,
+        infantry: army.infantry - (consumedStock.infantry || 0),
+        cavalry: army.cavalry - (consumedStock.cavalry || 0),
+        archer: army.archer - (consumedStock.archer || 0),
+        general: 1 - Object.values(units).filter(u => u.owner === currentPlayer && u.type === UnitType.GENERAL).length,
       };
     }
 
     // 单机模式：继续使用场上数量（单机模式暂不实施consumedStock）
     const myUnits = Object.values(units).filter(u => u.owner === currentPlayer);
     return {
-      infantry: myUnits.filter(u => u.type === UnitType.INFANTRY).length,
-      cavalry: myUnits.filter(u => u.type === UnitType.CAVALRY).length,
-      archer: myUnits.filter(u => u.type === UnitType.ARCHER).length,
-      general: myUnits.filter(u => u.type === UnitType.GENERAL).length,
+      infantry: army.infantry - myUnits.filter(u => u.type === UnitType.INFANTRY).length,
+      cavalry: army.cavalry - myUnits.filter(u => u.type === UnitType.CAVALRY).length,
+      archer: army.archer - myUnits.filter(u => u.type === UnitType.ARCHER).length,
+      general: 1 - myUnits.filter(u => u.type === UnitType.GENERAL).length,
     };
-  }, [units, currentPlayer, player1ConsumedStock, player2ConsumedStock, isOnlineMode]);
+  }, [units, currentPlayer, player1Army, player2Army, player1ConsumedStock, player2ConsumedStock, isOnlineMode]);
 
   // 获取当前玩家的配置
   const army = currentPlayer === Player.PLAYER1 ? player1Army : player2Army;
@@ -1995,30 +1996,30 @@ export const GameBoard: React.FC = () => {
                 <button
                   className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
                   onClick={() => handleStartDeploy(UnitType.INFANTRY)}
-                  disabled={!isMyTurn || deployedCounts.infantry >= army.infantry || currentActionPoints < 1}
+                  disabled={!isMyTurn || remainingCounts.infantry <= 0 || currentActionPoints < 1}
                 >
-                  步兵 ({deployedCounts.infantry}/{army.infantry}) {!isMyTurn ? '(非你的回合)' : ''}
+                  步兵 ({remainingCounts.infantry}/{army.infantry}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
                   className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
                   onClick={() => handleStartDeploy(UnitType.CAVALRY)}
-                  disabled={!isMyTurn || deployedCounts.cavalry >= army.cavalry || currentActionPoints < 1}
+                  disabled={!isMyTurn || remainingCounts.cavalry <= 0 || currentActionPoints < 1}
                 >
-                  骑兵 ({deployedCounts.cavalry}/{army.cavalry}) {!isMyTurn ? '(非你的回合)' : ''}
+                  骑兵 ({remainingCounts.cavalry}/{army.cavalry}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
                   className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
                   onClick={() => handleStartDeploy(UnitType.ARCHER)}
-                  disabled={!isMyTurn || deployedCounts.archer >= army.archer || currentActionPoints < 1}
+                  disabled={!isMyTurn || remainingCounts.archer <= 0 || currentActionPoints < 1}
                 >
-                  弓箭手 ({deployedCounts.archer}/{army.archer}) {!isMyTurn ? '(非你的回合)' : ''}
+                  弓箭手 ({remainingCounts.archer}/{army.archer}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
                   className="w-full px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
                   onClick={() => handleStartDeploy(UnitType.GENERAL)}
-                  disabled={!isMyTurn || deployedCounts.general >= 1 || currentActionPoints < 1}
+                  disabled={!isMyTurn || remainingCounts.general <= 0 || currentActionPoints < 1}
                 >
-                  将军 ({deployedCounts.general}/1) {!isMyTurn ? '(非你的回合)' : ''}
+                  将军 ({remainingCounts.general}/1) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
               </div>
             </div>

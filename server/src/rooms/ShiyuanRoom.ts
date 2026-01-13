@@ -1066,9 +1066,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         crushedMachines.forEach(crushedMachine => {
           if (crushedMachine.type === 'chariot') {
             // 被碾压的战车崩解为2个不可行动的步兵
+            this.handleChariotDeath(crushedMachine);
             this.state.units.delete(crushedMachine.id);
             this.addBattleLog(`${crushedMachine.owner}的战车被碾压，崩解！`);
-            this.handleChariotDeath(crushedMachine);
           } else {
             // 弩车直接删除
             this.state.units.delete(crushedMachine.id);
@@ -1077,9 +1077,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         });
 
         // 碾压方的战车也崩解
+        this.handleChariotDeath(unit);
         this.state.units.delete(unit.id);
         this.addBattleLog(`战车碾压到机关单位，崩解！`);
-        this.handleChariotDeath(unit);
 
         // 战车已崩解，不继续后续逻辑
         return;
@@ -1136,9 +1136,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       // 检查战车是否因为碾压而崩毁（血量≤0）
       if (unit.hp <= 0) {
         console.log(`[DEBUG] 战车血量耗尽，开始崩毁流程`);
+        this.handleChariotDeath(unit);
         this.state.units.delete(unit.id);
         this.addBattleLog(`战车血量耗尽，崩毁！`);
-        this.handleChariotDeath(unit);
 
         // 战车已崩毁，不继续后续逻辑（避免重复触发触底逻辑）
         return;

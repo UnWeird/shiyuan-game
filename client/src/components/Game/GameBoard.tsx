@@ -1511,6 +1511,12 @@ export const GameBoard: React.FC = () => {
                       // 部署阶段：玩家1不能移动，玩家2可以移动
                       if (phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1) return true;
 
+                      // 弓兵特殊处理：行动次数上限为2
+                      if (selectedUnit.type === UnitType.ARCHER) {
+                        if (selectedUnit.actionsThisTurn >= 2) return true;
+                        return false;
+                      }
+
                       // 弩车特殊处理：行动次数上限为1
                       if (selectedUnit.type === UnitType.BALLISTA) {
                         if (selectedUnit.actionsThisTurn >= 1) return true;
@@ -1929,7 +1935,8 @@ export const GameBoard: React.FC = () => {
                         !isMyTurn ||
                         (phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1) ||
                         (selectedUnit as any).hasRotated ||
-                        currentActionPoints < 1
+                        currentActionPoints < 1 ||
+                        selectedUnit.actionsThisTurn >= 2
                       }
                       className="w-full px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
                     >

@@ -878,6 +878,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
+    // 检查弓兵行动次数上限（2次）
+    if (unit.type === 'archer' && unit.actionsThisTurn >= 2) {
+      client.send("error", { message: "该单位本回合已达行动次数上限" });
+      return;
+    }
+
     // 验证移动合法性
     const validMoves = this.getValidMoves(unit);
     const targetPos = { q: data.toQ, r: data.toR, s: data.toS };
@@ -1324,6 +1330,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
+    // 检查弓兵行动次数上限（2次）
+    if (attacker.type === 'archer' && attacker.actionsThisTurn >= 2) {
+      client.send("error", { message: "该单位本回合已达行动次数上限" });
+      return;
+    }
+
     // 计算行动点消耗：攻击将领消耗2点，其他单位消耗1点
     const actionCost = target.type === "general" ? 2 : 1;
 
@@ -1391,8 +1403,76 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
 
       // 非仁德阵营 或 仁德击杀中立单位：直接击杀
-      this.state.units.delete(data.targetId);
-      this.addBattleLog(`${target.owner}的${target.type}被击杀！`);
+      // 如果被击杀的是战车，先生成2个不可移动的步兵
+      if (target.type === 'chariot') {
+        const chariotPos = { q: target.q, r: target.r, s: target.s };
+        this.state.units.delete(data.targetId);
+        this.addBattleLog(`${target.owner}的战车被击杀，崩毁！`);
+
+        // 战车崩毁：如果击杀过敌人，神机将军拥有者获得重投机会
+        if ((target as any).killCount > 0) {
+          if (target.owner === "player1") {
+            this.state.player1RerollTokens++;
+          } else {
+            this.state.player2RerollTokens++;
+          }
+          this.addBattleLog(`战车崩毁，${target.owner === "player1" ? "玩家1" : "玩家2"}获得1次重投机会`);
+        }
+
+        // 战车崩毁后，原地生成2个满血步兵（不可移动）
+        const infantry1 = new UnitSchema();
+        infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        infantry1.type = "infantry";
+        infantry1.owner = target.owner;
+        infantry1.q = chariotPos.q;
+        infantry1.r = chariotPos.r;
+        infantry1.s = chariotPos.s;
+        infantry1.direction = target.direction;
+        infantry1.hp = 2;
+        infantry1.maxHp = 2;
+        infantry1.hasMoved = true; // 本回合不能再移动
+        infantry1.hasActedThisTurn = false;
+        infantry1.actionsThisTurn = 1;
+
+        this.state.units.set(infantry1.id, infantry1);
+
+        // 第二个步兵：寻找相邻空位
+        const neighbors = hexNeighbors(chariotPos);
+        const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
+          // 检查是否有单位占用
+          const occupied = Array.from(this.state.units.values()).some(u =>
+            u.q === pos.q && u.r === pos.r && u.s === pos.s
+          );
+          // 检查是否被机关单位占据
+          const occupiedByMachine = this.isHexOccupiedByMachine(pos);
+          return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
+        });
+
+        if (emptyPos) {
+          const infantry2 = new UnitSchema();
+          infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
+          infantry2.type = "infantry";
+          infantry2.owner = target.owner;
+          infantry2.q = emptyPos.q;
+          infantry2.r = emptyPos.r;
+          infantry2.s = emptyPos.s;
+          infantry2.direction = target.direction;
+          infantry2.hp = 2;
+          infantry2.maxHp = 2;
+          infantry2.hasMoved = true;
+          infantry2.hasActedThisTurn = false;
+          infantry2.actionsThisTurn = 1;
+
+          this.state.units.set(infantry2.id, infantry2);
+          this.addBattleLog(`战车崩毁为2个满血步兵`);
+        } else {
+          this.addBattleLog(`战车崩毁为1个满血步兵（无相邻空位）`);
+        }
+      } else {
+        // 非战车单位：直接击杀
+        this.state.units.delete(data.targetId);
+        this.addBattleLog(`${target.owner}的${target.type}被击杀！`);
+      }
 
       // 如果击杀了中立标记，敌方仁德将军的转化费用重置
       if (target.type === "neutral_marker" && target.owner === "neutral") {
@@ -1732,6 +1812,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     const unit = this.state.units.get(data.unitId);
     if (!unit || unit.owner !== role) return;
+
+    // 检查弓兵行动次数上限（2次）
+    if (unit.type === 'archer' && unit.actionsThisTurn >= 2) {
+      client.send("error", { message: "该单位本回合已达行动次数上限" });
+      return;
+    }
 
     // 检查是否已转向
     if (unit.hasRotated) {

@@ -1062,7 +1062,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       // 如果碾压到机关单位，处理机关崩解
       if (crushedMachines.length > 0) {
-        // 先处理被碾压的战车的崩解（如果有）
+        // 碾压方的战车先崩解（步兵优先占据原位）
+        this.handleChariotDeath(unit);
+        this.state.units.delete(unit.id);
+        this.addBattleLog(`战车碾压到机关单位，崩解！`);
+
+        // 再处理被碾压的战车的崩解（如果有）
         crushedMachines.forEach(crushedMachine => {
           if (crushedMachine.type === 'chariot') {
             // 被碾压的战车崩解为2个不可行动的步兵
@@ -1075,11 +1080,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
             this.addBattleLog(`战车碾压击杀了${crushedMachine.owner}的${crushedMachine.type}！`);
           }
         });
-
-        // 碾压方的战车也崩解
-        this.handleChariotDeath(unit);
-        this.state.units.delete(unit.id);
-        this.addBattleLog(`战车碾压到机关单位，崩解！`);
 
         // 战车已崩解，不继续后续逻辑
         return;

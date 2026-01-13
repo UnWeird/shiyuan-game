@@ -895,6 +895,75 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   }
 
   /**
+   * 通用：处理战车死亡，生成2个不可行动的步兵
+   * @param chariot 被击杀的战车
+   * @returns 是否成功处理（战车崩毁逻辑）
+   */
+  private handleChariotDeath(chariot: UnitSchema): void {
+    const chariotPos = { q: chariot.q, r: chariot.r, s: chariot.s };
+
+    // 战车崩毁：如果击杀过敌人，神机将军拥有者获得重投机会
+    if ((chariot as any).killCount > 0) {
+      if (chariot.owner === "player1") {
+        this.state.player1RerollTokens++;
+      } else {
+        this.state.player2RerollTokens++;
+      }
+      this.addBattleLog(`战车崩毁，${chariot.owner === "player1" ? "玩家1" : "玩家2"}获得1次重投机会`);
+    }
+
+    // 战车崩毁后，原地生成2个满血步兵（不可行动）
+    const infantry1 = new UnitSchema();
+    infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    infantry1.type = "infantry";
+    infantry1.owner = chariot.owner;
+    infantry1.q = chariotPos.q;
+    infantry1.r = chariotPos.r;
+    infantry1.s = chariotPos.s;
+    infantry1.direction = chariot.direction;
+    infantry1.hp = 2;
+    infantry1.maxHp = 2;
+    infantry1.hasMoved = true; // 本回合不能再移动
+    infantry1.hasActedThisTurn = true; // 本回合不能再行动
+    infantry1.actionsThisTurn = 1;
+
+    this.state.units.set(infantry1.id, infantry1);
+
+    // 第二个步兵：寻找相邻空位
+    const neighbors = hexNeighbors(chariotPos);
+    const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
+      // 检查是否有单位占用
+      const occupied = Array.from(this.state.units.values()).some(u =>
+        u.q === pos.q && u.r === pos.r && u.s === pos.s
+      );
+      // 检查是否被机关单位占据
+      const occupiedByMachine = this.isHexOccupiedByMachine(pos);
+      return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
+    });
+
+    if (emptyPos) {
+      const infantry2 = new UnitSchema();
+      infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
+      infantry2.type = "infantry";
+      infantry2.owner = chariot.owner;
+      infantry2.q = emptyPos.q;
+      infantry2.r = emptyPos.r;
+      infantry2.s = emptyPos.s;
+      infantry2.direction = chariot.direction;
+      infantry2.hp = 2;
+      infantry2.maxHp = 2;
+      infantry2.hasMoved = true; // 本回合不能再移动
+      infantry2.hasActedThisTurn = true; // 本回合不能再行动
+      infantry2.actionsThisTurn = 1;
+
+      this.state.units.set(infantry2.id, infantry2);
+      this.addBattleLog(`战车崩毁为2个满血步兵`);
+    } else {
+      this.addBattleLog(`战车崩毁为1个满血步兵（无相邻空位）`);
+    }
+  }
+
+  /**
    * 处理移动单位
    */
   private handleMoveUnit(client: Client, data: { unitId: string, toQ: number, toR: number, toS: number }) {
@@ -993,69 +1062,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         crushedMachines.forEach(crushedMachine => {
           if (crushedMachine.type === 'chariot') {
             // 被碾压的战车崩解为2个不可行动的步兵
-            const crushedChariotPos = { q: crushedMachine.q, r: crushedMachine.r, s: crushedMachine.s };
             this.state.units.delete(crushedMachine.id);
             this.addBattleLog(`${crushedMachine.owner}的战车被碾压，崩解！`);
-
-            // 战车崩毁：如果击杀过敌人，神机将军拥有者获得重投机会
-            if ((crushedMachine as any).killCount > 0) {
-              if (crushedMachine.owner === "player1") {
-                this.state.player1RerollTokens++;
-              } else {
-                this.state.player2RerollTokens++;
-              }
-              this.addBattleLog(`战车崩毁，${crushedMachine.owner === "player1" ? "玩家1" : "玩家2"}获得1次重投机会`);
-            }
-
-            // 生成第一个步兵（原位置）
-            const infantry1 = new UnitSchema();
-            infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            infantry1.type = "infantry";
-            infantry1.owner = crushedMachine.owner;
-            infantry1.q = crushedChariotPos.q;
-            infantry1.r = crushedChariotPos.r;
-            infantry1.s = crushedChariotPos.s;
-            infantry1.direction = crushedMachine.direction;
-            infantry1.hp = 2;
-            infantry1.maxHp = 2;
-            infantry1.hasMoved = true; // 本回合不能再移动
-            infantry1.hasActedThisTurn = true; // 本回合不能再行动
-            infantry1.actionsThisTurn = 1;
-
-            this.state.units.set(infantry1.id, infantry1);
-
-            // 第二个步兵：寻找相邻空位
-            const neighbors = hexNeighbors(crushedChariotPos);
-            const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
-              // 检查是否有单位占用
-              const occupied = Array.from(this.state.units.values()).some(u =>
-                u.q === pos.q && u.r === pos.r && u.s === pos.s
-              );
-              // 检查是否被机关单位占据
-              const occupiedByMachine = this.isHexOccupiedByMachine(pos);
-              return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
-            });
-
-            if (emptyPos) {
-              const infantry2 = new UnitSchema();
-              infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
-              infantry2.type = "infantry";
-              infantry2.owner = crushedMachine.owner;
-              infantry2.q = emptyPos.q;
-              infantry2.r = emptyPos.r;
-              infantry2.s = emptyPos.s;
-              infantry2.direction = crushedMachine.direction;
-              infantry2.hp = 2;
-              infantry2.maxHp = 2;
-              infantry2.hasMoved = true; // 本回合不能再移动
-              infantry2.hasActedThisTurn = true; // 本回合不能再行动
-              infantry2.actionsThisTurn = 1;
-
-              this.state.units.set(infantry2.id, infantry2);
-              this.addBattleLog(`被碾压战车崩解为2个满血步兵`);
-            } else {
-              this.addBattleLog(`被碾压战车崩解为1个满血步兵（无相邻空位）`);
-            }
+            this.handleChariotDeath(crushedMachine);
           } else {
             // 弩车直接删除
             this.state.units.delete(crushedMachine.id);
@@ -1064,56 +1073,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         });
 
         // 碾压方的战车也崩解
-        const chariotPos = { q: unit.q, r: unit.r, s: unit.s };
         this.state.units.delete(unit.id);
         this.addBattleLog(`战车碾压到机关单位，崩解！`);
-
-        // 生成碾压方的2个不可行动的步兵
-        const infantry1 = new UnitSchema();
-        infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        infantry1.type = "infantry";
-        infantry1.owner = role;
-        infantry1.q = chariotPos.q;
-        infantry1.r = chariotPos.r;
-        infantry1.s = chariotPos.s;
-        infantry1.direction = unit.direction;
-        infantry1.hp = 2;
-        infantry1.maxHp = 2;
-        infantry1.hasMoved = true;
-        infantry1.hasActedThisTurn = false;
-        infantry1.actionsThisTurn = 1;
-
-        this.state.units.set(infantry1.id, infantry1);
-
-        const neighbors = hexNeighbors(chariotPos);
-        const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
-          const occupied = Array.from(this.state.units.values()).some(u =>
-            u.q === pos.q && u.r === pos.r && u.s === pos.s
-          );
-          const occupiedByMachine = this.isHexOccupiedByMachine(pos);
-          return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
-        });
-
-        if (emptyPos) {
-          const infantry2 = new UnitSchema();
-          infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
-          infantry2.type = "infantry";
-          infantry2.owner = role;
-          infantry2.q = emptyPos.q;
-          infantry2.r = emptyPos.r;
-          infantry2.s = emptyPos.s;
-          infantry2.direction = unit.direction;
-          infantry2.hp = 2;
-          infantry2.maxHp = 2;
-          infantry2.hasMoved = true; // 本回合不能再移动
-          infantry2.hasActedThisTurn = true; // 本回合不能再行动
-          infantry2.actionsThisTurn = 1;
-
-          this.state.units.set(infantry2.id, infantry2);
-          this.addBattleLog(`碾压方战车崩解为2个满血步兵`);
-        } else {
-          this.addBattleLog(`碾压方战车崩解为1个满血步兵（无相邻空位）`);
-        }
+        this.handleChariotDeath(unit);
 
         // 战车已崩解，不继续后续逻辑
         return;
@@ -1170,69 +1132,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       // 检查战车是否因为碾压而崩毁（血量≤0）
       if (unit.hp <= 0) {
         console.log(`[DEBUG] 战车血量耗尽，开始崩毁流程`);
-        const chariotPos = { q: unit.q, r: unit.r, s: unit.s };
         this.state.units.delete(unit.id);
         this.addBattleLog(`战车血量耗尽，崩毁！`);
-
-        // 战车崩毁：如果击杀过敌人，神机将军拥有者获得重投机会
-        if ((unit as any).killCount > 0) {
-          if (role === "player1") {
-            this.state.player1RerollTokens++;
-          } else {
-            this.state.player2RerollTokens++;
-          }
-          this.addBattleLog(`战车崩毁，${role === "player1" ? "玩家1" : "玩家2"}获得1次重投机会`);
-        }
-
-        // 战车崩毁后，原地生成2个满血步兵
-        const infantry1 = new UnitSchema();
-        infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        infantry1.type = "infantry";
-        infantry1.owner = role;
-        infantry1.q = chariotPos.q;
-        infantry1.r = chariotPos.r;
-        infantry1.s = chariotPos.s;
-        infantry1.direction = unit.direction;
-        infantry1.hp = 2;
-        infantry1.maxHp = 2;
-        infantry1.hasMoved = true; // 本回合不能再移动
-        infantry1.hasActedThisTurn = true; // 本回合不能再行动
-        infantry1.actionsThisTurn = 1;
-
-        this.state.units.set(infantry1.id, infantry1);
-
-        // 第二个步兵：寻找相邻空位
-        const neighbors = hexNeighbors(chariotPos);
-        const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
-          // 检查是否有单位占用
-          const occupied = Array.from(this.state.units.values()).some(u =>
-            u.q === pos.q && u.r === pos.r && u.s === pos.s
-          );
-          // 检查是否被机关单位占据
-          const occupiedByMachine = this.isHexOccupiedByMachine(pos);
-          return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
-        });
-
-        if (emptyPos) {
-          const infantry2 = new UnitSchema();
-          infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
-          infantry2.type = "infantry";
-          infantry2.owner = role;
-          infantry2.q = emptyPos.q;
-          infantry2.r = emptyPos.r;
-          infantry2.s = emptyPos.s;
-          infantry2.direction = unit.direction;
-          infantry2.hp = 2;
-          infantry2.maxHp = 2;
-          infantry2.hasMoved = true; // 本回合不能再移动
-          infantry2.hasActedThisTurn = true; // 本回合不能再行动
-          infantry2.actionsThisTurn = 1;
-
-          this.state.units.set(infantry2.id, infantry2);
-          this.addBattleLog(`战车崩毁为2个满血步兵`);
-        } else {
-          this.addBattleLog(`战车崩毁为1个满血步兵（无相邻空位）`);
-        }
+        this.handleChariotDeath(unit);
 
         // 战车已崩毁，不继续后续逻辑（避免重复触发触底逻辑）
         return;
@@ -1470,69 +1372,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       // 非仁德阵营 或 仁德击杀中立单位：直接击杀
       // 如果被击杀的是战车，先生成2个不可移动的步兵
       if (target.type === 'chariot') {
-        const chariotPos = { q: target.q, r: target.r, s: target.s };
         this.state.units.delete(data.targetId);
         this.addBattleLog(`${target.owner}的战车被击杀，崩毁！`);
-
-        // 战车崩毁：如果击杀过敌人，神机将军拥有者获得重投机会
-        if ((target as any).killCount > 0) {
-          if (target.owner === "player1") {
-            this.state.player1RerollTokens++;
-          } else {
-            this.state.player2RerollTokens++;
-          }
-          this.addBattleLog(`战车崩毁，${target.owner === "player1" ? "玩家1" : "玩家2"}获得1次重投机会`);
-        }
-
-        // 战车崩毁后，原地生成2个满血步兵（不可移动）
-        const infantry1 = new UnitSchema();
-        infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        infantry1.type = "infantry";
-        infantry1.owner = target.owner;
-        infantry1.q = chariotPos.q;
-        infantry1.r = chariotPos.r;
-        infantry1.s = chariotPos.s;
-        infantry1.direction = target.direction;
-        infantry1.hp = 2;
-        infantry1.maxHp = 2;
-        infantry1.hasMoved = true; // 本回合不能再移动
-        infantry1.hasActedThisTurn = true; // 本回合不能再行动
-        infantry1.actionsThisTurn = 1;
-
-        this.state.units.set(infantry1.id, infantry1);
-
-        // 第二个步兵：寻找相邻空位
-        const neighbors = hexNeighbors(chariotPos);
-        const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
-          // 检查是否有单位占用
-          const occupied = Array.from(this.state.units.values()).some(u =>
-            u.q === pos.q && u.r === pos.r && u.s === pos.s
-          );
-          // 检查是否被机关单位占据
-          const occupiedByMachine = this.isHexOccupiedByMachine(pos);
-          return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
-        });
-
-        if (emptyPos) {
-          const infantry2 = new UnitSchema();
-          infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
-          infantry2.type = "infantry";
-          infantry2.owner = target.owner;
-          infantry2.q = emptyPos.q;
-          infantry2.r = emptyPos.r;
-          infantry2.s = emptyPos.s;
-          infantry2.direction = target.direction;
-          infantry2.hp = 2;
-          infantry2.maxHp = 2;
-          infantry2.hasMoved = true; // 本回合不能再移动
-          infantry2.hasActedThisTurn = true; // 本回合不能再行动
-          infantry2.actionsThisTurn = 1;
-
-          this.state.units.set(infantry2.id, infantry2);
-          this.addBattleLog(`战车崩毁为2个满血步兵`);
-        } else {
-          this.addBattleLog(`战车崩毁为1个满血步兵（无相邻空位）`);
-        }
+        this.handleChariotDeath(target);
       } else {
         // 非战车单位：直接击杀
         this.state.units.delete(data.targetId);
@@ -1677,69 +1519,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       if (target.hp <= 0) {
         // 如果击杀的是战车，需要先生成2个不可行动的步兵
         if (target.type === 'chariot') {
-          const chariotPos = { q: target.q, r: target.r, s: target.s };
           this.state.units.delete(target.id);
           this.addBattleLog(`${target.owner}的战车被弩车贯穿击杀，崩毁！`);
-
-          // 战车崩毁：如果击杀过敌人，神机将军拥有者获得重投机会
-          if ((target as any).killCount > 0) {
-            if (target.owner === "player1") {
-              this.state.player1RerollTokens++;
-            } else {
-              this.state.player2RerollTokens++;
-            }
-            this.addBattleLog(`战车崩毁，${target.owner === "player1" ? "玩家1" : "玩家2"}获得1次重投机会`);
-          }
-
-          // 战车崩毁后，原地生成2个满血步兵（不可行动）
-          const infantry1 = new UnitSchema();
-          infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          infantry1.type = "infantry";
-          infantry1.owner = target.owner;
-          infantry1.q = chariotPos.q;
-          infantry1.r = chariotPos.r;
-          infantry1.s = chariotPos.s;
-          infantry1.direction = target.direction;
-          infantry1.hp = 2;
-          infantry1.maxHp = 2;
-          infantry1.hasMoved = true; // 本回合不能再移动
-          infantry1.hasActedThisTurn = true; // 本回合不能再行动
-          infantry1.actionsThisTurn = 1;
-
-          this.state.units.set(infantry1.id, infantry1);
-
-          // 第二个步兵：寻找相邻空位
-          const neighbors = hexNeighbors(chariotPos);
-          const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
-            // 检查是否有单位占用
-            const occupied = Array.from(this.state.units.values()).some(u =>
-              u.q === pos.q && u.r === pos.r && u.s === pos.s
-            );
-            // 检查是否被机关单位占据
-            const occupiedByMachine = this.isHexOccupiedByMachine(pos);
-            return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
-          });
-
-          if (emptyPos) {
-            const infantry2 = new UnitSchema();
-            infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
-            infantry2.type = "infantry";
-            infantry2.owner = target.owner;
-            infantry2.q = emptyPos.q;
-            infantry2.r = emptyPos.r;
-            infantry2.s = emptyPos.s;
-            infantry2.direction = target.direction;
-            infantry2.hp = 2;
-            infantry2.maxHp = 2;
-            infantry2.hasMoved = true; // 本回合不能再移动
-            infantry2.hasActedThisTurn = true; // 本回合不能再行动
-            infantry2.actionsThisTurn = 1;
-
-            this.state.units.set(infantry2.id, infantry2);
-            this.addBattleLog(`战车崩毁为2个满血步兵`);
-          } else {
-            this.addBattleLog(`战车崩毁为1个满血步兵（无相邻空位）`);
-          }
+          this.handleChariotDeath(target);
         } else {
           // 非战车单位：直接删除
           this.state.units.delete(target.id);
@@ -1858,69 +1640,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     if (target.hp <= 0) {
       // 如果击杀的是战车，需要先生成2个不可行动的步兵
       if (target.type === 'chariot') {
-        const chariotPos = { q: target.q, r: target.r, s: target.s };
         this.state.units.delete(data.targetId);
         this.addBattleLog(`${target.owner}的战车被弩车近战击杀，崩毁！`);
-
-        // 战车崩毁：如果击杀过敌人，神机将军拥有者获得重投机会
-        if ((target as any).killCount > 0) {
-          if (target.owner === "player1") {
-            this.state.player1RerollTokens++;
-          } else {
-            this.state.player2RerollTokens++;
-          }
-          this.addBattleLog(`战车崩毁，${target.owner === "player1" ? "玩家1" : "玩家2"}获得1次重投机会`);
-        }
-
-        // 战车崩毁后，原地生成2个满血步兵（不可行动）
-        const infantry1 = new UnitSchema();
-        infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        infantry1.type = "infantry";
-        infantry1.owner = target.owner;
-        infantry1.q = chariotPos.q;
-        infantry1.r = chariotPos.r;
-        infantry1.s = chariotPos.s;
-        infantry1.direction = target.direction;
-        infantry1.hp = 2;
-        infantry1.maxHp = 2;
-        infantry1.hasMoved = true; // 本回合不能再移动
-        infantry1.hasActedThisTurn = true; // 本回合不能再行动
-        infantry1.actionsThisTurn = 1;
-
-        this.state.units.set(infantry1.id, infantry1);
-
-        // 第二个步兵：寻找相邻空位
-        const neighbors = hexNeighbors(chariotPos);
-        const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
-          // 检查是否有单位占用
-          const occupied = Array.from(this.state.units.values()).some(u =>
-            u.q === pos.q && u.r === pos.r && u.s === pos.s
-          );
-          // 检查是否被机关单位占据
-          const occupiedByMachine = this.isHexOccupiedByMachine(pos);
-          return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
-        });
-
-        if (emptyPos) {
-          const infantry2 = new UnitSchema();
-          infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
-          infantry2.type = "infantry";
-          infantry2.owner = target.owner;
-          infantry2.q = emptyPos.q;
-          infantry2.r = emptyPos.r;
-          infantry2.s = emptyPos.s;
-          infantry2.direction = target.direction;
-          infantry2.hp = 2;
-          infantry2.maxHp = 2;
-          infantry2.hasMoved = true; // 本回合不能再移动
-          infantry2.hasActedThisTurn = true; // 本回合不能再行动
-          infantry2.actionsThisTurn = 1;
-
-          this.state.units.set(infantry2.id, infantry2);
-          this.addBattleLog(`战车崩毁为2个满血步兵`);
-        } else {
-          this.addBattleLog(`战车崩毁为1个满血步兵（无相邻空位）`);
-        }
+        this.handleChariotDeath(target);
       } else {
         // 非战车单位：直接删除
         this.state.units.delete(data.targetId);
@@ -3048,76 +2770,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
     }
 
-    // 如果击杀了战车，检查是否碾死过敌人，如果是则给神机将军拥有者重投机会，并生成2个步兵
+    // 如果击杀了战车，战车崩毁：生成2个满血步兵，并检查是否给重投机会
     if (target.type === "chariot") {
-      const targetOwner = target.owner;
-      const chariotPos = { q: target.q, r: target.r, s: target.s };
-
-      const shenjiGeneral = Array.from(this.state.units.values()).find(u =>
-        u.owner === targetOwner && u.type === "general" && u.generalType === "shenji"
-      );
-      // 只有当战车生前碾死过敌人时，才给重投机会
-      if (shenjiGeneral && target.killCount > 0) {
-        if (targetOwner === "player1") {
-          this.state.player1RerollTokens++;
-          this.addBattleLog(`玩家1的战车被击毁（生前碾死${target.killCount}个敌人），获得1次重投机会`);
-        } else {
-          this.state.player2RerollTokens++;
-          this.addBattleLog(`玩家2的战车被击毁（生前碾死${target.killCount}个敌人），获得1次重投机会`);
-        }
-      } else if (shenjiGeneral) {
-        this.addBattleLog(`${targetOwner === "player1" ? "玩家1" : "玩家2"}的战车被击毁（未碾死敌人），无重投奖励`);
-      }
-
-      // 战车崩毁：生成2个满血步兵
-      const infantry1 = new UnitSchema();
-      infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      infantry1.type = "infantry";
-      infantry1.owner = targetOwner;
-      infantry1.q = chariotPos.q;
-      infantry1.r = chariotPos.r;
-      infantry1.s = chariotPos.s;
-      infantry1.direction = target.direction;
-      infantry1.hp = 2;
-      infantry1.maxHp = 2;
-      infantry1.hasMoved = true; // 本回合不能再移动
-      infantry1.hasActedThisTurn = true; // 本回合不能再行动
-      infantry1.actionsThisTurn = 1;
-
-      this.state.units.set(infantry1.id, infantry1);
-
-      // 第二个步兵：寻找相邻空位
-      const neighbors = hexNeighbors(chariotPos);
-      const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
-        // 检查是否有单位占用
-        const occupied = Array.from(this.state.units.values()).some(u =>
-          u.q === pos.q && u.r === pos.r && u.s === pos.s
-        );
-        // 检查是否在地图范围内
-        const inRange = isInMapRange(pos, 5);
-        return !occupied && inRange;
-      });
-
-      if (emptyPos) {
-        const infantry2 = new UnitSchema();
-        infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
-        infantry2.type = "infantry";
-        infantry2.owner = targetOwner;
-        infantry2.q = emptyPos.q;
-        infantry2.r = emptyPos.r;
-        infantry2.s = emptyPos.s;
-        infantry2.direction = target.direction;
-        infantry2.hp = 2;
-        infantry2.maxHp = 2;
-        infantry2.hasMoved = true; // 本回合不能再移动
-        infantry2.hasActedThisTurn = true; // 本回合不能再行动
-        infantry2.actionsThisTurn = 1;
-
-        this.state.units.set(infantry2.id, infantry2);
-        this.addBattleLog(`战车被击杀崩解为2个满血步兵`);
-      } else {
-        this.addBattleLog(`战车被击杀崩解为1个满血步兵（无相邻空位）`);
-      }
+      this.handleChariotDeath(target);
     }
 
     client.send("info", { message: "击杀完成" });

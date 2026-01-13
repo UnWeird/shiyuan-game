@@ -1856,8 +1856,76 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 检查是否击杀
     if (target.hp <= 0) {
-      this.state.units.delete(data.targetId);
-      this.addBattleLog(`${target.owner}的${target.type}被弩车近战击杀！`);
+      // 如果击杀的是战车，需要先生成2个不可行动的步兵
+      if (target.type === 'chariot') {
+        const chariotPos = { q: target.q, r: target.r, s: target.s };
+        this.state.units.delete(data.targetId);
+        this.addBattleLog(`${target.owner}的战车被弩车近战击杀，崩毁！`);
+
+        // 战车崩毁：如果击杀过敌人，神机将军拥有者获得重投机会
+        if ((target as any).killCount > 0) {
+          if (target.owner === "player1") {
+            this.state.player1RerollTokens++;
+          } else {
+            this.state.player2RerollTokens++;
+          }
+          this.addBattleLog(`战车崩毁，${target.owner === "player1" ? "玩家1" : "玩家2"}获得1次重投机会`);
+        }
+
+        // 战车崩毁后，原地生成2个满血步兵（不可行动）
+        const infantry1 = new UnitSchema();
+        infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        infantry1.type = "infantry";
+        infantry1.owner = target.owner;
+        infantry1.q = chariotPos.q;
+        infantry1.r = chariotPos.r;
+        infantry1.s = chariotPos.s;
+        infantry1.direction = target.direction;
+        infantry1.hp = 2;
+        infantry1.maxHp = 2;
+        infantry1.hasMoved = true; // 本回合不能再移动
+        infantry1.hasActedThisTurn = true; // 本回合不能再行动
+        infantry1.actionsThisTurn = 1;
+
+        this.state.units.set(infantry1.id, infantry1);
+
+        // 第二个步兵：寻找相邻空位
+        const neighbors = hexNeighbors(chariotPos);
+        const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
+          // 检查是否有单位占用
+          const occupied = Array.from(this.state.units.values()).some(u =>
+            u.q === pos.q && u.r === pos.r && u.s === pos.s
+          );
+          // 检查是否被机关单位占据
+          const occupiedByMachine = this.isHexOccupiedByMachine(pos);
+          return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
+        });
+
+        if (emptyPos) {
+          const infantry2 = new UnitSchema();
+          infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
+          infantry2.type = "infantry";
+          infantry2.owner = target.owner;
+          infantry2.q = emptyPos.q;
+          infantry2.r = emptyPos.r;
+          infantry2.s = emptyPos.s;
+          infantry2.direction = target.direction;
+          infantry2.hp = 2;
+          infantry2.maxHp = 2;
+          infantry2.hasMoved = true; // 本回合不能再移动
+          infantry2.hasActedThisTurn = true; // 本回合不能再行动
+          infantry2.actionsThisTurn = 1;
+
+          this.state.units.set(infantry2.id, infantry2);
+          this.addBattleLog(`战车崩毁为2个满血步兵`);
+        } else {
+          this.addBattleLog(`战车崩毁为1个满血步兵（无相邻空位）`);
+        }
+      } else {
+        // 非战车单位：直接删除
+        this.state.units.delete(data.targetId);
+        this.addBattleLog(`${target.owner}的${target.type}被弩车近战击杀！`);
+      }
 
       // 如果击杀了将军，永久减少对方骰子数
       if (target.type === "general") {

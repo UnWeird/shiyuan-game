@@ -992,36 +992,69 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         // 先处理被碾压的战车的崩解（如果有）
         crushedMachines.forEach(crushedMachine => {
           if (crushedMachine.type === 'chariot') {
-            // 被碾压的战车崩解为步兵
+            // 被碾压的战车崩解为2个不可行动的步兵
             const crushedChariotPos = { q: crushedMachine.q, r: crushedMachine.r, s: crushedMachine.s };
             this.state.units.delete(crushedMachine.id);
             this.addBattleLog(`${crushedMachine.owner}的战车被碾压，崩解！`);
 
-            // 尝试在原位置生成步兵
-            const posOccupied = Array.from(this.state.units.values()).some(u =>
-              u.q === crushedChariotPos.q && u.r === crushedChariotPos.r && u.s === crushedChariotPos.s
-            );
+            // 战车崩毁：如果击杀过敌人，神机将军拥有者获得重投机会
+            if ((crushedMachine as any).killCount > 0) {
+              if (crushedMachine.owner === "player1") {
+                this.state.player1RerollTokens++;
+              } else {
+                this.state.player2RerollTokens++;
+              }
+              this.addBattleLog(`战车崩毁，${crushedMachine.owner === "player1" ? "玩家1" : "玩家2"}获得1次重投机会`);
+            }
 
-            if (!posOccupied) {
-              // 原位置空闲，生成步兵
-              const infantry = new UnitSchema();
-              infantry.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_crushed`;
-              infantry.type = "infantry";
-              infantry.owner = crushedMachine.owner;
-              infantry.q = crushedChariotPos.q;
-              infantry.r = crushedChariotPos.r;
-              infantry.s = crushedChariotPos.s;
-              infantry.direction = crushedMachine.direction;
-              infantry.hp = 2;
-              infantry.maxHp = 2;
-              infantry.hasMoved = true;
-              infantry.hasActedThisTurn = false;
-              infantry.actionsThisTurn = 1;
+            // 生成第一个步兵（原位置）
+            const infantry1 = new UnitSchema();
+            infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            infantry1.type = "infantry";
+            infantry1.owner = crushedMachine.owner;
+            infantry1.q = crushedChariotPos.q;
+            infantry1.r = crushedChariotPos.r;
+            infantry1.s = crushedChariotPos.s;
+            infantry1.direction = crushedMachine.direction;
+            infantry1.hp = 2;
+            infantry1.maxHp = 2;
+            infantry1.hasMoved = true; // 本回合不能再移动
+            infantry1.hasActedThisTurn = true; // 本回合不能再行动
+            infantry1.actionsThisTurn = 1;
 
-              this.state.units.set(infantry.id, infantry);
-              this.addBattleLog(`被碾压战车崩解为1个步兵`);
+            this.state.units.set(infantry1.id, infantry1);
+
+            // 第二个步兵：寻找相邻空位
+            const neighbors = hexNeighbors(crushedChariotPos);
+            const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
+              // 检查是否有单位占用
+              const occupied = Array.from(this.state.units.values()).some(u =>
+                u.q === pos.q && u.r === pos.r && u.s === pos.s
+              );
+              // 检查是否被机关单位占据
+              const occupiedByMachine = this.isHexOccupiedByMachine(pos);
+              return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
+            });
+
+            if (emptyPos) {
+              const infantry2 = new UnitSchema();
+              infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
+              infantry2.type = "infantry";
+              infantry2.owner = crushedMachine.owner;
+              infantry2.q = emptyPos.q;
+              infantry2.r = emptyPos.r;
+              infantry2.s = emptyPos.s;
+              infantry2.direction = crushedMachine.direction;
+              infantry2.hp = 2;
+              infantry2.maxHp = 2;
+              infantry2.hasMoved = true; // 本回合不能再移动
+              infantry2.hasActedThisTurn = true; // 本回合不能再行动
+              infantry2.actionsThisTurn = 1;
+
+              this.state.units.set(infantry2.id, infantry2);
+              this.addBattleLog(`被碾压战车崩解为2个满血步兵`);
             } else {
-              this.addBattleLog(`被碾压战车原地被占用，无法生成步兵`);
+              this.addBattleLog(`被碾压战车崩解为1个满血步兵（无相邻空位）`);
             }
           } else {
             // 弩车直接删除

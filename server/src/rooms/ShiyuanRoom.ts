@@ -2715,6 +2715,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
+    // 如果击杀了战车，先处理战车崩毁（生成步兵），再删除战车
+    if (target.type === "chariot") {
+      this.handleChariotDeath(target);
+    }
+
     // 删除单位
     this.state.units.delete(data.targetId);
     this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}击杀了${target.owner}的${target.type}`);
@@ -2774,10 +2779,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
     }
 
-    // 如果击杀了战车，战车崩毁：生成2个满血步兵，并检查是否给重投机会
-    if (target.type === "chariot") {
-      this.handleChariotDeath(target);
-    }
+    // 注意：战车的处理已经在前面完成，这里不需要再处理
 
     client.send("info", { message: "击杀完成" });
   }

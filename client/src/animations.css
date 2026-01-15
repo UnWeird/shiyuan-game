@@ -1,0 +1,361 @@
+/* 十元棋游戏 - 动画样式 */
+
+/* ========== 按钮动画 ========== */
+
+/* 通用按钮 hover 效果 */
+button {
+  transition: all 0.2s ease-in-out;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ========== 单位棋子动画 ========== */
+
+/* 单位选中脉动效果 */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+  }
+}
+
+.unit-selected {
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+/* 单位 hover 效果 */
+.unit-piece {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+}
+
+.unit-piece:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+/* ========== 六边形格子动画 ========== */
+
+/* 可移动格子呼吸动画 */
+@keyframes hex-breathe-move {
+  0%, 100% {
+    fill-opacity: 0.3;
+  }
+  50% {
+    fill-opacity: 0.6;
+  }
+}
+
+.hex-movable {
+  animation: hex-breathe-move 2s ease-in-out infinite;
+  transition: fill-opacity 0.3s ease;
+}
+
+/* 可攻击格子脉动动画 */
+@keyframes hex-pulse-attack {
+  0%, 100% {
+    fill-opacity: 0.4;
+  }
+  50% {
+    fill-opacity: 0.7;
+  }
+}
+
+.hex-attackable {
+  animation: hex-pulse-attack 1.5s ease-in-out infinite;
+  transition: fill-opacity 0.3s ease;
+}
+
+/* 格子 hover 效果 */
+.hex-hover {
+  transition: fill-opacity 0.2s ease, stroke-width 0.2s ease;
+}
+
+.hex-hover:hover {
+  fill-opacity: 0.8 !important;
+  stroke-width: 3;
+  cursor: pointer;
+}
+
+/* ========== 骰子动画 ========== */
+
+/* 骰子投掷旋转动画 */
+@keyframes dice-roll {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  25% {
+    transform: rotate(90deg) scale(1.2);
+  }
+  50% {
+    transform: rotate(180deg) scale(1);
+  }
+  75% {
+    transform: rotate(270deg) scale(1.2);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+.dice-rolling {
+  animation: dice-roll 0.6s ease-in-out;
+}
+
+/* 骰子选中效果 */
+.dice-selected {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+  transition: all 0.2s ease;
+}
+
+.dice-clickable {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+}
+
+.dice-clickable:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* ========== 面板卡片动画 ========== */
+
+/* 信息面板淡入 */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.panel-card {
+  animation: fade-in 0.3s ease-out;
+  transition: box-shadow 0.3s ease;
+}
+
+.panel-card:hover {
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* ========== 战斗日志动画 ========== */
+
+/* 新日志条目滑入 */
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.battle-log-entry {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+/* ========== 回合切换动画 ========== */
+
+/* 回合切换闪烁 */
+@keyframes turn-flash {
+  0%, 100% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: rgba(59, 130, 246, 0.2);
+  }
+}
+
+.turn-transition {
+  animation: turn-flash 0.5s ease-in-out;
+}
+
+/* ========== 伤害飘字动画 ========== */
+
+/* 伤害数字飘动 */
+@keyframes damage-float {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-20px) scale(1.2);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-40px) scale(0.8);
+  }
+}
+
+.damage-number {
+  animation: damage-float 1s ease-out forwards;
+  pointer-events: none;
+  position: absolute;
+  font-weight: bold;
+  font-size: 1.5rem;
+  color: #ef4444;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+/* 治疗飘字（如果有） */
+.heal-number {
+  animation: damage-float 1s ease-out forwards;
+  color: #22c55e;
+}
+
+/* ========== 模态框动画 ========== */
+
+/* 模态框淡入缩放 */
+@keyframes modal-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modal-content {
+  animation: modal-appear 0.2s ease-out;
+}
+
+/* 遮罩层淡入 */
+@keyframes overlay-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-overlay {
+  animation: overlay-fade 0.2s ease-out;
+}
+
+/* ========== 加载动画 ========== */
+
+/* 旋转加载 */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-spinner {
+  animation: spin 1s linear infinite;
+}
+
+/* 脉动加载 */
+@keyframes loading-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.loading-pulse {
+  animation: loading-pulse 1.5s ease-in-out infinite;
+}
+
+/* ========== 部署区域动画 ========== */
+
+/* 部署区域高亮 */
+@keyframes deploy-zone-glow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.6);
+  }
+}
+
+.deploy-zone-active {
+  animation: deploy-zone-glow 2s ease-in-out infinite;
+}
+
+/* ========== 技能特效 ========== */
+
+/* 无双扇形攻击高亮 */
+@keyframes fan-attack-pulse {
+  0%, 100% {
+    fill-opacity: 0.3;
+  }
+  50% {
+    fill-opacity: 0.6;
+  }
+}
+
+.fan-attack-hex {
+  animation: fan-attack-pulse 1s ease-in-out infinite;
+}
+
+/* ========== 震动效果 ========== */
+
+/* 攻击震动 */
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+
+.shake-on-hit {
+  animation: shake 0.3s ease-in-out;
+}
+
+/* ========== 通用工具类 ========== */
+
+/* 平滑过渡 */
+.transition-smooth {
+  transition: all 0.3s ease;
+}
+
+/* 快速过渡 */
+.transition-fast {
+  transition: all 0.15s ease;
+}
+
+/* 慢速过渡 */
+.transition-slow {
+  transition: all 0.5s ease;
+}
+
+/* 禁用动画（性能模式） */
+.reduce-motion * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

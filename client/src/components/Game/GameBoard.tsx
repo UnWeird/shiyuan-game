@@ -1369,9 +1369,9 @@ export const GameBoard: React.FC = () => {
                 <button
                   onClick={handleEndTurn}
                   disabled={!isMyTurn}
-                  className={`flex-1 px-6 py-3 rounded-lg font-bold ${
+                  className={`flex-1 px-6 py-3 rounded-lg font-bold shadow-md transition-all ${
                     isMyTurn
-                      ? 'bg-red-500 text-white hover:bg-red-600 cursor-pointer'
+                      ? 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 hover:shadow-lg cursor-pointer'
                       : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   }`}
                 >
@@ -1380,7 +1380,7 @@ export const GameBoard: React.FC = () => {
                 {isOnlineMode && (
                   <button
                     onClick={handleSurrender}
-                    className="px-6 py-3 rounded-lg font-bold bg-gray-600 text-white hover:bg-gray-700 cursor-pointer"
+                    className="px-6 py-3 rounded-lg font-bold shadow-md bg-gradient-to-r from-gray-600 to-gray-700 text-white hover:from-gray-700 hover:to-gray-800 hover:shadow-lg cursor-pointer transition-all"
                   >
                     认输
                   </button>
@@ -1590,7 +1590,7 @@ export const GameBoard: React.FC = () => {
 
                       return false;
                     })()}
-                    className="w-full px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                    className="w-full px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg shadow-md hover:from-green-600 hover:to-green-700 hover:shadow-lg disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-semibold transition-all"
                   >
                     移动 {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1 ? '(部署阶段不可用)' : ''}
                   </button>
@@ -2010,7 +2010,7 @@ export const GameBoard: React.FC = () => {
               {actionMode === 'deploy' && (
                 <button
                   onClick={handleCancelDeploy}
-                  className="w-full px-4 py-2 mb-3 bg-gray-500 text-white rounded hover:bg-gray-600 text-sm"
+                  className="w-full px-4 py-2 mb-3 bg-gradient-to-r from-gray-500 to-gray-600 text-white rounded-lg shadow-md hover:from-gray-600 hover:to-gray-700 hover:shadow-lg text-sm font-semibold transition-all"
                 >
                   取消部署
                 </button>
@@ -2018,28 +2018,28 @@ export const GameBoard: React.FC = () => {
 
               <div className="space-y-2">
                 <button
-                  className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 hover:shadow-lg text-sm font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
                   onClick={() => handleStartDeploy(UnitType.INFANTRY)}
                   disabled={!isMyTurn || remainingCounts.infantry <= 0 || currentActionPoints < 1}
                 >
                   步兵 ({remainingCounts.infantry}/{army.infantry}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
-                  className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 hover:shadow-lg text-sm font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
                   onClick={() => handleStartDeploy(UnitType.CAVALRY)}
                   disabled={!isMyTurn || remainingCounts.cavalry <= 0 || currentActionPoints < 1}
                 >
                   骑兵 ({remainingCounts.cavalry}/{army.cavalry}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
-                  className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 hover:shadow-lg text-sm font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
                   onClick={() => handleStartDeploy(UnitType.ARCHER)}
                   disabled={!isMyTurn || remainingCounts.archer <= 0 || currentActionPoints < 1}
                 >
                   弓箭手 ({remainingCounts.archer}/{army.archer}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
-                  className="w-full px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-lg shadow-md hover:from-amber-600 hover:to-amber-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
                   onClick={() => handleStartDeploy(UnitType.GENERAL)}
                   disabled={!isMyTurn || remainingCounts.general <= 0 || currentActionPoints < 1}
                 >
@@ -2069,14 +2069,14 @@ export const GameBoard: React.FC = () => {
                         <h4 className="text-sm font-bold text-purple-700 mb-2">部署机关单位</h4>
                         <div className="space-y-2">
                           <button
-                            className="w-full px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
                             onClick={() => handleStartDeploy(UnitType.BALLISTA)}
                             disabled={!isMyTurn || currentActionPoints < 5}
                           >
                             弩车 (4步+1弓) - 5点 {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
                           <button
-                            className="w-full px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
                             onClick={() => handleStartDeploy(UnitType.CHARIOT)}
                             disabled={!isMyTurn || currentActionPoints < 4}
                           >

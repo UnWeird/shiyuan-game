@@ -62,6 +62,7 @@ export const HexTile: React.FC<HexTileProps> = ({
   let fillColor = '#f5f5f5';
   let strokeColor = '#d0d0d0';
   let strokeWidth = 1;
+  let hexClass = 'hex-hover';
 
   if (isBase) {
     fillColor = isPlayer1Zone ? '#fef3c7' : '#dbeafe';
@@ -75,6 +76,7 @@ export const HexTile: React.FC<HexTileProps> = ({
     fillColor = '#fcd34d';
     strokeColor = '#f59e0b';
     strokeWidth = 2;
+    hexClass = 'hex-movable hex-hover';
   } else if (isPlayer1Zone) {
     fillColor = '#fef9c3';
   } else if (isPlayer2Zone) {
@@ -90,11 +92,11 @@ export const HexTile: React.FC<HexTileProps> = ({
       onClick={handleClick}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
+      className={hexClass}
       style={{
         cursor: onClick ? 'pointer' : 'default',
         touchAction: 'none', // 防止默认的触摸行为（如滚动）
       }}
-      className="transition-all duration-200 hover:opacity-80"
     />
   );
 };

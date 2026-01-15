@@ -339,6 +339,7 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
       onClick={handleClick}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
+      className={`unit-piece ${isSelected ? 'unit-selected' : ''}`}
       style={{
         cursor: onClick ? 'pointer' : 'default',
         touchAction: 'none', // 防止默认的触摸行为（如滚动）

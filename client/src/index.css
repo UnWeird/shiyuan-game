@@ -1,9 +1,9 @@
+/* 引入动画样式 - 必须在最前面 */
+@import './animations.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* 引入动画样式 */
-@import './animations.css';
 
 body {
   margin: 0;

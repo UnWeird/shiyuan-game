@@ -1620,7 +1620,7 @@ export const GameBoard: React.FC = () => {
 
                           return false;
                         })()}
-                        className="w-full px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-bold"
+                        className="w-full px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-lg shadow-md hover:from-orange-600 hover:to-orange-700 hover:shadow-lg disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-bold transition-all"
                       >
                         扇形攻击（消耗3点）
                         {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可用)' : ''}
@@ -1901,7 +1901,7 @@ export const GameBoard: React.FC = () => {
                           setActionMode('attack');
                         }}
                         disabled={!isMyTurn || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1}
-                        className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                        className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
                       >
                         贯穿攻击 (射击) {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可攻击)' : ''}
                       </button>
@@ -1948,7 +1948,7 @@ export const GameBoard: React.FC = () => {
                           setActionMode('attack');
                         }}
                         disabled={!isMyTurn || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1}
-                        className="w-full px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                        className="w-full px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
                       >
                         近战攻击 {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可攻击)' : ''}
                       </button>
@@ -1963,7 +1963,7 @@ export const GameBoard: React.FC = () => {
                     <button
                       onClick={handleShowAttacks}
                       disabled={!isMyTurn || currentActionPoints < 1 || phase === GamePhase.DEPLOY || selectedUnit.hasAttacked || selectedUnit.actionsThisTurn >= 2}
-                      className="w-full px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                      className="w-full px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
                     >
                       攻击 {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可攻击)' : ''}
                     </button>
@@ -1980,7 +1980,7 @@ export const GameBoard: React.FC = () => {
                         currentActionPoints < 1 ||
                         selectedUnit.actionsThisTurn >= 2
                       }
-                      className="w-full px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                      className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
                     >
                       {actionMode === 'rotate' ? '选择射击方向' : '转向 (显示射程)'}
                       {!isMyTurn
@@ -2094,7 +2094,7 @@ export const GameBoard: React.FC = () => {
                           <button
                             onClick={handleShenjiAbility}
                             disabled={!isMyTurn}
-                            className="w-full px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            className="w-full px-4 py-2 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white rounded-lg shadow-md hover:from-indigo-600 hover:to-indigo-700 hover:shadow-lg transition-all text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
                           >
                             修改骰子 {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
@@ -2112,7 +2112,7 @@ export const GameBoard: React.FC = () => {
                                   <button
                                     key={value}
                                     onClick={() => handleModifyDice(value)}
-                                    className="px-3 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 text-sm font-bold"
+                                    className="px-3 py-2 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white rounded-lg shadow-md hover:from-indigo-600 hover:to-indigo-700 hover:shadow-lg transition-all text-sm font-bold"
                                   >
                                     {value}
                                   </button>
@@ -2122,7 +2122,7 @@ export const GameBoard: React.FC = () => {
 
                             <button
                               onClick={cancelShenjiAbility}
-                              className="w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 text-sm"
+                              className="w-full px-4 py-2 bg-gradient-to-r from-gray-500 to-gray-600 text-white rounded-lg shadow-md hover:from-gray-600 hover:to-gray-700 hover:shadow-lg transition-all text-sm"
                             >
                               取消
                             </button>
@@ -2167,7 +2167,7 @@ export const GameBoard: React.FC = () => {
                                     setRerollMode(false);
                                     addLog('取消重投', 'info');
                                   }}
-                                  className="w-full px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 text-sm"
+                                  className="w-full px-4 py-2 bg-gradient-to-r from-gray-500 to-gray-600 text-white rounded-lg shadow-md hover:from-gray-600 hover:to-gray-700 hover:shadow-lg transition-all text-sm"
                                 >
                                   取消
                                 </button>
@@ -2189,7 +2189,7 @@ export const GameBoard: React.FC = () => {
                         <button
                           onClick={handleWushuangInvincibility}
                           disabled={!isMyTurn}
-                          className="w-full px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                          className="w-full px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
                         >
                           获得已损失体力值的行动值 {!isMyTurn ? '(非你的回合)' : ''}
                         </button>
@@ -2277,7 +2277,7 @@ export const GameBoard: React.FC = () => {
                                 setActionMode('rende-neutral');
                               }}
                               disabled={!isMyTurn || currentActionPoints < convertCost}
-                              className="w-full px-4 py-2 bg-emerald-500 text-white rounded hover:bg-emerald-600 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                              className="w-full px-4 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-lg shadow-md hover:from-emerald-600 hover:to-emerald-700 hover:shadow-lg transition-all text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
                               转化为步兵（{convertCost}点） {!isMyTurn ? '(非你的回合)' : ''}
                             </button>
@@ -2320,7 +2320,7 @@ export const GameBoard: React.FC = () => {
                   setRendeKillConfirm(null);
                   selectUnit(null);
                 }}
-                className="flex-1 px-4 py-3 bg-red-500 text-white rounded hover:bg-red-600 font-bold"
+                className="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all font-bold"
               >
                 直接击杀
               </button>
@@ -2347,7 +2347,7 @@ export const GameBoard: React.FC = () => {
                   }
                   return currentActionPoints < requiredPoints;
                 })()}
-                className="flex-1 px-4 py-3 bg-green-500 text-white rounded hover:bg-green-600 font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg shadow-md hover:from-green-600 hover:to-green-700 hover:shadow-lg transition-all font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
                 转为中立标记（消耗{(() => {
                   let requiredPoints = 1;

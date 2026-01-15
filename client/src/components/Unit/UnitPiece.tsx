@@ -108,16 +108,16 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
         return (
           <g>
             <circle
-              cx={center.x}
-              cy={center.y}
+              cx={0}
+              cy={0}
               r={size / 2}
               fill={colors.primary}
               stroke={colors.stroke}
               strokeWidth={3}
             />
             <text
-              x={center.x}
-              y={center.y}
+              x={0}
+              y={0}
               textAnchor="middle"
               dominantBaseline="middle"
               fontSize={size * 0.5}
@@ -131,12 +131,7 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
 
       case UnitType.CAVALRY:
         // 骑兵 - 菱形
-        const diamondPoints = `
-          ${center.x},${center.y - size / 2}
-          ${center.x + size / 2},${center.y}
-          ${center.x},${center.y + size / 2}
-          ${center.x - size / 2},${center.y}
-        `;
+        const diamondPoints = `0,${-size / 2} ${size / 2},0 0,${size / 2} ${-size / 2},0`;
         return (
           <g>
             <polygon
@@ -146,8 +141,8 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
               strokeWidth={3}
             />
             <text
-              x={center.x}
-              y={center.y}
+              x={0}
+              y={0}
               textAnchor="middle"
               dominantBaseline="middle"
               fontSize={size * 0.5}
@@ -161,11 +156,7 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
 
       case UnitType.ARCHER:
         // 弓箭手 - 三角形
-        const trianglePoints = `
-          ${center.x},${center.y - size / 2}
-          ${center.x + size / 2},${center.y + size / 2}
-          ${center.x - size / 2},${center.y + size / 2}
-        `;
+        const trianglePoints = `0,${-size / 2} ${size / 2},${size / 2} ${-size / 2},${size / 2}`;
         return (
           <g>
             <polygon
@@ -175,8 +166,8 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
               strokeWidth={3}
             />
             <text
-              x={center.x}
-              y={center.y + size * 0.1}
+              x={0}
+              y={size * 0.1}
               textAnchor="middle"
               dominantBaseline="middle"
               fontSize={size * 0.45}
@@ -190,41 +181,42 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
 
       case UnitType.GENERAL:
         // 将军 - 五角星
-        const starPoints = [];
+        const starPointsArray = [];
         for (let i = 0; i < 5; i++) {
           const angle = (Math.PI / 2) + (i * 2 * Math.PI / 5);
           const outerRadius = size / 2;
           const innerRadius = size / 4;
 
           // 外点
-          starPoints.push(
-            `${center.x + outerRadius * Math.cos(angle)},${center.y - outerRadius * Math.sin(angle)}`
+          starPointsArray.push(
+            `${outerRadius * Math.cos(angle)},${-outerRadius * Math.sin(angle)}`
           );
           // 内点
           const innerAngle = angle + Math.PI / 5;
-          starPoints.push(
-            `${center.x + innerRadius * Math.cos(innerAngle)},${center.y - innerRadius * Math.sin(innerAngle)}`
+          starPointsArray.push(
+            `${innerRadius * Math.cos(innerAngle)},${-innerRadius * Math.sin(innerAngle)}`
           );
         }
+        const starPoints = starPointsArray.join(' ');
         return (
           <g>
             <polygon
-              points={starPoints.join(' ')}
+              points={starPoints}
               fill={colors.primary}
               stroke={colors.stroke}
               strokeWidth={3}
             />
             <circle
-              cx={center.x}
-              cy={center.y}
+              cx={0}
+              cy={0}
               r={size / 4}
               fill={colors.secondary}
               stroke={colors.stroke}
               strokeWidth={2}
             />
             <text
-              x={center.x}
-              y={center.y}
+              x={0}
+              y={0}
               textAnchor="middle"
               dominantBaseline="middle"
               fontSize={size * 0.35}
@@ -241,16 +233,16 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
         return (
           <g>
             <circle
-              cx={center.x}
-              cy={center.y}
+              cx={0}
+              cy={0}
               r={size / 3}
               fill="#9ca3af"
               stroke="#4b5563"
               strokeWidth={2}
             />
             <text
-              x={center.x}
-              y={center.y}
+              x={0}
+              y={0}
               textAnchor="middle"
               dominantBaseline="middle"
               fontSize={size * 0.35}
@@ -265,8 +257,8 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
       default:
         return (
           <circle
-            cx={center.x}
-            cy={center.y}
+            cx={0}
+            cy={0}
             r={size / 2}
             fill={colors.primary}
             stroke={colors.stroke}
@@ -294,8 +286,8 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
 
     const angle = angleMap[unit.direction];
     const arrowLength = size * 0.8;
-    const arrowX = center.x + Math.cos((angle * Math.PI) / 180) * arrowLength;
-    const arrowY = center.y + Math.sin((angle * Math.PI) / 180) * arrowLength;
+    const arrowX = Math.cos((angle * Math.PI) / 180) * arrowLength;
+    const arrowY = Math.sin((angle * Math.PI) / 180) * arrowLength;
 
     return (
       <>
@@ -313,8 +305,8 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
           </marker>
         </defs>
         <line
-          x1={center.x}
-          y1={center.y}
+          x1={0}
+          y1={0}
           x2={arrowX}
           y2={arrowY}
           stroke="#dc2626"
@@ -331,8 +323,8 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
 
     const barWidth = size;
     const barHeight = 6;
-    const barX = center.x - barWidth / 2;
-    const barY = center.y - size / 2 - 10;
+    const barX = -barWidth / 2;
+    const barY = -size / 2 - 10;
 
     return (
       <g>
@@ -364,18 +356,18 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       className={`unit-piece ${isSelected ? 'unit-selected' : ''} ${isMoving ? 'unit-moving' : ''}`}
+      transform={`translate(${center.x}, ${center.y})`}
       style={{
         cursor: onClick ? 'pointer' : 'default',
         touchAction: 'none', // 防止默认的触摸行为（如滚动）
-        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
     >
       {/* 选中高亮 */}
       {isSelected && (
         <>
           <circle
-            cx={center.x}
-            cy={center.y}
+            cx={0}
+            cy={0}
             r={size / 2 + 8}
             fill="none"
             stroke="#10b981"
@@ -383,8 +375,8 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
             opacity={0.6}
           />
           <circle
-            cx={center.x}
-            cy={center.y}
+            cx={0}
+            cy={0}
             r={size / 2 + 8}
             fill="none"
             stroke="#10b981"

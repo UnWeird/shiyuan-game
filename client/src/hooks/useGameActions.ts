@@ -33,6 +33,70 @@ export const useGameActions = () => {
   const currentActionPoints = currentPlayer === Player.PLAYER1 ? player1ActionPoints : player2ActionPoints;
   const selectedUnit = selectedUnitId ? units[selectedUnitId] : null;
 
+  // 辅助函数：处理战车崩毁，生成2个步兵
+  const handleChariotDeath = (chariot: Unit, canAct: boolean = false) => {
+    const chariotPos = chariot.position;
+
+    // 战车崩毁奖励：如果碾死过人，神机将军的拥有者获得1次重投机会
+    if ('killCount' in chariot && (chariot as any).killCount > 0) {
+      useGameStore.getState().addRerollToken(chariot.owner);
+    }
+
+    // 生成第一个步兵（在原位置）
+    const infantry1: Unit = {
+      id: `unit-${Date.now()}-${Math.random()}`,
+      type: UnitType.INFANTRY,
+      owner: chariot.owner,
+      position: chariotPos,
+      hp: 2,
+      maxHp: 2,
+      direction: chariot.direction,
+      actionsThisTurn: canAct ? 0 : 2,
+      hasMoved: !canAct,
+      hasAttacked: !canAct,
+      isFlipped: false,
+    };
+
+    addUnit(infantry1);
+
+    // 第二个步兵：寻找相邻空位
+    const neighbors = hexNeighbors(chariotPos);
+    const emptyPos = neighbors.find(pos => {
+      // 检查是否有单位占用
+      const hasUnit = Object.values(units).some(u => hexEquals(u.position, pos));
+      if (hasUnit) return false;
+
+      // 检查是否被机关单位占据
+      const occupiedByMachine = Object.values(units).some(u => {
+        if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
+          const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
+          const occupied = getMachineOccupiedHexes(u.position, machineType);
+          return occupied.some(hex => hexEquals(hex, pos));
+        }
+        return false;
+      });
+
+      return !occupiedByMachine && isInMapRange(pos, 5);
+    });
+
+    if (emptyPos) {
+      const infantry2: Unit = {
+        id: `unit-${Date.now()}-${Math.random()}-2`,
+        type: UnitType.INFANTRY,
+        owner: chariot.owner,
+        position: emptyPos,
+        hp: 2,
+        maxHp: 2,
+        direction: chariot.direction,
+        actionsThisTurn: canAct ? 0 : 2,
+        hasMoved: !canAct,
+        hasAttacked: !canAct,
+        isFlipped: false,
+      };
+      addUnit(infantry2);
+    }
+  };
+
   // 辅助函数：检查某个玩家是否是仁德阵营
   const isRendeFaction = (player: Player): boolean => {
     const general = Object.values(units).find(u =>
@@ -913,6 +977,7 @@ export const useGameActions = () => {
     // 检查所有这些格子上的单位并碾压
     let killedCount = 0;
     const killedUnits = new Set<string>(); // 防止重复计数
+    const crushedMachines: Unit[] = []; // 记录被碾压的机关单位
 
     allOccupiedHexes.forEach(hexKey => {
       const [q, r, s] = hexKey.split(',').map(Number);
@@ -936,22 +1001,52 @@ export const useGameActions = () => {
       });
 
       if (victim && !killedUnits.has(victim.id)) {
-        // 直接击杀
-        removeUnit(victim.id);
-        killedUnits.add(victim.id);
-        killedCount++;
+        // 如果碾压到机关单位，记录下来特殊处理
+        if (victim.type === UnitType.BALLISTA || victim.type === UnitType.CHARIOT) {
+          if (!crushedMachines.find(m => m.id === victim.id)) {
+            crushedMachines.push(victim);
+          }
+        } else {
+          // 普通单位直接击杀
+          removeUnit(victim.id);
+          killedUnits.add(victim.id);
+          killedCount++;
 
-        // 如果是将军，永久减少骰子
-        if (victim.type === UnitType.GENERAL) {
-          useGameStore.getState().removeDice(victim.owner, 1);
-        }
+          // 如果是将军，永久减少骰子
+          if (victim.type === UnitType.GENERAL) {
+            useGameStore.getState().removeDice(victim.owner, 1);
+          }
 
-        // 记录击杀（只统计敌方）
-        if (victim.owner !== chariot.owner) {
-          recordKill(currentPlayer);
+          // 记录击杀（只统计敌方）
+          if (victim.owner !== chariot.owner) {
+            recordKill(currentPlayer);
+          }
         }
       }
     });
+
+    // 如果碾压到机关单位，处理机关崩解
+    if (crushedMachines.length > 0) {
+      // 碾压方的战车先崩解（步兵不可行动）
+      handleChariotDeath(chariot, false);
+      removeUnit(chariot.id);
+
+      // 再处理被碾压的机关单位的崩解
+      crushedMachines.forEach(crushedMachine => {
+        if (crushedMachine.type === UnitType.CHARIOT) {
+          // 被碾压的战车崩解为2个不可行动的步兵
+          handleChariotDeath(crushedMachine, false);
+          removeUnit(crushedMachine.id);
+        } else {
+          // 弩车直接删除
+          removeUnit(crushedMachine.id);
+        }
+      });
+
+      // 战车已崩解，消耗行动点后返回
+      consumeActionPoint(currentPlayer);
+      return true;
+    }
 
     // 战车移动到目标位置
     const newHp = chariot.hp - killedCount;
@@ -1033,54 +1128,12 @@ export const useGameActions = () => {
 
     if (newHp <= 0) {
       // 战车崩毁（血量≤0，被击杀崩毁），变为2个不可行动的满血步兵
+      // 先将战车移动到目标位置（用于步兵生成位置）
+      const movedChariot = { ...chariot, position: to };
       removeUnit(chariot.id);
 
-      // 战车崩毁奖励：如果碾死过人，神机将军的拥有者获得1次重投机会
-      if ('killCount' in chariot && (chariot as any).killCount > 0) {
-        // 骰子奖励
-        useGameStore.getState().addDice(currentPlayer, 1);
-        // 重投机会奖励给神机将军的拥有者
-        useGameStore.getState().addRerollToken(currentPlayer);
-      }
-
-      // 生成2个满血步兵（本回合不能再行动）
-      const infantry1: Unit = {
-        id: `unit-${Date.now()}-${Math.random()}`,
-        type: UnitType.INFANTRY,
-        owner: currentPlayer,
-        position: to,
-        hp: 2,
-        maxHp: 2,
-        direction: chariot.direction,
-        actionsThisTurn: 2, // 已经不能再行动
-        hasMoved: true,
-        hasAttacked: true,
-        isFlipped: false,
-      };
-
-      const neighbors = hexNeighbors(to);
-      const emptyPos = neighbors.find(pos => !Object.values(units).some(u => hexEquals(u.position, pos)));
-
-      if (emptyPos) {
-        const infantry2: Unit = {
-          id: `unit-${Date.now()}-${Math.random()}-2`,
-          type: UnitType.INFANTRY,
-          owner: currentPlayer,
-          position: emptyPos,
-          hp: 2,
-          maxHp: 2,
-          direction: chariot.direction,
-          actionsThisTurn: 2,
-          hasMoved: true,
-          hasAttacked: true,
-          isFlipped: false,
-        };
-        addUnit(infantry1);
-        addUnit(infantry2);
-      } else {
-        // 没有空位，只生成1个步兵
-        addUnit(infantry1);
-      }
+      // 调用统一的崩毁处理函数（步兵不可行动）
+      handleChariotDeath(movedChariot, false);
     } else {
       // 战车继续存在，更新位置和血量
       updateUnit(chariot.id, {

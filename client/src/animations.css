@@ -56,6 +56,12 @@ button:disabled {
               cy 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* 弓箭手方向指示器旋转动画 */
+.direction-indicator {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: 0 0;  /* 围绕箭头起点(0,0)旋转 */
+}
+
 /* ========== 六边形格子动画 ========== */
 
 /* 可移动格子呼吸动画 */

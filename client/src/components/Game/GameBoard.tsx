@@ -94,6 +94,7 @@ export const GameBoard: React.FC = () => {
   const [shenjiAbilityActive, setShenjiAbilityActive] = useState(false);
   const [selectedDiceIndex, setSelectedDiceIndex] = useState<number | null>(null);
   const [rerollMode, setRerollMode] = useState(false);
+  const [pendingRendeSkill, setPendingRendeSkill] = useState<'convert' | 'neutral' | null>(null);
 
   // 移动端检测
   const isMobile = useIsMobile();
@@ -141,6 +142,73 @@ export const GameBoard: React.FC = () => {
       window.removeEventListener('rendeKillConfirm', handleRendeKillConfirm);
     };
   }, [isOnlineMode]);
+
+  // 处理待激活的仁德技能（在选中仁德后自动激活）
+  useEffect(() => {
+    console.log('仁德技能 useEffect 触发:', { pendingRendeSkill, selectedUnit: selectedUnit?.id });
+
+    if (!pendingRendeSkill || !selectedUnit) return;
+
+    console.log('selectedUnit 完整对象:', selectedUnit);
+    console.log('selectedUnit.type:', selectedUnit.type);
+    console.log('UnitType.GENERAL:', UnitType.GENERAL);
+    console.log('类型比较:', selectedUnit.type, '!==', UnitType.GENERAL, '=', selectedUnit.type !== UnitType.GENERAL);
+
+    // 确保选中的是仁德将军
+    if (selectedUnit.type !== UnitType.GENERAL) {
+      console.log('选中的不是将军，清除待激活技能');
+      setPendingRendeSkill(null);
+      return;
+    }
+
+    console.log('激活仁德技能:', pendingRendeSkill);
+
+    // 激活对应的技能
+    if (pendingRendeSkill === 'convert') {
+      // 转化接触单位
+      const adjacentHexes = hexNeighbors(selectedUnit.position);
+      const adjacentUnits: typeof units[keyof typeof units][] = [];
+
+      Object.values(units).forEach(u => {
+        if (u.id === selectedUnit.id || u.owner === selectedUnit.owner) return;
+
+        if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
+          const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
+          const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+          const isAdjacent = occupiedHexes.some(hex =>
+            adjacentHexes.some(adjHex => hexEquals(adjHex, hex))
+          );
+          if (isAdjacent && !adjacentUnits.find(au => au.id === u.id)) {
+            adjacentUnits.push(u);
+          }
+        } else {
+          const isAdjacent = adjacentHexes.some(hex => hexEquals(hex, u.position));
+          if (isAdjacent) {
+            adjacentUnits.push(u);
+          }
+        }
+      });
+
+      console.log('找到相邻单位:', adjacentUnits.length);
+      setHighlightedHexes(adjacentUnits.map(u => u.position));
+      setActionMode('rende-convert');
+    } else if (pendingRendeSkill === 'neutral') {
+      // 转化中立标记
+      const neutralMarkers = Object.values(units)
+        .filter(u =>
+          u.type === UnitType.NEUTRAL_MARKER &&
+          u.owner === Player.NEUTRAL &&
+          hexDistance(selectedUnit.position, u.position) === 1
+        );
+
+      console.log('找到中立标记:', neutralMarkers.length);
+      setHighlightedHexes(neutralMarkers.map(u => u.position));
+      setActionMode('rende-neutral');
+    }
+
+    // 清除待激活状态
+    setPendingRendeSkill(null);
+  }, [pendingRendeSkill, selectedUnit, units]);
 
   // 判断是否是自己的回合
   const isMyTurn = !isOnlineMode ||
@@ -2213,38 +2281,13 @@ export const GameBoard: React.FC = () => {
                         {!('abilityUsed' in generalUnit && generalUnit.abilityUsed) ? (
                           <button
                             onClick={() => {
-                              if (!selectedUnit) return;
-                              // 激活转化接触单位模式
-                              // 找到所有与将军相邻的单位（包括机关单位）
-                              const adjacentHexes = hexNeighbors(selectedUnit.position);
-                              const adjacentUnits: typeof units[keyof typeof units][] = [];
-
-                              // 遍历所有单位，检查它们是否与将军相邻
-                              Object.values(units).forEach(u => {
-                                if (u.id === selectedUnit.id || u.owner === selectedUnit.owner) return;
-
-                                // 检查机关单位的所有占用格子
-                                if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
-                                  const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-                                  const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
-                                  const isAdjacent = occupiedHexes.some(hex =>
-                                    adjacentHexes.some(adjHex => hexEquals(adjHex, hex))
-                                  );
-                                  if (isAdjacent && !adjacentUnits.find(au => au.id === u.id)) {
-                                    adjacentUnits.push(u);
-                                  }
-                                } else {
-                                  // 普通单位：检查核心位置
-                                  const isAdjacent = adjacentHexes.some(hex => hexEquals(hex, u.position));
-                                  if (isAdjacent) {
-                                    adjacentUnits.push(u);
-                                  }
-                                }
-                              });
-
-                              // 高亮所有相邻单位的核心位置
-                              setHighlightedHexes(adjacentUnits.map(u => u.position));
-                              setActionMode('rende-convert');
+                              console.log('点击转化接触单位按钮');
+                              console.log('generalUnit:', generalUnit);
+                              console.log('generalUnit.id:', generalUnit.id);
+                              // 设置待激活的技能并选中仁德
+                              setPendingRendeSkill('convert');
+                              selectUnit(generalUnit.id);
+                              console.log('已设置 pendingRendeSkill=convert 和 selectUnit');
                             }}
                             disabled={!isMyTurn || currentActionPoints < 2}
                             className="w-full px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
@@ -2268,17 +2311,9 @@ export const GameBoard: React.FC = () => {
                           return (
                             <button
                               onClick={() => {
-                                if (!selectedUnit) return;
-                                // 激活转化中立标记为步兵模式
-                                const neutralMarkers = Object.values(units)
-                                  .filter(u =>
-                                    u.type === UnitType.NEUTRAL_MARKER &&
-                                    u.owner === Player.NEUTRAL &&
-                                    hexDistance(selectedUnit.position, u.position) === 1
-                                  );
-
-                                setHighlightedHexes(neutralMarkers.map(u => u.position));
-                                setActionMode('rende-neutral');
+                                // 设置待激活的技能并选中仁德
+                                setPendingRendeSkill('neutral');
+                                selectUnit(generalUnit.id);
                               }}
                               disabled={!isMyTurn || currentActionPoints < convertCost}
                               className="w-full px-4 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-lg shadow-md hover:from-emerald-600 hover:to-emerald-700 hover:shadow-lg transition-all text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"

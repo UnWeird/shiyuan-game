@@ -22,6 +22,10 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
   const [isMoving, setIsMoving] = useState(false);
   const prevPositionRef = useRef(unit.position);
 
+  // 跟踪旋转状态
+  const [isRotating, setIsRotating] = useState(false);
+  const prevDirectionRef = useRef(unit.direction);
+
   // 检测位置变化并触发移动动画
   useEffect(() => {
     const prevPos = prevPositionRef.current;
@@ -41,6 +45,26 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
       return () => clearTimeout(timer);
     }
   }, [unit.position]);
+
+  // 检测方向变化并触发旋转动画
+  useEffect(() => {
+    const prevDir = prevDirectionRef.current;
+    const currentDir = unit.direction;
+
+    // 如果方向改变了，触发旋转动画
+    if (prevDir !== currentDir) {
+      setIsRotating(true);
+
+      // 300ms 后移除旋转状态
+      const timer = setTimeout(() => {
+        setIsRotating(false);
+      }, 300);
+
+      prevDirectionRef.current = currentDir;
+
+      return () => clearTimeout(timer);
+    }
+  }, [unit.direction]);
 
   // 处理触摸事件（移动端兜底）
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -286,8 +310,6 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
 
     const angle = angleMap[unit.direction];
     const arrowLength = size * 0.8;
-    const arrowX = Math.cos((angle * Math.PI) / 180) * arrowLength;
-    const arrowY = Math.sin((angle * Math.PI) / 180) * arrowLength;
 
     return (
       <>
@@ -304,15 +326,20 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
             <polygon points="0 0, 10 3, 0 6" fill="#dc2626" />
           </marker>
         </defs>
-        <line
-          x1={0}
-          y1={0}
-          x2={arrowX}
-          y2={arrowY}
-          stroke="#dc2626"
-          strokeWidth={4}
-          markerEnd={`url(#arrowhead-${unit.id})`}
-        />
+        <g
+          className="direction-indicator"
+          transform={`rotate(${angle})`}
+        >
+          <line
+            x1={0}
+            y1={0}
+            x2={arrowLength}
+            y2={0}
+            stroke="#dc2626"
+            strokeWidth={4}
+            markerEnd={`url(#arrowhead-${unit.id})`}
+          />
+        </g>
       </>
     );
   };

@@ -1556,7 +1556,10 @@ export const GameBoard: React.FC = () => {
 
                       // 弓兵特殊处理：行动次数上限为2
                       if (selectedUnit.type === UnitType.ARCHER) {
+                        // 达到行动次数上限
                         if (selectedUnit.actionsThisTurn >= 2) return true;
+                        // 已经移动过（即使还有行动次数也不能再移动）
+                        if (selectedUnit.hasMoved) return true;
                         return false;
                       }
 

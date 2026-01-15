@@ -1497,6 +1497,7 @@ export const GameBoard: React.FC = () => {
                           cy={pixel.y}
                           r={isMobile ? 9 : 12}
                           fill={unit.owner === Player.PLAYER1 ? '#fbbf24' : '#60a5fa'}
+                          className="machine-hex-indicator"
                         />
                       );
                     })}

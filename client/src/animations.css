@@ -50,6 +50,12 @@ button:disabled {
   opacity: 0.9;
 }
 
+/* 机关单位占用格子标记的平滑过渡 */
+.machine-hex-indicator {
+  transition: cx 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              cy 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /* ========== 六边形格子动画 ========== */
 
 /* 可移动格子呼吸动画 */

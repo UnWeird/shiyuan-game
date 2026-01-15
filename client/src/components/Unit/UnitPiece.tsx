@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
 import { Unit, UnitType, Player, Direction } from '../../types';
 import { hexToPixel } from '../../utils/hexUtils';
 
@@ -17,6 +17,30 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
 }) => {
   const center = hexToPixel(unit.position, hexSize);
   const size = hexSize * 0.7; // 增大单位尺寸
+
+  // 跟踪移动状态
+  const [isMoving, setIsMoving] = useState(false);
+  const prevPositionRef = useRef(unit.position);
+
+  // 检测位置变化并触发移动动画
+  useEffect(() => {
+    const prevPos = prevPositionRef.current;
+    const currentPos = unit.position;
+
+    // 如果位置改变了，触发移动动画
+    if (prevPos.q !== currentPos.q || prevPos.r !== currentPos.r || prevPos.s !== currentPos.s) {
+      setIsMoving(true);
+
+      // 300ms 后移除移动状态
+      const timer = setTimeout(() => {
+        setIsMoving(false);
+      }, 300);
+
+      prevPositionRef.current = currentPos;
+
+      return () => clearTimeout(timer);
+    }
+  }, [unit.position]);
 
   // 处理触摸事件（移动端兜底）
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -339,10 +363,11 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
       onClick={handleClick}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
-      className={`unit-piece ${isSelected ? 'unit-selected' : ''}`}
+      className={`unit-piece ${isSelected ? 'unit-selected' : ''} ${isMoving ? 'unit-moving' : ''}`}
       style={{
         cursor: onClick ? 'pointer' : 'default',
         touchAction: 'none', // 防止默认的触摸行为（如滚动）
+        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
     >
       {/* 选中高亮 */}

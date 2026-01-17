@@ -92,8 +92,21 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
   onLeave(client: Client, consented: boolean) {
     const role = this.playerRoles.get(client.sessionId);
-    console.log(`👋 ${role} 离开房间`);
+    console.log(`👋 ${role} 离开房间 (consented: ${consented})`);
 
+    // 如果不是主动离开（consented=false），允许60秒内重连
+    if (!consented) {
+      console.log(`⏳ ${role} 可能会重连，允许60秒内重连`);
+      // 允许重连（60秒内）
+      try {
+        this.allowReconnection(client, 60);
+      } catch (error) {
+        console.error('❌ 设置重连失败:', error);
+      }
+      return;
+    }
+
+    // 主动离开，删除角色信息
     this.playerRoles.delete(client.sessionId);
 
     // 如果是观战者离开
@@ -109,6 +122,40 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         role,
         message: `${role} 离开了游戏`
       });
+    }
+  }
+
+  async onReconnection(client: Client, previousSessionId: string) {
+    console.log(`🔄 玩家重连: ${client.sessionId} (之前的 sessionId: ${previousSessionId})`);
+
+    // 查找之前的角色
+    const role = this.playerRoles.get(previousSessionId);
+
+    if (role) {
+      // 更新 sessionId（新的 sessionId，但角色不变）
+      this.playerRoles.delete(previousSessionId);
+      this.playerRoles.set(client.sessionId, role);
+
+      // 如果是观战者
+      if (role === 'spectator') {
+        this.spectators.delete(previousSessionId);
+        this.spectators.add(client.sessionId);
+      }
+
+      // 通知客户端恢复角色
+      client.send("role", {
+        role,
+        message: `重连成功！你是${role === 'spectator' ? '观战者' : role}`
+      });
+
+      console.log(`✅ ${role} 重连成功`);
+
+      // 通知其他玩家
+      this.broadcast("info", {
+        message: `${role} 重新连接`
+      }, { except: client });
+    } else {
+      console.log(`❌ 未找到重连角色信息`);
     }
   }
 
@@ -1860,11 +1907,14 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     });
 
     // 重置击杀标记和击杀骰子（只在当回合有效）
+    // 同时保存本回合的击杀状态到"上回合"
     if (role === "player1") {
+      this.state.player1KilledLastTurn = this.state.player1KilledThisTurn;
       this.state.player1KilledThisTurn = false;
       this.state.player1KillDice = 0;
       this.state.player1TempMaxActionPoints = -1; // 重置临时行动值上限
     } else {
+      this.state.player2KilledLastTurn = this.state.player2KilledThisTurn;
       this.state.player2KilledThisTurn = false;
       this.state.player2KillDice = 0;
       this.state.player2TempMaxActionPoints = -1;
@@ -2591,9 +2641,17 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 检查是否有敌方将军
     const enemyGeneral = adjacentEnemies.find(u => u.type === "general");
     if (enemyGeneral) {
-      // 对敌方将军使用，直接获胜
+      // 检查是否满足"上回合无击杀"的条件
+      const killedLastTurn = role === "player1" ? this.state.player1KilledLastTurn : this.state.player2KilledLastTurn;
+
+      if (killedLastTurn) {
+        client.send("error", { message: "仁德将军上回合有击杀，无法对敌方将军使用招降技能" });
+        return;
+      }
+
+      // 满足条件，对敌方将军使用，直接获胜
       this.state.phase = "end";
-      this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}仁德将军对敌将使用技能，直接获胜！`);
+      this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}仁德将军对敌将使用招降技能，直接获胜！`);
       this.broadcast("gameEnd", {
         winner: role,
         message: `${role === "player1" ? "玩家1" : "玩家2"}获胜！`,

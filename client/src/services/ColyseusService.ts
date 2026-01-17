@@ -137,10 +137,52 @@ class ColyseusService {
 
     // 监听离开房间
     this.room.onLeave((code) => {
-      console.log('离开房间:', code);
+      console.log('离开房间, code:', code);
+
+      // code 1000-1999 表示正常关闭，4000+ 表示异常断开
+      if (code >= 4000) {
+        console.log('⚠️ 异常断开连接，尝试重连...');
+        // 异常断开，尝试重连
+        this.attemptReconnection();
+      } else {
+        // 正常离开
+        this.room = null;
+        this.myPlayerRole = null;
+      }
+    });
+  }
+
+  /**
+   * 尝试重连
+   */
+  private async attemptReconnection() {
+    if (!this.room) return;
+
+    const roomId = this.room.roomId;
+    const reconnectionToken = this.room.reconnectionToken;
+
+    console.log('🔄 尝试重连...', { roomId, reconnectionToken });
+
+    if (!reconnectionToken) {
+      console.error('❌ 没有重连令牌，无法重连');
       this.room = null;
       this.myPlayerRole = null;
-    });
+      alert('连接已断开，无法重连');
+      return;
+    }
+
+    try {
+      // 使用重连令牌重新加入房间
+      this.room = await this.client.reconnect(reconnectionToken);
+      this.setupRoomListeners();
+      console.log('✅ 重连成功！');
+      alert('重连成功！');
+    } catch (error) {
+      console.error('❌ 重连失败:', error);
+      this.room = null;
+      this.myPlayerRole = null;
+      alert('重连失败，请刷新页面重新加入');
+    }
   }
 
   /**
@@ -258,6 +300,8 @@ class ColyseusService {
 
       player1KilledThisTurn: state.player1KilledThisTurn,
       player2KilledThisTurn: state.player2KilledThisTurn,
+      player1KilledLastTurn: state.player1KilledLastTurn,
+      player2KilledLastTurn: state.player2KilledLastTurn,
 
       // 部署价值（用于显示和调试）
       player1DeployedValue: state.player1DeployedValue || 0,

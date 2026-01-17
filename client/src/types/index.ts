@@ -157,6 +157,8 @@ export interface GameState {
   // 击杀统计
   player1KilledThisTurn: boolean;
   player2KilledThisTurn: boolean;
+  player1KilledLastTurn: boolean;
+  player2KilledLastTurn: boolean;
 
   // 部署价值（用于显示和调试）
   player1DeployedValue: number;

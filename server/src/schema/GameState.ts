@@ -104,6 +104,8 @@ export class GameStateSchema extends Schema {
   // 击杀统计
   @type("boolean") player1KilledThisTurn: boolean = false;
   @type("boolean") player2KilledThisTurn: boolean = false;
+  @type("boolean") player1KilledLastTurn: boolean = false;
+  @type("boolean") player2KilledLastTurn: boolean = false;
 
   // 选中的单位
   @type("string") selectedUnitId: string = "";

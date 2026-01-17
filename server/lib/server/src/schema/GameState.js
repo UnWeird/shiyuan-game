@@ -169,6 +169,10 @@ class GameStateSchema extends schema_1.Schema {
         this.player1Infantry = 0;
         this.player1Cavalry = 0;
         this.player1Archer = 0;
+        // 玩家1已消耗库存（永久消耗，不会因单位死亡而减少）
+        this.player1ConsumedInfantry = 0;
+        this.player1ConsumedCavalry = 0;
+        this.player1ConsumedArcher = 0;
         // 玩家2配置
         this.player2General = "";
         this.player2BaseQ = 0;
@@ -177,6 +181,10 @@ class GameStateSchema extends schema_1.Schema {
         this.player2Infantry = 0;
         this.player2Cavalry = 0;
         this.player2Archer = 0;
+        // 玩家2已消耗库存（永久消耗，不会因单位死亡而减少）
+        this.player2ConsumedInfantry = 0;
+        this.player2ConsumedCavalry = 0;
+        this.player2ConsumedArcher = 0;
         // 地图上的单位（MapSchema 会自动同步增删改）
         this.units = new schema_1.MapSchema();
         // 骰子系统
@@ -200,6 +208,8 @@ class GameStateSchema extends schema_1.Schema {
         // 击杀统计
         this.player1KilledThisTurn = false;
         this.player2KilledThisTurn = false;
+        this.player1KilledLastTurn = false;
+        this.player2KilledLastTurn = false;
         // 选中的单位
         this.selectedUnitId = "";
         // 战斗日志（最近的N条消息）
@@ -254,6 +264,18 @@ __decorate([
     __metadata("design:type", Number)
 ], GameStateSchema.prototype, "player1Archer", void 0);
 __decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "player1ConsumedInfantry", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "player1ConsumedCavalry", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "player1ConsumedArcher", void 0);
+__decorate([
     (0, schema_1.type)("string"),
     __metadata("design:type", String)
 ], GameStateSchema.prototype, "player2General", void 0);
@@ -281,6 +303,18 @@ __decorate([
     (0, schema_1.type)("number"),
     __metadata("design:type", Number)
 ], GameStateSchema.prototype, "player2Archer", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "player2ConsumedInfantry", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "player2ConsumedCavalry", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "player2ConsumedArcher", void 0);
 __decorate([
     (0, schema_1.type)({ map: UnitSchema }),
     __metadata("design:type", Object)
@@ -357,6 +391,14 @@ __decorate([
     (0, schema_1.type)("boolean"),
     __metadata("design:type", Boolean)
 ], GameStateSchema.prototype, "player2KilledThisTurn", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], GameStateSchema.prototype, "player1KilledLastTurn", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], GameStateSchema.prototype, "player2KilledLastTurn", void 0);
 __decorate([
     (0, schema_1.type)("string"),
     __metadata("design:type", String)

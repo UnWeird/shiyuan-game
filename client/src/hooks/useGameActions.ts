@@ -1164,19 +1164,20 @@ export const useGameActions = () => {
 
     // 如果是对敌将使用，需要检查上回合无击杀
     if (target.type === UnitType.GENERAL && target.owner !== general.owner) {
-      const noKillLastTurn = general.owner === Player.PLAYER1
-        ? !useGameStore.getState().player1KilledThisTurn
-        : !useGameStore.getState().player2KilledThisTurn;
+      const killedLastTurn = general.owner === Player.PLAYER1
+        ? useGameStore.getState().player1KilledLastTurn
+        : useGameStore.getState().player2KilledLastTurn;
 
-      if (noKillLastTurn) {
-        // 直接获胜
-        alert(`${general.owner === Player.PLAYER1 ? '玩家1' : '玩家2'} 使用仁德技能对敌将，直接获胜！`);
-        setPhase('end' as any);
-        return true;
-      } else {
-        // 不能对敌将使用
+      if (killedLastTurn) {
+        // 上回合有击杀，不能对敌将使用
+        alert(`仁德将军上回合有击杀，无法对敌方将军使用招降技能`);
         return false;
       }
+
+      // 满足条件，直接获胜
+      alert(`${general.owner === Player.PLAYER1 ? '玩家1' : '玩家2'} 使用仁德技能对敌将招降，直接获胜！`);
+      setPhase('end' as any);
+      return true;
     }
 
     // 转化为己方

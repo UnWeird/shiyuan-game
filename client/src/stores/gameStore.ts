@@ -114,6 +114,8 @@ const initialState: GameState = {
 
   player1KilledThisTurn: false,
   player2KilledThisTurn: false,
+  player1KilledLastTurn: false,
+  player2KilledLastTurn: false,
 
   player1DeployedValue: 0,
   player2DeployedValue: 0,
@@ -479,7 +481,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
         turn: 2,
         phase: GamePhase.DEPLOY,
         units: updatedUnits,
+        player1KilledLastTurn: state.player1KilledThisTurn,
         player1KilledThisTurn: false,
+        player2KilledLastTurn: state.player2KilledThisTurn,
         player2KilledThisTurn: false,
         // 重置击杀骰子计数（只在当回合有效）
         player1KillDice: 0,
@@ -523,7 +527,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       turn: newTurn,
       phase: newPhase,
       units: updatedUnits,
+      player1KilledLastTurn: state.player1KilledThisTurn,
       player1KilledThisTurn: false,
+      player2KilledLastTurn: state.player2KilledThisTurn,
       player2KilledThisTurn: false,
       // 重置击杀骰子计数（只在当回合有效）
       player1KillDice: 0,

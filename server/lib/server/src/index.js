@@ -9,14 +9,15 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const ShiyuanRoom_1 = require("./rooms/ShiyuanRoom");
 const app = (0, express_1.default)();
-const port = 2567;
+const port = Number(process.env.PORT) || 2567;
+const host = process.env.HOST || '0.0.0.0'; // 允许外网访问
 // 允许跨域（开发环境）
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
 // 创建 Colyseus 服务器
 const gameServer = new core_1.Server({
     transport: new ws_transport_1.WebSocketTransport({
-        server: app.listen(port)
+        server: app.listen(port, host)
     })
 });
 // 注册游戏房间

@@ -2571,12 +2571,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     const oldValue = diceResults[data.diceIndex];
     diceResults[data.diceIndex] = data.newValue;
 
-    // 重新计算行动点
-    const newActionPoints = Array.from(diceResults).reduce((sum, v) => sum + v, 0);
+    // 计算点数差值，只增加/减少差值（而不是重新计算总和）
+    const pointDifference = data.newValue - oldValue;
     if (role === "player1") {
-      this.state.player1ActionPoints = newActionPoints;
+      this.state.player1ActionPoints += pointDifference;
     } else {
-      this.state.player2ActionPoints = newActionPoints;
+      this.state.player2ActionPoints += pointDifference;
     }
 
     this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}使用神机技能：修改骰子 ${oldValue} → ${data.newValue}`);

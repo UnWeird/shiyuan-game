@@ -2102,17 +2102,22 @@ class ShiyuanRoom extends core_1.Room {
         // 检查是否有足够的兵力库存
         // 弩车需要：4步兵 + 1弓箭手
         // 战车需要：6步兵
-        const infantryStock = role === 'player1' ? this.state.player1Infantry : this.state.player2Infantry;
-        const archerStock = role === 'player1' ? this.state.player1Archer : this.state.player2Archer;
+        const totalInfantryStock = role === 'player1' ? this.state.player1Infantry : this.state.player2Infantry;
+        const totalArcherStock = role === 'player1' ? this.state.player1Archer : this.state.player2Archer;
+        const consumedInfantry = role === 'player1' ? this.state.player1ConsumedInfantry : this.state.player2ConsumedInfantry;
+        const consumedArcher = role === 'player1' ? this.state.player1ConsumedArcher : this.state.player2ConsumedArcher;
+        // 计算剩余可用库存
+        const availableInfantry = totalInfantryStock - consumedInfantry;
+        const availableArcher = totalArcherStock - consumedArcher;
         if (data.machineType === 'ballista') {
-            if (infantryStock < 4 || archerStock < 1) {
-                client.send("error", { message: "兵力库存不足：部署弩车需要4步兵+1弓箭手" });
+            if (availableInfantry < 4 || availableArcher < 1) {
+                client.send("error", { message: `兵力库存不足：部署弩车需要4步兵+1弓箭手（剩余：${availableInfantry}步兵，${availableArcher}弓箭手）` });
                 return;
             }
         }
         else if (data.machineType === 'chariot') {
-            if (infantryStock < 6) {
-                client.send("error", { message: "兵力库存不足：部署战车需要6步兵" });
+            if (availableInfantry < 6) {
+                client.send("error", { message: `兵力库存不足：部署战车需要6步兵（剩余：${availableInfantry}步兵）` });
                 return;
             }
         }

@@ -661,14 +661,22 @@ export const useGameActions = () => {
       ? useGameStore.getState().player1Army
       : useGameStore.getState().player2Army;
 
+    const consumedStock = currentPlayer === Player.PLAYER1
+      ? useGameStore.getState().player1ConsumedStock
+      : useGameStore.getState().player2ConsumedStock;
+
+    // 计算剩余可用库存
+    const availableInfantry = currentArmy.infantry - consumedStock.infantry;
+    const availableArcher = currentArmy.archer - consumedStock.archer;
+
     if (machineType === UnitType.BALLISTA) {
       // 弩车需要: 4个步兵 + 1个弓箭手
-      if (currentArmy.infantry < 4 || currentArmy.archer < 1) {
+      if (availableInfantry < 4 || availableArcher < 1) {
         return false;
       }
     } else if (machineType === UnitType.CHARIOT) {
       // 战车需要: 6个步兵
-      if (currentArmy.infantry < 6) {
+      if (availableInfantry < 6) {
         return false;
       }
     }
@@ -693,25 +701,45 @@ export const useGameActions = () => {
       hasActedThisTurn: false,
     };
 
-    // 成功部署后才扣除库存
+    // 成功部署后才扣除库存（增加已消耗库存）
     addUnit(newMachine);
 
     if (machineType === UnitType.BALLISTA) {
       // 扣除弩车库存：4个步兵 + 1个弓箭手
-      useGameStore.getState().setArmy(
-        currentPlayer,
-        currentArmy.infantry - 4,
-        currentArmy.cavalry,
-        currentArmy.archer - 1
-      );
+      if (currentPlayer === Player.PLAYER1) {
+        useGameStore.setState({
+          player1ConsumedStock: {
+            ...consumedStock,
+            infantry: consumedStock.infantry + 4,
+            archer: consumedStock.archer + 1,
+          }
+        });
+      } else {
+        useGameStore.setState({
+          player2ConsumedStock: {
+            ...consumedStock,
+            infantry: consumedStock.infantry + 4,
+            archer: consumedStock.archer + 1,
+          }
+        });
+      }
     } else if (machineType === UnitType.CHARIOT) {
       // 扣除战车库存：6个步兵
-      useGameStore.getState().setArmy(
-        currentPlayer,
-        currentArmy.infantry - 6,
-        currentArmy.cavalry,
-        currentArmy.archer
-      );
+      if (currentPlayer === Player.PLAYER1) {
+        useGameStore.setState({
+          player1ConsumedStock: {
+            ...consumedStock,
+            infantry: consumedStock.infantry + 6,
+          }
+        });
+      } else {
+        useGameStore.setState({
+          player2ConsumedStock: {
+            ...consumedStock,
+            infantry: consumedStock.infantry + 6,
+          }
+        });
+      }
     }
 
     // 消耗对应的行动点：弩车5点，战车4点

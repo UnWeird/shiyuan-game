@@ -20,6 +20,7 @@ export enum UnitType {
   GENERAL = 'general',         // 将军 (一元)
   BALLISTA = 'ballista',       // 弩车 (神机机关)
   CHARIOT = 'chariot',         // 战车 (神机机关)
+  CATAPULT = 'catapult',       // 投石车 (神机机关)
   NEUTRAL_MARKER = 'neutral_marker', // 中立单位标记 (仁德专属)
 }
 
@@ -56,6 +57,9 @@ export interface Unit {
   hasMoved: boolean;        // 本回合是否已移动
   hasAttacked: boolean;     // 本回合是否已攻击
   isFlipped: boolean;       // 是否被翻面 (受伤)
+  moveDistance?: number;    // 骑兵：本回合移动的距离（1/2/3）
+  movementRestricted?: boolean; // 步兵：是否被限制前进（纵深抗击效果）
+  cannotActNextTurn?: boolean;  // 弩车贯穿击中的最后单位：下回合不能移动/转向
 }
 
 // 将军单位 (继承 Unit)
@@ -73,10 +77,11 @@ export interface General extends Unit {
 
 // 机关单位 (神机专属)
 export interface MachineUnit extends Unit {
-  type: UnitType.BALLISTA | UnitType.CHARIOT;
+  type: UnitType.BALLISTA | UnitType.CHARIOT | UnitType.CATAPULT;
   killCount: number;              // 击杀数 (用于判断骰子奖励)
   pierceCount?: number;           // 弩车：贯穿单位数（包含友方）
   hasActedThisTurn?: boolean;     // 机关单位：本回合是否已行动（移动或攻击）
+  chargeLevel?: number;           // 投石车：蓄力层数（0/1/2）
 }
 
 // 行动类型

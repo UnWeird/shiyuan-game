@@ -9,17 +9,19 @@ interface HexTileProps {
   isBase?: boolean;
   isSelected?: boolean;
   isHighlighted?: boolean;
+  highlightSteps?: number; // 步数信息（用于不同颜色高亮）
   isPlayer1Zone?: boolean;
   isPlayer2Zone?: boolean;
 }
 
-export const HexTile: React.FC<HexTileProps> = ({
+export const HexTile: React.FC<HexTileProps> = React.memo(({
   hex,
   size,
   onClick,
   isBase = false,
   isSelected = false,
   isHighlighted = false,
+  highlightSteps,
   isPlayer1Zone = false,
   isPlayer2Zone = false,
 }) => {
@@ -73,6 +75,7 @@ export const HexTile: React.FC<HexTileProps> = ({
     strokeColor = '#16a34a';
     strokeWidth = 2;
   } else if (isHighlighted) {
+    // 统一使用橙色高亮
     fillColor = '#fcd34d';
     strokeColor = '#f59e0b';
     strokeWidth = 2;
@@ -84,19 +87,68 @@ export const HexTile: React.FC<HexTileProps> = ({
   }
 
   return (
-    <path
-      d={pathData}
-      fill={fillColor}
-      stroke={strokeColor}
-      strokeWidth={strokeWidth}
-      onClick={handleClick}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-      className={hexClass}
-      style={{
-        cursor: onClick ? 'pointer' : 'default',
-        touchAction: 'none', // 防止默认的触摸行为（如滚动）
-      }}
-    />
+    <>
+      <path
+        d={pathData}
+        fill={fillColor}
+        stroke={strokeColor}
+        strokeWidth={strokeWidth}
+        onClick={handleClick}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        className={hexClass}
+        style={{
+          cursor: onClick ? 'pointer' : 'default',
+          touchAction: 'none', // 防止默认的触摸行为（如滚动）
+        }}
+      />
+
+      {/* 如果是高亮格子且有步数信息，显示小点 */}
+      {isHighlighted && highlightSteps && (
+        <g>
+          {Array.from({ length: highlightSteps }).map((_, index) => {
+            // 根据步数排列小点
+            const dotRadius = size * 0.08;
+            const dotSpacing = size * 0.2;
+            let dotX = center.x;
+            let dotY = center.y;
+
+            if (highlightSteps === 1) {
+              // 1个点：中心
+              dotX = center.x;
+              dotY = center.y;
+            } else if (highlightSteps === 2) {
+              // 2个点：左右排列
+              dotX = center.x + (index === 0 ? -dotSpacing/2 : dotSpacing/2);
+              dotY = center.y;
+            } else if (highlightSteps === 3) {
+              // 3个点：品字形排列
+              if (index === 0) {
+                dotX = center.x;
+                dotY = center.y - dotSpacing/2;
+              } else if (index === 1) {
+                dotX = center.x - dotSpacing/2;
+                dotY = center.y + dotSpacing/2;
+              } else {
+                dotX = center.x + dotSpacing/2;
+                dotY = center.y + dotSpacing/2;
+              }
+            }
+
+            return (
+              <circle
+                key={index}
+                cx={dotX}
+                cy={dotY}
+                r={dotRadius}
+                fill="#f59e0b"
+                stroke="#92400e"
+                strokeWidth={1}
+              />
+            );
+          })}
+        </g>
+      )}
+    </>
   );
-};
+});

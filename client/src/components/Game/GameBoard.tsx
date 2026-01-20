@@ -17,6 +17,19 @@ interface BattleLogEntry {
   timestamp: number;
 }
 
+// 辅助函数：判断是否是机关单位
+const isMachineUnit = (unitType: UnitType): boolean => {
+  return unitType === UnitType.BALLISTA || unitType === UnitType.CHARIOT || unitType === UnitType.CATAPULT;
+};
+
+// 辅助函数：获取机关单位类型字符串
+const getMachineTypeStr = (unitType: UnitType): 'ballista' | 'chariot' | 'catapult' | null => {
+  if (unitType === UnitType.BALLISTA) return 'ballista';
+  if (unitType === UnitType.CHARIOT) return 'chariot';
+  if (unitType === UnitType.CATAPULT) return 'catapult';
+  return null;
+};
+
 export const GameBoard: React.FC = () => {
   const {
     phase,
@@ -172,9 +185,10 @@ export const GameBoard: React.FC = () => {
       Object.values(units).forEach(u => {
         if (u.id === selectedUnit.id || u.owner === selectedUnit.owner) return;
 
-        if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
-          const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-          const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+        if (isMachineUnit(u.type)) {
+          const machineType = getMachineTypeStr(u.type)!;
+          const isPlayerOne = u.owner === Player.PLAYER1;
+          const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
           const isAdjacent = occupiedHexes.some(hex =>
             adjacentHexes.some(adjHex => hexEquals(adjHex, hex))
           );
@@ -296,9 +310,10 @@ export const GameBoard: React.FC = () => {
     setActionMode(null);
 
     // 如果是机关单位，高亮其所有占用的格子
-    if (unit.type === UnitType.BALLISTA || unit.type === UnitType.CHARIOT) {
-      const machineTypeStr = unit.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-      const occupiedHexes = getMachineOccupiedHexes(unit.position, machineTypeStr);
+    if (isMachineUnit(unit.type)) {
+      const machineTypeStr = getMachineTypeStr(unit.type)!;
+      const isPlayerOne = unit.owner === Player.PLAYER1;
+      const occupiedHexes = getMachineOccupiedHexes(unit.position, machineTypeStr, isPlayerOne);
       // 排除中心位置，只高亮额外占用的格子
       setHighlightedHexes(occupiedHexes.slice(1));
     } else {
@@ -311,12 +326,13 @@ export const GameBoard: React.FC = () => {
     // 在线模式下的部署处理
     if (isOnlineMode && actionMode === 'deploy' && deployUnitType) {
       // 检查是否是机关单位
-      if (deployUnitType === UnitType.BALLISTA || deployUnitType === UnitType.CHARIOT) {
+      if (isMachineUnit(deployUnitType)) {
         // 在线模式：发送部署机关单位命令到服务器
-        const machineType = deployUnitType === UnitType.BALLISTA ? 'ballista' : 'chariot';
-        colyseusService.shenjiDeployMachine(machineType as 'ballista' | 'chariot', hex);
+        const machineType = getMachineTypeStr(deployUnitType)!;
+        colyseusService.shenjiDeployMachine(machineType, hex);
 
-        const unitName = deployUnitType === UnitType.BALLISTA ? '弩车' : '战车';
+        const unitName = deployUnitType === UnitType.BALLISTA ? '弩车' :
+                        deployUnitType === UnitType.CHARIOT ? '战车' : '投石车';
         addLog(`部署了${unitName}`, 'deploy');
 
         // 部署成功后退出部署模式
@@ -344,9 +360,10 @@ export const GameBoard: React.FC = () => {
     // 单机模式的原有逻辑
     if (actionMode === 'deploy' && deployUnitType) {
       // 机关单位使用特殊部署逻辑
-      if (deployUnitType === UnitType.BALLISTA || deployUnitType === UnitType.CHARIOT) {
-        if (deployMachine(deployUnitType, hex)) {
-          const unitName = deployUnitType === UnitType.BALLISTA ? '弩车' : '战车';
+      if (isMachineUnit(deployUnitType)) {
+        if (deployMachine(deployUnitType as UnitType.BALLISTA | UnitType.CHARIOT | UnitType.CATAPULT, hex)) {
+          const unitName = deployUnitType === UnitType.BALLISTA ? '弩车' :
+                          deployUnitType === UnitType.CHARIOT ? '战车' : '投石车';
           addLog(`部署了${unitName}`, 'deploy');
           // 保持部署模式，允许连续部署同类型单位
           // setActionMode(null);
@@ -379,9 +396,10 @@ export const GameBoard: React.FC = () => {
     if (actionMode === 'rende-convert' && selectedUnit) {
       const target = Object.values(units).find(u => {
         // 检查是否是机关单位
-        if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
-          const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-          const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+        if (isMachineUnit(u.type)) {
+          const machineType = getMachineTypeStr(u.type)!;
+          const isPlayerOne = u.owner === Player.PLAYER1;
+          const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
           return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
         }
         return hexEquals(u.position, hex);
@@ -443,9 +461,10 @@ export const GameBoard: React.FC = () => {
       const unit = Object.values(units).find(u => {
         if (u.owner !== currentPlayer) return false;
         // 检查是否是机关单位
-        if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
-          const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-          const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+        if (isMachineUnit(u.type)) {
+          const machineType = getMachineTypeStr(u.type)!;
+          const isPlayerOne = u.owner === Player.PLAYER1;
+          const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
           return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
         }
         return hexEquals(u.position, hex);
@@ -511,9 +530,10 @@ export const GameBoard: React.FC = () => {
             if (u.owner === selectedUnit.owner || u.id === selectedUnit.id) return false;
 
             // 检查是否是机关单位
-            if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
-              const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-              const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+            if (isMachineUnit(u.type)) {
+              const machineType = getMachineTypeStr(u.type)!;
+              const isPlayerOne = u.owner === Player.PLAYER1;
+              const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
               return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
             }
             // 普通单位只检查中心位置
@@ -558,9 +578,10 @@ export const GameBoard: React.FC = () => {
         // 普通攻击 - 查找被点击位置的单位（包括机关占用的格子）
         const target = Object.values(units).find(u => {
           // 检查是否是机关单位
-          if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
-            const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-            const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+          if (isMachineUnit(u.type)) {
+            const machineType = getMachineTypeStr(u.type)!;
+            const isPlayerOne = u.owner === Player.PLAYER1;
+            const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
             return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
           }
           // 普通单位只检查中心位置
@@ -644,25 +665,28 @@ export const GameBoard: React.FC = () => {
     setDeployUnitType(unitType);
     setActionMode('deploy');
 
-    // 计算可部署区域
+    // 计算可部署区域 - 允许在任何未被占用的位置部署（包括敌方部署区）
     const allHexes = generateHexMap(5);
-    // 在线模式下根据myPlayerRole确定区域，单机模式根据currentPlayer确定
-    const playerSide = (isOnlineMode && myPlayerRole)
-      ? (myPlayerRole === 'player1' ? 'top' : 'bottom')
-      : (currentPlayer === Player.PLAYER1 ? 'top' : 'bottom');
 
     const availableHexes = allHexes.filter(hex => {
-      const inStartZone = isInStartZone(hex, playerSide);
       const occupied = Object.values(units).some(u => hexEquals(u.position, hex));
 
-      // 机关单位（弩车和战车）只能部署在中间排
-      if (unitType === UnitType.BALLISTA || unitType === UnitType.CHARIOT) {
-        const middleRow = playerSide === 'top' ? 4 : -4;
-        return inStartZone && !occupied && hex.r === middleRow;
+      // 机关单位占据多个格子，需要检查所有占据的格子
+      if (isMachineUnit(unitType)) {
+        const machineTypeStr = unitType === UnitType.BALLISTA ? 'ballista' :
+                              unitType === UnitType.CHARIOT ? 'chariot' : 'catapult';
+        const occupiedHexes = getMachineOccupiedHexes(hex, machineTypeStr);
+
+        // 检查机关单位的所有格子是否都未被占用
+        const hasCollision = occupiedHexes.some(occupiedHex =>
+          Object.values(units).some(u => hexEquals(u.position, occupiedHex))
+        );
+
+        return !occupied && !hasCollision;
       }
 
-      // 普通单位可以部署在整个起始区
-      return inStartZone && !occupied;
+      // 普通单位可以部署在任何未被占用的位置
+      return !occupied;
     });
 
     setHighlightedHexes(availableHexes);
@@ -679,11 +703,12 @@ export const GameBoard: React.FC = () => {
   // 进入转向模式 - 显示所有射击路径
   const handleShowRotation = () => {
     if (!selectedUnit) return;
-    if (selectedUnit.type !== UnitType.ARCHER && selectedUnit.type !== UnitType.BALLISTA) return;
+    if (selectedUnit.type !== UnitType.ARCHER && selectedUnit.type !== UnitType.BALLISTA && selectedUnit.type !== UnitType.CATAPULT) return;
 
     // 计算所有6个方向的射击路径
     const paths = new Map<Direction, HexCoord[]>();
-    // 只被敌方单位阻挡，友方单位不阻挡
+
+    // 获取敌方单位位置（用于阻挡射击）
     const enemyPositions = Object.values(units)
       .filter(u => u.owner !== selectedUnit.owner && u.id !== selectedUnit.id)
       .map(u => u.position);
@@ -696,14 +721,24 @@ export const GameBoard: React.FC = () => {
       Direction.SOUTH_WEST,
       Direction.SOUTH_EAST,
     ].forEach(dir => {
+      // 获取该方向的射击路径（会被敌方单位阻挡）
       const path = getShootingPath(selectedUnit.position, dir, 5, enemyPositions);
-      paths.set(dir, path);
+
+      // 检查路径上是否有敌方单位
+      const hasEnemy = path.some(hex =>
+        enemyPositions.some(enemyPos => hexEquals(enemyPos, hex))
+      );
+
+      // 只有路径上有敌人时才添加到可选方向
+      if (hasEnemy && path.length > 0) {
+        paths.set(dir, path);
+      }
     });
 
     setRotationPaths(paths);
     setActionMode('rotate');
 
-    // 高亮所有路径
+    // 高亮所有有敌人的路径
     const allPathHexes: HexCoord[] = [];
     paths.forEach(path => allPathHexes.push(...path));
     setHighlightedHexes(allPathHexes);
@@ -1548,10 +1583,11 @@ export const GameBoard: React.FC = () => {
               })()}
 
               {/* 渲染机关单位占用的格子 */}
-              {Object.values(units).filter(u => u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT).map(unit => {
+              {Object.values(units).filter(u => u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT).map(unit => {
                 const hexSize = isMobile ? 30 : 40;
-                const machineTypeStr = unit.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-                const occupiedHexes = getMachineOccupiedHexes(unit.position, machineTypeStr);
+                const machineTypeStr = unit.type === UnitType.BALLISTA ? 'ballista' : unit.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
+                const isPlayerOne = unit.owner === Player.PLAYER1;
+                const occupiedHexes = getMachineOccupiedHexes(unit.position, machineTypeStr, isPlayerOne);
 
                 return (
                   <g key={`machine-${unit.id}`} opacity={0.3}>
@@ -1604,6 +1640,10 @@ export const GameBoard: React.FC = () => {
                       }
                       // 战车特殊处理：行动次数上限为1
                       if (selectedUnit.type === UnitType.CHARIOT) {
+                        return 1;
+                      }
+                      // 投石车特殊处理：行动次数上限为1
+                      if (selectedUnit.type === UnitType.CATAPULT) {
                         return 1;
                       }
                       // 将军可能有额外行动次数
@@ -2006,9 +2046,10 @@ export const GameBoard: React.FC = () => {
                               if (hexEquals(u.position, neighborHex)) return true;
 
                               // 检查机关单位的占用格子
-                              if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT) {
-                                const machineType = u.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-                                const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+                              if (isMachineUnit(u.type)) {
+                                const machineType = getMachineTypeStr(u.type)!;
+                                const isPlayerOne = u.owner === Player.PLAYER1;
+                                const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
                                 return occupiedHexes.some(hex => hexEquals(hex, neighborHex));
                               }
 
@@ -2029,6 +2070,59 @@ export const GameBoard: React.FC = () => {
                     /* 战车：只能移动碾压，没有攻击按钮 */
                     <div className="text-sm text-gray-600 text-center py-2">
                       战车通过移动碾压敌人
+                    </div>
+                  ) : selectedUnit.type === UnitType.CATAPULT ? (
+                    /* 投石车：转向、蓄力、攻击 */
+                    <div className="space-y-2">
+                      {/* 蓄力按钮 */}
+                      <button
+                        onClick={() => {
+                          if (!selectedUnit) return;
+                          // 蓄力逻辑：增加蓄力层数（最多2层）
+                          if (isOnlineMode) {
+                            colyseusService.catapultCharge(selectedUnit.id);
+                            addLog('投石车蓄力', 'ability');
+                          } else {
+                            // 单机模式：本地处理蓄力
+                            const currentCharge = (selectedUnit as any).chargeLevel || 0;
+                            if (currentCharge < 2) {
+                              updateUnit(selectedUnit.id, {
+                                chargeLevel: currentCharge + 1,
+                                hasActedThisTurn: true,
+                                actionsThisTurn: selectedUnit.actionsThisTurn + 1,
+                              } as any);
+                              consumeActionPoint(currentPlayer);
+                              addLog(`投石车蓄力 (层数: ${currentCharge + 1}/2)`, 'ability');
+                            }
+                          }
+                        }}
+                        disabled={!isMyTurn || currentActionPoints < 1 || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1 || ((selectedUnit as any).chargeLevel >= 2)}
+                        className="w-full px-4 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white rounded-lg shadow-md hover:from-yellow-600 hover:to-yellow-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                      >
+                        蓄力 {`(${(selectedUnit as any).chargeLevel || 0}/2)`} {!isMyTurn ? '(非你的回合)' : ''}
+                      </button>
+                      {/* 攻击按钮 */}
+                      <button
+                        onClick={() => {
+                          if (!selectedUnit) return;
+                          // 显示射击路径
+                          const shootingPath = getShootingPath(selectedUnit.position, selectedUnit.direction, 5);
+                          setHighlightedHexes(shootingPath);
+                          setActionMode('attack');
+                        }}
+                        disabled={!isMyTurn || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1}
+                        className="w-full px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                      >
+                        投射攻击 {`(蓄力${(selectedUnit as any).chargeLevel || 0}层)`} {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可攻击)' : ''}
+                      </button>
+                      {/* 转向按钮 */}
+                      <button
+                        onClick={handleShowRotation}
+                        disabled={!isMyTurn || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1}
+                        className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                      >
+                        转向 {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可用)' : ''}
+                      </button>
                     </div>
                   ) : (
                     /* 其他单位：普通攻击 */
@@ -2143,17 +2237,25 @@ export const GameBoard: React.FC = () => {
                           <button
                             className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
                             onClick={() => handleStartDeploy(UnitType.BALLISTA)}
-                            disabled={!isMyTurn || currentActionPoints < 5}
+                            disabled={!isMyTurn || currentActionPoints < 3}
                           >
-                            弩车 (4步+1弓) - 5点 {!isMyTurn ? '(非你的回合)' : ''}
+                            弩车 (2步+1弓) - 3点 {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
                           <button
                             className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
                             onClick={() => handleStartDeploy(UnitType.CHARIOT)}
                             disabled={!isMyTurn || currentActionPoints < 4}
                           >
-                            战车 (6步) - 4点 {!isMyTurn ? '(非你的回合)' : ''}
+                            战车 (4步) - 4点 {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
+                          <button
+                            className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
+                            onClick={() => handleStartDeploy(UnitType.CATAPULT)}
+                            disabled={!isMyTurn || currentActionPoints < 3}
+                          >
+                            投石车 (2步+1弓) - 3点 {!isMyTurn ? '(非你的回合)' : ''}
+                          </button>
+
                         </div>
                       </div>
 
@@ -2379,9 +2481,10 @@ export const GameBoard: React.FC = () => {
                 disabled={(() => {
                   // 计算所需行动点：机关单位根据占用格子数，普通单位1点
                   let requiredPoints = 1;
-                  if (rendeKillConfirm.target.type === UnitType.BALLISTA || rendeKillConfirm.target.type === UnitType.CHARIOT) {
-                    const machineType = rendeKillConfirm.target.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-                    const occupiedHexes = getMachineOccupiedHexes(rendeKillConfirm.target.position, machineType);
+                  if (isMachineUnit(rendeKillConfirm.target.type)) {
+                    const machineType = getMachineTypeStr(rendeKillConfirm.target.type)!;
+                    const isPlayerOne = rendeKillConfirm.target.owner === Player.PLAYER1;
+                    const occupiedHexes = getMachineOccupiedHexes(rendeKillConfirm.target.position, machineType, isPlayerOne);
                     requiredPoints = occupiedHexes.length;
                   }
                   return currentActionPoints < requiredPoints;
@@ -2390,9 +2493,10 @@ export const GameBoard: React.FC = () => {
               >
                 转为中立标记（消耗{(() => {
                   let requiredPoints = 1;
-                  if (rendeKillConfirm.target.type === UnitType.BALLISTA || rendeKillConfirm.target.type === UnitType.CHARIOT) {
-                    const machineType = rendeKillConfirm.target.type === UnitType.BALLISTA ? 'ballista' : 'chariot';
-                    const occupiedHexes = getMachineOccupiedHexes(rendeKillConfirm.target.position, machineType);
+                  if (isMachineUnit(rendeKillConfirm.target.type)) {
+                    const machineType = getMachineTypeStr(rendeKillConfirm.target.type)!;
+                    const isPlayerOne = rendeKillConfirm.target.owner === Player.PLAYER1;
+                    const occupiedHexes = getMachineOccupiedHexes(rendeKillConfirm.target.position, machineType, isPlayerOne);
                     requiredPoints = occupiedHexes.length;
                   }
                   return requiredPoints;

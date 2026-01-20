@@ -38,6 +38,16 @@ export class UnitSchema extends Schema {
   @type("number") killCount: number = 0;
   @type("number") pierceCount: number = 0;
   @type("boolean") hasActedThisTurn: boolean = false;
+  @type("number") chargeLevel: number = 0; // 投石车蓄力层数
+
+  // 战斗状态标记
+  @type("number") moveDistance: number = 0; // 骑兵本回合移动距离
+  @type("boolean") movementRestricted: boolean = false; // 步兵纵深抗击限制
+  @type("number") movementRestrictionSourceQ: number = 0; // 限制来源Q坐标
+  @type("number") movementRestrictionSourceR: number = 0; // 限制来源R坐标
+  @type("number") movementRestrictionSourceS: number = 0; // 限制来源S坐标
+  @type("boolean") cannotMoveNextTurn: boolean = false; // 弩车贯穿限制
+  @type("boolean") cannotRotateNextTurn: boolean = false; // 弩车贯穿限制
 }
 
 /**

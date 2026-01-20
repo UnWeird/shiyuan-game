@@ -11,6 +11,9 @@ import {
   getBallistaVerticalPath,
   getMachineOccupiedHexes,
   isInMapRange,
+  getAxisLineFromTarget,
+  getDistanceToBaseline,
+  getFanShapedHexes,
 } from '../utils/hexUtils';
 
 export const useGameActions = () => {
@@ -108,8 +111,8 @@ export const useGameActions = () => {
            general.generalType === 'rende';
   };
 
-  // 获取可移动的位置
-  const getValidMoves = (unit: Unit): HexCoord[] => {
+  // 获取可移动的位置（骑兵返回带步数信息的结果）
+  const getValidMoves = (unit: Unit): (HexCoord & { steps?: number })[] => {
     // 计算行动次数上限（基础2次 + 额外行动次数）
     const bonusActions = (unit.type === UnitType.GENERAL && 'bonusActionLimit' in unit && typeof unit.bonusActionLimit === 'number') ? unit.bonusActionLimit : 0;
     const actionLimit = 2 + bonusActions;
@@ -158,20 +161,21 @@ export const useGameActions = () => {
       });
     }
 
-    // 弩车特殊移动逻辑：不能碾压，需要检查所有占用格子
-    if (unit.type === UnitType.BALLISTA) {
+    // 弩车/投石车特殊移动逻辑：不能碾压，需要检查所有占用格子
+    if (unit.type === UnitType.BALLISTA || unit.type === UnitType.CATAPULT) {
       // 检查是否已行动
       if ('hasActedThisTurn' in unit && unit.hasActedThisTurn) return [];
 
       const range = 1;
       const possibleMoves = hexRange(unit.position, range);
+      const machineType = unit.type === UnitType.BALLISTA ? 'ballista' : 'catapult';
 
-      // 过滤移动位置：需要检查弩车占用的所有5格都没有障碍物
+      // 过滤移动位置：需要检查机关占用的所有格子都没有障碍物
       return possibleMoves.filter(hex => {
         if (hexEquals(hex, unit.position)) return false;
 
         // 检查目标位置及其占用的所有格子
-        const targetOccupiedHexes = getMachineOccupiedHexes(hex, 'ballista');
+        const targetOccupiedHexes = getMachineOccupiedHexes(hex, machineType);
 
         // 检查是否有任何格子被占用
         const hasCollision = targetOccupiedHexes.some(occupiedHex =>
@@ -182,8 +186,87 @@ export const useGameActions = () => {
       });
     }
 
-    const range = unit.type === UnitType.CAVALRY ? 2 : 1;
-    const possibleMoves = hexRange(unit.position, range);
+    const range = unit.type === UnitType.CAVALRY ? 3 : 1; // 骑兵最多移动3格
+
+    // 仁德单位移动范围+1
+    let finalRange = range;
+    if (isRendeFaction(unit.owner)) {
+      finalRange = range + 1;
+    }
+
+    // 对于骑兵，使用BFS计算所有可达的格子（考虑路径阻挡）
+    if (unit.type === UnitType.CAVALRY) {
+      const reachable = new Map<string, number>(); // key: "q,r,s", value: 到达该格子的最短步数
+      const queue: Array<{ pos: HexCoord, steps: number }> = [];
+      const visited = new Set<string>();
+
+      // 起点
+      queue.push({ pos: unit.position, steps: 0 });
+      visited.add(`${unit.position.q},${unit.position.r},${unit.position.s}`);
+
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+
+        // 如果已经达到移动上限，不再展开
+        if (current.steps >= finalRange) continue;
+
+        // 获取所有相邻格子
+        const neighbors = hexNeighbors(current.pos);
+
+        for (const neighbor of neighbors) {
+          const neighborKey = `${neighbor.q},${neighbor.r},${neighbor.s}`;
+
+          // 如果已访问过，跳过
+          if (visited.has(neighborKey)) continue;
+
+          // 检查是否在地图范围内
+          if (!isInMapRange(neighbor, 5)) continue;
+
+          // 检查是否被单位占用
+          const occupiedByCore = Object.values(units).some(u =>
+            hexEquals(u.position, neighbor) && u.id !== unit.id
+          );
+
+          // 检查是否被机关单位占据
+          const occupiedByMachine = Object.values(units).some(u => {
+            if (u.id === unit.id) return false;
+            if (u.type !== UnitType.BALLISTA && u.type !== UnitType.CHARIOT && u.type !== UnitType.CATAPULT) return false;
+
+            const machineType = u.type === UnitType.BALLISTA ? 'ballista' : u.type === UnitType.CATAPULT ? 'catapult' : 'chariot';
+            const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, u.owner === Player.PLAYER1);
+            return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, neighbor));
+          });
+
+          // 如果被占用，这条路径不通，但继续尝试其他路径
+          if (occupiedByCore || occupiedByMachine) {
+            visited.add(neighborKey); // 标记为已访问，避免重复检查
+            continue;
+          }
+
+          // 标记为已访问并加入队列
+          visited.add(neighborKey);
+          const nextSteps = current.steps + 1;
+          queue.push({ pos: neighbor, steps: nextSteps });
+
+          // 记录到达该格子的最短步数
+          if (!reachable.has(neighborKey)) {
+            reachable.set(neighborKey, nextSteps);
+          }
+        }
+      }
+
+      // 将结果转换为数组格式
+      const result: (HexCoord & { steps: number })[] = [];
+      for (const [key, steps] of reachable.entries()) {
+        const [q, r, s] = key.split(',').map(Number);
+        result.push({ q, r, s, steps });
+      }
+
+      return result;
+    }
+
+    // 非骑兵单位的移动逻辑
+    const possibleMoves = hexRange(unit.position, finalRange);
 
     // 过滤掉已被占用的位置和不在地图范围内的位置
     return possibleMoves.filter(hex => {
@@ -206,7 +289,9 @@ export const useGameActions = () => {
         return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
       });
 
-      return !occupiedByMachine && hexDistance(unit.position, hex) <= range;
+      if (occupiedByMachine) return false;
+
+      return hexDistance(unit.position, hex) <= finalRange;
     });
   };
 
@@ -274,7 +359,64 @@ export const useGameActions = () => {
 
     const targets: Unit[] = [];
 
+    // 投石车攻击：沿方向的射击路径
+    if (unit.type === UnitType.CATAPULT) {
+      // 检查是否已行动
+      if ('hasActedThisTurn' in unit && unit.hasActedThisTurn) return [];
+
+      const blockedPositions: HexCoord[] = [];
+
+      // 只被敌方单位阻挡
+      Object.values(units).forEach(u => {
+        if (u.id === unit.id) return;
+        if (u.owner !== unit.owner) {
+          if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT) {
+            const machineType = u.type === UnitType.BALLISTA ? 'ballista' :
+                               u.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
+            const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+            blockedPositions.push(...occupiedHexes);
+          } else {
+            blockedPositions.push(u.position);
+          }
+        }
+      });
+
+      const shootingPath = getShootingPath(
+        unit.position,
+        unit.direction,
+        5,
+        blockedPositions
+      );
+
+      shootingPath.forEach(hexPos => {
+        const enemy = Object.values(units).find(u => {
+          if (u.owner === unit.owner || u.id === unit.id) return false;
+          if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT) {
+            const machineType = u.type === UnitType.BALLISTA ? 'ballista' :
+                               u.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
+            const occupiedHexes = getMachineOccupiedHexes(u.position, machineType);
+            return occupiedHexes.some(hex => hexEquals(hex, hexPos));
+          }
+          return hexEquals(u.position, hexPos);
+        });
+        if (enemy && !targets.some(t => t.id === enemy.id)) {
+          targets.push(enemy);
+        }
+      });
+
+      return targets;
+    }
+
     if (unit.type === UnitType.ARCHER || unit.type === UnitType.BALLISTA) {
+      // 弓箭手新射程规则：range = 3 + hex_distance(archer_cell, own_baseline)
+      let maxRange = 5; // 默认地图半径
+
+      if (unit.type === UnitType.ARCHER) {
+        const playerSide = unit.owner === Player.PLAYER1 ? 'top' : 'bottom';
+        const distToBaseline = getDistanceToBaseline(unit.position, playerSide);
+        maxRange = 3 + distToBaseline;
+      }
+
       // 弓箭手/弩车：使用射击路径计算
       // 只被敌方单位阻挡，友方的弩车和战车不阻挡射击
       const blockedPositions: HexCoord[] = [];
@@ -303,7 +445,7 @@ export const useGameActions = () => {
       const shootingPath = getShootingPath(
         unit.position,
         unit.direction,
-        5, // 地图半径
+        maxRange, // 使用计算后的射程
         blockedPositions // 被阻挡的位置
       );
 
@@ -370,6 +512,12 @@ export const useGameActions = () => {
     const validMoves = getValidMoves(unit);
     if (!validMoves.some(hex => hexEquals(hex, to))) return false;
 
+    // 骑兵特殊逻辑：记录移动距离
+    let moveDistance = 1;
+    if (unit.type === UnitType.CAVALRY) {
+      moveDistance = hexDistance(unit.position, to);
+    }
+
     // 弩车移动后标记为已行动（每回合只能1个动作）
     if (unit.type === UnitType.BALLISTA) {
       updateUnit(unit.id, {
@@ -378,6 +526,14 @@ export const useGameActions = () => {
         hasActedThisTurn: true,
         actionsThisTurn: unit.actionsThisTurn + 1,
       } as any);
+    } else if (unit.type === UnitType.CAVALRY) {
+      // 骑兵：记录移动距离
+      updateUnit(unit.id, {
+        position: to,
+        hasMoved: true,
+        actionsThisTurn: unit.actionsThisTurn + 1,
+        moveDistance: moveDistance,
+      });
     } else {
       updateUnit(unit.id, {
         position: to,
@@ -401,10 +557,40 @@ export const useGameActions = () => {
 
   // 攻击单位
   const attackUnit = (attacker: Unit, target: Unit) => {
+    // 检查是否攻击自己的单位
+    if (attacker.owner === target.owner) return false;
+
     // 检查是否为非将领单位攻击将领，需要额外+1行动值
     const isNonGeneralAttackingGeneral =
       attacker.type !== UnitType.GENERAL && target.type === UnitType.GENERAL;
-    const requiredActionPoints = isNonGeneralAttackingGeneral ? 2 : 1;
+    let requiredActionPoints = isNonGeneralAttackingGeneral ? 2 : 1;
+
+    // 弓箭手特殊：计算越射己方单位的代价
+    if (attacker.type === UnitType.ARCHER) {
+      // 计算从弓箭手到目标的射击路径
+      const pathToTarget = [];
+      let current = hexNeighbor(attacker.position, attacker.direction);
+      while (isInMapRange(current, 5) && !hexEquals(current, target.position)) {
+        pathToTarget.push(current);
+        current = hexNeighbor(current, attacker.direction);
+      }
+
+      // 统计路径上的己方单位数量
+      let friendlyUnitsInPath = 0;
+      pathToTarget.forEach(hexPos => {
+        const unitAtPos = Object.values(units).find(u =>
+          u.owner === attacker.owner &&
+          u.id !== attacker.id &&
+          hexEquals(u.position, hexPos)
+        );
+        if (unitAtPos) {
+          friendlyUnitsInPath++;
+        }
+      });
+
+      // 每越过一个己方单位，额外消耗1点行动点
+      requiredActionPoints += friendlyUnitsInPath;
+    }
 
     if (currentActionPoints < requiredActionPoints) return false;
 
@@ -435,92 +621,206 @@ export const useGameActions = () => {
       return false; // 攻击无效
     }
 
+    // === 步兵纵深抗击规则检查 ===
+    let depthDefenseTriggered = false;
+    let rearInfantryId: string | null = null;
+
+    if (target.type === UnitType.INFANTRY) {
+      // 确定攻击来源格（source_cell）
+      const sourceCell = attacker.position;
+
+      // 获取攻击反方向轴线上的所有格子
+      const axisLine = getAxisLineFromTarget(target.position, sourceCell, 5);
+
+      // 在轴线上查找己方步兵
+      const rearInfantries = axisLine
+        .map(hexPos => Object.values(units).find(u =>
+          u.type === UnitType.INFANTRY &&
+          u.owner === target.owner &&
+          hexEquals(u.position, hexPos)
+        ))
+        .filter(u => u !== undefined) as Unit[];
+
+      if (rearInfantries.length > 0) {
+        // 触发纵深抗击！
+        depthDefenseTriggered = true;
+
+        // 找到最远的后排步兵
+        const rearInfantry = rearInfantries.reduce((furthest, current) => {
+          const furthestDist = hexDistance(furthest.position, sourceCell);
+          const currentDist = hexDistance(current.position, sourceCell);
+          return currentDist > furthestDist ? current : furthest;
+        });
+
+        rearInfantryId = rearInfantry.id;
+
+        // Step 2: 击退后排步兵（向远离source的方向击退1格）
+        // 重新计算从rearInfantry出发的轴线，获取其后方第一个格子
+        const rearAxisLine = getAxisLineFromTarget(rearInfantry.position, sourceCell, 5);
+        const retreatTarget = rearAxisLine.length > 0 ? rearAxisLine[0] : null;
+
+        if (retreatTarget) {
+          // 检查击退目标格是否可通过
+          const canRetreat = !Object.values(units).some(u => hexEquals(u.position, retreatTarget)) &&
+                            isInMapRange(retreatTarget, 5);
+
+          if (canRetreat) {
+            // 可以击退
+            updateUnit(rearInfantry.id, {
+              position: retreatTarget,
+            });
+          } else {
+            // Step 3: 无法击退，惩罚后排步兵
+            const newHp = rearInfantry.hp - 1;
+            if (newHp <= 0) {
+              removeUnit(rearInfantry.id);
+            } else {
+              updateUnit(rearInfantry.id, {
+                hp: newHp,
+                isFlipped: true,
+              });
+            }
+          }
+        } else {
+          // 后方没有格子（已到地图边缘），无法击退，惩罚
+          const newHp = rearInfantry.hp - 1;
+          if (newHp <= 0) {
+            removeUnit(rearInfantry.id);
+          } else {
+            updateUnit(rearInfantry.id, {
+              hp: newHp,
+              isFlipped: true,
+            });
+          }
+        }
+
+        // Step 4: 限制前排机动
+        updateUnit(target.id, {
+          movementRestricted: true,
+        });
+      }
+    }
+
+    // 如果触发了纵深抗击，本次攻击不造成伤害（Step 1: 免伤）
+    if (depthDefenseTriggered) {
+      // 攻击者依然消耗行动
+      updateUnit(attacker.id, {
+        hasAttacked: true,
+        actionsThisTurn: attacker.actionsThisTurn + 1,
+      });
+
+      // 非将领攻击将领时消耗额外行动点
+      for (let i = 0; i < requiredActionPoints; i++) {
+        consumeActionPoint(currentPlayer);
+      }
+
+      return true; // 攻击成功但免伤
+    }
+
     // 造成伤害
     let damage = 1;
 
+    // 骑兵：根据移动距离调整伤害
+    if (attacker.type === UnitType.CAVALRY && 'moveDistance' in attacker) {
+      const moveDistance = (attacker as any).moveDistance || 0;
+      if (moveDistance === 3) {
+        // 移动3格无法攻击
+        return false;
+      } else if (moveDistance === 2) {
+        // 移动2格伤害+1
+        damage = 2;
+      }
+      // 移动1格：默认伤害1
+    }
+
     // 弩车受近战攻击伤害+1
     if (target.type === UnitType.BALLISTA) {
-      damage = 2;
+      // 如果攻击者是骑兵且移动2格，则伤害为2（已设置），不再叠加
+      if (attacker.type !== UnitType.CAVALRY || ((attacker as any).moveDistance || 0) !== 2) {
+        damage = 2;
+      } else {
+        damage = 2; // 骑兵移动2格攻击弩车，伤害也是2（不叠加）
+      }
     }
 
     const newHp = target.hp - damage;
 
     if (newHp <= 0) {
-      // 检查是否是仁德阵营的击杀，如果是则不立即处理
-      if (isRendeFaction(attacker.owner)) {
-        // 仁德阵营击杀：标记单位为待确认状态，由UI处理
-        // 这里我们返回一个特殊状态，让调用方处理
-        updateUnit(attacker.id, {
-          hasAttacked: true,
-          actionsThisTurn: attacker.actionsThisTurn + 1,
+      // 骑兵掉马：生成一个体力为1的步兵
+      if (target.type === UnitType.CAVALRY) {
+        updateUnit(target.id, {
+          type: UnitType.INFANTRY,
+          hp: 1,
+          maxHp: 2,
+          isFlipped: true, // 半血步兵
         });
+      } else {
+        // 检查是否是仁德阵营的击杀，如果是则不立即处理
+        if (isRendeFaction(attacker.owner)) {
+          // 仁德阵营击杀：标记单位为待确认状态，由UI处理
+          // 这里我们返回一个特殊状态，让调用方处理
+          updateUnit(attacker.id, {
+            hasAttacked: true,
+            actionsThisTurn: attacker.actionsThisTurn + 1,
+          });
 
-        // 非将领攻击将领时消耗额外行动点
-        for (let i = 0; i < requiredActionPoints; i++) {
-          consumeActionPoint(currentPlayer);
+          // 非将领攻击将领时消耗额外行动点
+          for (let i = 0; i < requiredActionPoints; i++) {
+            consumeActionPoint(currentPlayer);
+          }
+
+          // 返回特殊值，表示需要UI确认
+          return 'rende_kill_confirm' as any;
         }
 
-        // 返回特殊值，表示需要UI确认
-        return 'rende_kill_confirm' as any;
-      }
+        // 目标被击杀
+        removeUnit(target.id);
+        recordKill(currentPlayer);
 
-      // 目标被击杀
-      removeUnit(target.id);
-      recordKill(currentPlayer);
+        // 如果被击杀的是中立单位标记，重置仁德将领的转化费用
+        if (target.type === UnitType.NEUTRAL_MARKER && target.owner === Player.NEUTRAL) {
+          // 找到击杀者所属阵营的仁德将领
+          const rendeGeneral = Object.values(units).find(u =>
+            u.type === UnitType.GENERAL &&
+            u.owner === attacker.owner &&
+            'generalType' in u &&
+            (u as any).generalType === 'rende'
+          );
 
-      // 如果被击杀的是中立单位标记，重置仁德将领的转化费用
-      if (target.type === UnitType.NEUTRAL_MARKER && target.owner === Player.NEUTRAL) {
-        // 找到击杀者所属阵营的仁德将领
-        const rendeGeneral = Object.values(units).find(u =>
-          u.type === UnitType.GENERAL &&
-          u.owner === attacker.owner &&
-          'generalType' in u &&
-          (u as any).generalType === 'rende'
-        );
-
-        if (rendeGeneral) {
-          // 重置转化费用为1
-          updateUnit(rendeGeneral.id, {
-            convertInfantryCost: 1,
-          } as any);
+          if (rendeGeneral) {
+            // 重置转化费用为1
+            updateUnit(rendeGeneral.id, {
+              convertInfantryCost: 1,
+            } as any);
+          }
         }
-      }
 
-      // 如果是将军被击杀，永久减少骰子
-      if (target.type === UnitType.GENERAL) {
-        useGameStore.getState().removeDice(target.owner, 1);
-      }
-
-      // 弩车被击杀：贯穿过3个及以上单位（包含友方），神机将军的拥有者获得重投机会
-      if (target.type === UnitType.BALLISTA) {
-        if ('pierceCount' in target && (target as any).pierceCount >= 3) {
-          // 贯穿过3个及以上单位，神机将军的拥有者获得重投机会
-          useGameStore.getState().addRerollToken(target.owner);
+        // 如果是将军被击杀，永久减少骰子
+        if (target.type === UnitType.GENERAL) {
+          useGameStore.getState().removeDice(target.owner, 1);
         }
-      }
 
-      // 战车被击杀：如果碾死过人，神机将军的拥有者获得重投机会
-      if (target.type === UnitType.CHARIOT) {
-        if ('killCount' in target && (target as any).killCount > 0) {
-          useGameStore.getState().addRerollToken(target.owner);
+        // 弩车被击杀：贯穿过3个及以上单位（包含友方），神机将军的拥有者获得重投机会
+        if (target.type === UnitType.BALLISTA) {
+          if ('pierceCount' in target && (target as any).pierceCount >= 3) {
+            // 贯穿过3个及以上单位，神机将军的拥有者获得重投机会
+            useGameStore.getState().addRerollToken(target.owner);
+          }
+        }
+
+        // 战车被击杀：如果碾死过人，神机将军的拥有者获得重投机会
+        if (target.type === UnitType.CHARIOT) {
+          if ('killCount' in target && (target as any).killCount > 0) {
+            useGameStore.getState().addRerollToken(target.owner);
+          }
         }
       }
     } else {
-      // 如果是骑兵被打中，退化为满血步兵
-      if (target.type === UnitType.CAVALRY && newHp === 1) {
-        updateUnit(target.id, {
-          type: UnitType.INFANTRY,
-          hp: 2, // 满血
-          maxHp: 2,
-          isFlipped: false, // 不翻面
-        });
-      } else {
-        // 其他单位受伤
-        updateUnit(target.id, {
-          hp: newHp,
-          isFlipped: true,
-        });
-      }
+      // 其他单位受伤，直接减血
+      updateUnit(target.id, {
+        hp: newHp,
+        isFlipped: true,
+      });
     }
 
     updateUnit(attacker.id, {
@@ -536,12 +836,17 @@ export const useGameActions = () => {
     return true;
   };
 
-  // 转向（弓箭手/弩车）
+  // 转向（弓箭手/投石车）
   const rotateUnit = (unit: Unit, direction: Direction) => {
     if (currentActionPoints < 1) return false;
     if (unit.actionsThisTurn >= 2) return false;
 
-    // 只有弓箭手可以转向，弩车方向固定
+    // 弓箭手和投石车可以转向，弩车方向固定
+    if (unit.type === UnitType.CATAPULT) {
+      // 投石车转向使用专用函数（考虑蓄力代价）
+      return catapultRotate(unit, direction);
+    }
+
     if (unit.type !== UnitType.ARCHER) return false;
 
     updateUnit(unit.id, {
@@ -558,12 +863,9 @@ export const useGameActions = () => {
   const deployUnit = (unitType: UnitType, position: HexCoord, direction: Direction = Direction.EAST) => {
     if (currentActionPoints < 1) return false;
 
-    // 检查是否在自己的起始区
-    const isValidZone = currentPlayer === Player.PLAYER1
-      ? isInStartZone(position, 'top')
-      : isInStartZone(position, 'bottom');
-
-    if (!isValidZone) return false;
+    // 允许在任何位置部署（包括敌方部署区）
+    // 只需检查是否在地图范围内
+    if (!isInMapRange(position, 5)) return false;
 
     // 检查位置是否被占用
     const occupied = Object.values(units).some(u => hexEquals(u.position, position));
@@ -626,9 +928,10 @@ export const useGameActions = () => {
   };
 
   // 部署机关单位（神机专属）
-  const deployMachine = (machineType: UnitType.BALLISTA | UnitType.CHARIOT, position: HexCoord) => {
-    // 弩车消耗5点，战车消耗4点
-    const requiredPoints = machineType === UnitType.BALLISTA ? 5 : 4;
+  const deployMachine = (machineType: UnitType.BALLISTA | UnitType.CHARIOT | UnitType.CATAPULT, position: HexCoord) => {
+    // 弩车消耗3点，战车消耗4点，投石车消耗3点
+    const requiredPoints = machineType === UnitType.BALLISTA ? 3 :
+                          machineType === UnitType.CHARIOT ? 4 : 3;
     if (currentActionPoints < requiredPoints) return false;
 
     // 检查玩家是否是神机将军
@@ -638,15 +941,13 @@ export const useGameActions = () => {
 
     if (generalType !== 'shenji') return false;
 
-    // 检查是否在自己的起始区
-    const isValidZone = currentPlayer === Player.PLAYER1
-      ? isInStartZone(position, 'top')
-      : isInStartZone(position, 'bottom');
-
-    if (!isValidZone) return false;
+    // 允许在任何位置部署（包括敌方部署区）
+    // 只需检查是否在地图范围内
+    if (!isInMapRange(position, 5)) return false;
 
     // 获取机关单位占用的所有格子
-    const machineTypeStr = machineType === UnitType.BALLISTA ? 'ballista' : 'chariot';
+    const machineTypeStr = machineType === UnitType.BALLISTA ? 'ballista' :
+                          machineType === UnitType.CHARIOT ? 'chariot' : 'catapult';
     const occupiedHexes = getMachineOccupiedHexes(position, machineTypeStr);
 
     // 检查所有占用的格子是否都未被占用
@@ -679,9 +980,15 @@ export const useGameActions = () => {
       if (availableInfantry < 6) {
         return false;
       }
+    } else if (machineType === UnitType.CATAPULT) {
+      // 投石车需要: 2个步兵 + 1个弓箭手
+      if (availableInfantry < 2 || availableArcher < 1) {
+        return false;
+      }
     }
 
     // 弩车固定朝向"前方"（玩家1朝北/上方，玩家2朝南/下方）
+    // 投石车可转向，初始朝向也是前方
     const direction = currentPlayer === Player.PLAYER1 ? Direction.NORTH : Direction.SOUTH;
 
     const newMachine: any = {
@@ -692,13 +999,14 @@ export const useGameActions = () => {
       hp: 4,
       maxHp: 4,
       direction,
-      actionsThisTurn: 1,
+      actionsThisTurn: 0, // 机关刚部署时行动次数为0
       hasMoved: false,
       hasAttacked: false,
       isFlipped: false,
       killCount: 0,
       pierceCount: 0,
       hasActedThisTurn: false,
+      ...(machineType === UnitType.CATAPULT ? { chargeLevel: 0 } : {}),
     };
 
     // 成功部署后才扣除库存（增加已消耗库存）
@@ -740,9 +1048,28 @@ export const useGameActions = () => {
           }
         });
       }
+    } else if (machineType === UnitType.CATAPULT) {
+      // 扣除投石车库存：2个步兵 + 1个弓箭手
+      if (currentPlayer === Player.PLAYER1) {
+        useGameStore.setState({
+          player1ConsumedStock: {
+            ...consumedStock,
+            infantry: consumedStock.infantry + 2,
+            archer: consumedStock.archer + 1,
+          }
+        });
+      } else {
+        useGameStore.setState({
+          player2ConsumedStock: {
+            ...consumedStock,
+            infantry: consumedStock.infantry + 2,
+            archer: consumedStock.archer + 1,
+          }
+        });
+      }
     }
 
-    // 消耗对应的行动点：弩车5点，战车4点
+    // 消耗对应的行动点：弩车3点，战车4点，投石车3点
     for (let i = 0; i < requiredPoints; i++) {
       consumeActionPoint(currentPlayer);
     }
@@ -789,48 +1116,59 @@ export const useGameActions = () => {
 
     if (hitUnits.length === 0) return false;
 
-    // 对所有被击中的单位造成伤害
-    hitUnits.forEach(target => {
-      const newHp = target.hp - 1;
+    // 新规则：贯穿攻击效果
+    const firstUnit = hitUnits[0]; // 第一个命中的单位
+    const lastUnit = hitUnits[hitUnits.length - 1]; // 最后一个命中的单位
 
-      if (newHp <= 0) {
-        // 目标被击杀
-        removeUnit(target.id);
+    // 结算第一个单位：尝试击退
+    const firstAxisLine = getAxisLineFromTarget(firstUnit.position, ballista.position, 5);
+    const firstRetreatTarget = firstAxisLine.length > 0 ? firstAxisLine[0] : null;
 
-        // 增加击杀计数
-        if ('killCount' in ballista) {
-          updateUnit(ballista.id, {
-            killCount: (ballista as any).killCount + 1,
-          } as any);
-        }
+    if (firstRetreatTarget) {
+      const canRetreat = !Object.values(units).some(u => hexEquals(u.position, firstRetreatTarget)) &&
+                        isInMapRange(firstRetreatTarget, 5);
 
-        // 如果击杀的是将军，永久减少骰子
-        if (target.type === UnitType.GENERAL) {
-          useGameStore.getState().removeDice(target.owner, 1);
-        }
-
-        // 记录击杀
-        if (target.owner !== ballista.owner) {
-          recordKill(currentPlayer);
-        }
+      if (canRetreat) {
+        // 可以击退
+        updateUnit(firstUnit.id, {
+          position: firstRetreatTarget,
+        });
       } else {
-        // 目标受伤
-        if (target.type === UnitType.CAVALRY && newHp === 1) {
-          // 骑兵退化
-          updateUnit(target.id, {
-            type: UnitType.INFANTRY,
-            hp: 2,
-            maxHp: 2,
-            isFlipped: false,
-          });
+        // 无法击退，造成1点伤害
+        const newHp = firstUnit.hp - 1;
+        if (newHp <= 0) {
+          // 骑兵掉马
+          if (firstUnit.type === UnitType.CAVALRY) {
+            updateUnit(firstUnit.id, {
+              type: UnitType.INFANTRY,
+              hp: 1,
+              maxHp: 2,
+              isFlipped: true,
+            });
+          } else {
+            removeUnit(firstUnit.id);
+            if (firstUnit.owner !== ballista.owner) {
+              recordKill(currentPlayer);
+            }
+            if (firstUnit.type === UnitType.GENERAL) {
+              useGameStore.getState().removeDice(firstUnit.owner, 1);
+            }
+          }
         } else {
-          updateUnit(target.id, {
+          updateUnit(firstUnit.id, {
             hp: newHp,
             isFlipped: true,
           });
         }
       }
+    }
+
+    // 结算最后一个单位：下回合不能移动/转向
+    updateUnit(lastUnit.id, {
+      cannotActNextTurn: true,
     });
+
+    // 如果first和last是同一单位，上述两效果同时作用（已处理）
 
     // 更新弩车状态
     updateUnit(ballista.id, {
@@ -1330,6 +1668,188 @@ export const useGameActions = () => {
     return true;
   };
 
+  // 投石车蓄力
+  const catapultCharge = (catapult: Unit) => {
+    if (currentActionPoints < 1) return false;
+    if (catapult.type !== UnitType.CATAPULT) return false;
+
+    // 检查是否已行动
+    if ('hasActedThisTurn' in catapult && catapult.hasActedThisTurn) return false;
+
+    // 获取当前蓄力层数
+    const currentCharge = ('chargeLevel' in catapult ? (catapult as any).chargeLevel : 0) || 0;
+
+    // 检查是否已达蓄力上限
+    if (currentCharge >= 2) return false;
+
+    // 蓄力+1
+    updateUnit(catapult.id, {
+      chargeLevel: currentCharge + 1,
+      hasActedThisTurn: true,
+      actionsThisTurn: catapult.actionsThisTurn + 1,
+    } as any);
+
+    consumeActionPoint(currentPlayer);
+
+    return true;
+  };
+
+  // 投石车攻击
+  const catapultAttack = (catapult: Unit, target: Unit) => {
+    if (currentActionPoints < 1) return false;
+    if (catapult.type !== UnitType.CATAPULT) return false;
+
+    // 检查是否已行动
+    if ('hasActedThisTurn' in catapult && catapult.hasActedThisTurn) return false;
+
+    // 检查目标是否在射程内（沿方向的直线）
+    const validTargets = getValidAttacks(catapult);
+    if (!validTargets.some(t => t.id === target.id)) return false;
+
+    // 获取当前蓄力层数
+    const chargeLevel = ('chargeLevel' in catapult ? (catapult as any).chargeLevel : 0) || 0;
+
+    // 收集被攻击的所有单位
+    const hitUnits: Unit[] = [target];
+
+    if (chargeLevel >= 1) {
+      // 蓄力1或2：溅射攻击
+      // 计算目标身后的方向（远离投石车）
+      const behindAxisLine = getAxisLineFromTarget(target.position, catapult.position, 5);
+
+      if (chargeLevel === 1 && behindAxisLine.length > 0) {
+        // 蓄力1：目标+身后1格
+        const behindPos = behindAxisLine[0];
+        const behindUnit = Object.values(units).find(u =>
+          hexEquals(u.position, behindPos) && u.id !== target.id
+        );
+        if (behindUnit && !hitUnits.some(u => u.id === behindUnit.id)) {
+          hitUnits.push(behindUnit);
+        }
+      } else if (chargeLevel === 2) {
+        // 蓄力2：目标+身后120度扇形
+        // 使用getFanShapedHexes获取扇形区域
+        // 这里需要计算从target向远离catapult的方向
+        const direction = catapult.direction;
+        const fanHexes = getFanShapedHexes(target.position, direction, 1, 5);
+
+        fanHexes.forEach(hexPos => {
+          const unit = Object.values(units).find(u =>
+            hexEquals(u.position, hexPos) && u.id !== target.id
+          );
+          if (unit && !hitUnits.some(u => u.id === unit.id)) {
+            hitUnits.push(unit);
+          }
+        });
+      }
+    }
+
+    // 对所有被击中的单位造成伤害
+    hitUnits.forEach(hitUnit => {
+      const newHp = hitUnit.hp - 1;
+
+      if (newHp <= 0) {
+        // 骑兵掉马
+        if (hitUnit.type === UnitType.CAVALRY) {
+          updateUnit(hitUnit.id, {
+            type: UnitType.INFANTRY,
+            hp: 1,
+            maxHp: 2,
+            isFlipped: true,
+          });
+        } else {
+          removeUnit(hitUnit.id);
+          if (hitUnit.owner !== catapult.owner) {
+            recordKill(currentPlayer);
+          }
+          if (hitUnit.type === UnitType.GENERAL) {
+            useGameStore.getState().removeDice(hitUnit.owner, 1);
+          }
+        }
+      } else {
+        updateUnit(hitUnit.id, {
+          hp: newHp,
+          isFlipped: true,
+        });
+      }
+    });
+
+    // 攻击后蓄力清零
+    updateUnit(catapult.id, {
+      hasAttacked: true,
+      hasActedThisTurn: true,
+      actionsThisTurn: catapult.actionsThisTurn + 1,
+      chargeLevel: 0,
+    } as any);
+
+    consumeActionPoint(currentPlayer);
+
+    return true;
+  };
+
+  // 投石车转向（消耗额外行动点）
+  const catapultRotate = (catapult: Unit, direction: Direction) => {
+    if (catapult.type !== UnitType.CATAPULT) return false;
+
+    // 检查是否已行动
+    if ('hasActedThisTurn' in catapult && catapult.hasActedThisTurn) return false;
+
+    // 获取当前蓄力层数
+    const chargeLevel = ('chargeLevel' in catapult ? (catapult as any).chargeLevel : 0) || 0;
+
+    // 计算需要的行动点：基础1点 + 蓄力层数
+    const requiredPoints = 1 + chargeLevel;
+
+    if (currentActionPoints < requiredPoints) return false;
+
+    updateUnit(catapult.id, {
+      direction,
+      hasActedThisTurn: true,
+      actionsThisTurn: catapult.actionsThisTurn + 1,
+    } as any);
+
+    // 消耗对应的行动点
+    for (let i = 0; i < requiredPoints; i++) {
+      consumeActionPoint(currentPlayer);
+    }
+
+    return true;
+  };
+
+  // 投石车移动（消耗额外行动点）
+  const catapultMove = (catapult: Unit, to: HexCoord) => {
+    if (catapult.type !== UnitType.CATAPULT) return false;
+
+    // 检查是否已行动
+    if ('hasActedThisTurn' in catapult && catapult.hasActedThisTurn) return false;
+
+    // 获取当前蓄力层数
+    const chargeLevel = ('chargeLevel' in catapult ? (catapult as any).chargeLevel : 0) || 0;
+
+    // 计算需要的行动点：基础1点 + 蓄力层数
+    const requiredPoints = 1 + chargeLevel;
+
+    if (currentActionPoints < requiredPoints) return false;
+
+    // 检查目标位置是否合法
+    const validMoves = getValidMoves(catapult);
+    if (!validMoves.some(hex => hexEquals(hex, to))) return false;
+
+    updateUnit(catapult.id, {
+      position: to,
+      hasMoved: true,
+      hasActedThisTurn: true,
+      actionsThisTurn: catapult.actionsThisTurn + 1,
+    } as any);
+
+    // 消耗对应的行动点
+    for (let i = 0; i < requiredPoints; i++) {
+      consumeActionPoint(currentPlayer);
+    }
+
+    return true;
+  };
+
   return {
     selectedUnit,
     currentActionPoints,
@@ -1343,6 +1863,10 @@ export const useGameActions = () => {
     ballistaAttack,
     ballistaMeleeAttack,
     chariotMove,
+    catapultCharge,
+    catapultAttack,
+    catapultRotate,
+    catapultMove,
     rendeConvertAdjacent,
     rendeConvertToInfantry,
     rendeCompleteKill,

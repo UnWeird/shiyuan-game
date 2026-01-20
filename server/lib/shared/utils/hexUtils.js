@@ -22,6 +22,10 @@ exports.pixelToHex = pixelToHex;
 exports.hexCorners = hexCorners;
 exports.hexToSVGPath = hexToSVGPath;
 exports.getMachineOccupiedHexes = getMachineOccupiedHexes;
+exports.getAxisDirection = getAxisDirection;
+exports.getAxisLineFromTarget = getAxisLineFromTarget;
+exports.getDistanceToBaseline = getDistanceToBaseline;
+exports.tryKnockback = tryKnockback;
 const types_1 = require("../types");
 /**
  * 创建六边形坐标
@@ -308,17 +312,27 @@ function hexToSVGPath(hex, size) {
 /**
  * 获取机关单位占用的所有格子
  * @param position 机关单位的中心位置
- * @param machineType 机关类型（弩车或战车）
+ * @param machineType 机关类型（弩车、战车或投石车）
  * @returns 所有占用的六边形坐标数组
  */
-function getMachineOccupiedHexes(position, machineType) {
+function getMachineOccupiedHexes(position, machineType, isPlayerOne) {
     const occupied = [position]; // 中心位置
     if (machineType === 'ballista') {
-        // 弩车占用5格：中心 + 右上、右下、左上、左下（4个对角）
-        occupied.push(hexNeighbor(position, types_1.Direction.NORTH_EAST)); // 右上
-        occupied.push(hexNeighbor(position, types_1.Direction.SOUTH_EAST)); // 右下
-        occupied.push(hexNeighbor(position, types_1.Direction.NORTH_WEST)); // 左上
-        occupied.push(hexNeighbor(position, types_1.Direction.SOUTH_WEST)); // 左下
+        // 弩车占用3格：倒V形，中心 + 左后、右后
+        // 玩家1朝上（敌人在北），后方是南；玩家2朝下（敌人在南），后方是北
+        if (isPlayerOne === true) {
+            occupied.push(hexNeighbor(position, types_1.Direction.SOUTH_EAST)); // 右后
+            occupied.push(hexNeighbor(position, types_1.Direction.SOUTH_WEST)); // 左后
+        }
+        else if (isPlayerOne === false) {
+            occupied.push(hexNeighbor(position, types_1.Direction.NORTH_EAST)); // 右后
+            occupied.push(hexNeighbor(position, types_1.Direction.NORTH_WEST)); // 左后
+        }
+        else {
+            // 兼容旧调用（默认玩家1）
+            occupied.push(hexNeighbor(position, types_1.Direction.SOUTH_EAST));
+            occupied.push(hexNeighbor(position, types_1.Direction.SOUTH_WEST));
+        }
     }
     else if (machineType === 'chariot') {
         // 战车占用4格：中心 + 右上、右、右下
@@ -326,5 +340,142 @@ function getMachineOccupiedHexes(position, machineType) {
         occupied.push(hexNeighbor(position, types_1.Direction.EAST)); // 右
         occupied.push(hexNeighbor(position, types_1.Direction.SOUTH_EAST)); // 右下
     }
+    else if (machineType === 'catapult') {
+        // 投石车占用3格：V形，中心 + 左前、右前
+        // 玩家1朝上（敌人在北），前方是北；玩家2朝下（敌人在南），前方是南
+        if (isPlayerOne === true) {
+            occupied.push(hexNeighbor(position, types_1.Direction.NORTH_WEST)); // 左前
+            occupied.push(hexNeighbor(position, types_1.Direction.NORTH_EAST)); // 右前
+        }
+        else if (isPlayerOne === false) {
+            occupied.push(hexNeighbor(position, types_1.Direction.SOUTH_WEST)); // 左前
+            occupied.push(hexNeighbor(position, types_1.Direction.SOUTH_EAST)); // 右前
+        }
+        else {
+            // 兼容旧调用（默认玩家1）
+            occupied.push(hexNeighbor(position, types_1.Direction.NORTH_WEST));
+            occupied.push(hexNeighbor(position, types_1.Direction.NORTH_EAST));
+        }
+    }
     return occupied;
+}
+/**
+ * 计算从source到target的方向向量，返回沿哪个轴移动
+ * @param source 攻击来源位置
+ * @param target 目标位置
+ * @returns 返回 'q' | 'r' | 's' 表示沿哪个轴，以及方向（1或-1）
+ */
+function getAxisDirection(source, target) {
+    const dq = target.q - source.q;
+    const dr = target.r - source.r;
+    const ds = target.s - source.s;
+    // 判断在哪个轴上移动（有一个坐标不变）
+    if (dq === 0) {
+        // 沿r轴（q不变）
+        return { axis: 'q', direction: dr > 0 ? 1 : -1 };
+    }
+    else if (dr === 0) {
+        // 沿q轴（r不变）
+        return { axis: 'r', direction: dq > 0 ? 1 : -1 };
+    }
+    else if (ds === 0) {
+        // 沿s轴（s不变）
+        return { axis: 's', direction: dq > 0 ? 1 : -1 };
+    }
+    // 不在同一轴上
+    return null;
+}
+/**
+ * 沿指定轴线向远离source的方向延伸，查找该轴线上的所有格子
+ * @param target 目标格子
+ * @param source 攻击来源格子
+ * @param mapRadius 地图半径
+ * @returns 轴线上从target向远离source方向的所有格子（不含target自身）
+ */
+function getAxisLineFromTarget(target, source, mapRadius) {
+    const result = [];
+    const axisDir = getAxisDirection(source, target);
+    if (!axisDir) {
+        // 不在同一轴上，返回空数组
+        return result;
+    }
+    let current = { ...target };
+    // 沿该轴向远离source的方向延伸
+    while (true) {
+        // 计算下一个格子
+        if (axisDir.axis === 'q') {
+            // q不变，r和s移动
+            current = createHex(current.q, current.r + axisDir.direction);
+        }
+        else if (axisDir.axis === 'r') {
+            // r不变，q和s移动
+            current = createHex(current.q + axisDir.direction, current.r);
+        }
+        else {
+            // s不变，q和r移动
+            current = createHex(current.q + axisDir.direction, current.r - axisDir.direction);
+        }
+        // 检查是否还在地图范围内
+        if (!isInMapRange(current, mapRadius)) {
+            break;
+        }
+        // 检查是否远离source（距离增加）
+        if (hexDistance(current, source) <= hexDistance(target, source)) {
+            break;
+        }
+        result.push(current);
+    }
+    return result;
+}
+/**
+ * 计算到起始区域边线的距离
+ * @param position 当前位置
+ * @param playerSide 玩家方向（'top' 或 'bottom'）
+ * @returns 到边线的六边形距离
+ */
+function getDistanceToBaseline(position, playerSide) {
+    if (playerSide === 'top') {
+        // 玩家1的起始区边线在r=3，返回|r-3|但确保非负
+        return Math.max(0, 5 - position.r); // r=5是最后排，r=3是边线，所以距离是5-r
+    }
+    else {
+        // 玩家2的起始区边线在r=-3
+        return Math.max(0, 5 + position.r); // r=-5是最后排，r=-3是边线，所以距离是5+r
+    }
+}
+/**
+ * 尝试将单位向指定方向击退一格
+ * @param position 单位当前位置
+ * @param awayFromSource 远离的来源位置
+ * @param mapRadius 地图半径
+ * @param isPositionBlocked 检查位置是否被占用的函数
+ * @returns 击退后的位置，如果无法击退则返回null
+ */
+function tryKnockback(position, awayFromSource, mapRadius, isPositionBlocked) {
+    const axisDir = getAxisDirection(awayFromSource, position);
+    if (!axisDir) {
+        return null; // 不在轴线上，无法击退
+    }
+    // 计算击退后的位置
+    let knockbackPos;
+    if (axisDir.axis === 'q') {
+        // q不变，r和s移动
+        knockbackPos = createHex(position.q, position.r + axisDir.direction);
+    }
+    else if (axisDir.axis === 'r') {
+        // r不变，q和s移动
+        knockbackPos = createHex(position.q + axisDir.direction, position.r);
+    }
+    else {
+        // s不变，q和r移动
+        knockbackPos = createHex(position.q + axisDir.direction, position.r - axisDir.direction);
+    }
+    // 检查击退位置是否有效
+    if (!isInMapRange(knockbackPos, mapRadius)) {
+        return null; // 越界
+    }
+    if (isPositionBlocked(knockbackPos)) {
+        return null; // 被占用
+    }
+    return knockbackPos;
 }

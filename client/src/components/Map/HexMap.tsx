@@ -8,10 +8,10 @@ interface HexMapProps {
   radius: number;
   hexSize: number;
   onHexClick?: (hex: HexCoord) => void;
-  highlightedHexes?: HexCoord[];
+  highlightedHexes?: (HexCoord & { steps?: number })[];
 }
 
-export const HexMap: React.FC<HexMapProps> = ({
+export const HexMap: React.FC<HexMapProps> = React.memo(({
   radius,
   hexSize,
   onHexClick,
@@ -52,7 +52,9 @@ export const HexMap: React.FC<HexMapProps> = ({
         const isBase1 = player1Base ? hexEquals(hex, player1Base) : false;
         const isBase2 = player2Base ? hexEquals(hex, player2Base) : false;
         const isSelected = selectedUnit ? hexEquals(hex, selectedUnit.position) : false;
-        const isHighlighted = highlightedHexes.some(h => hexEquals(h, hex));
+        const highlightedHex = highlightedHexes.find(h => hexEquals(h, hex));
+        const isHighlighted = !!highlightedHex;
+        const highlightSteps = highlightedHex?.steps;
 
         return (
           <HexTile
@@ -63,6 +65,7 @@ export const HexMap: React.FC<HexMapProps> = ({
             isBase={isBase1 || isBase2}
             isSelected={isSelected}
             isHighlighted={isHighlighted}
+            highlightSteps={highlightSteps}
             isPlayer1Zone={isPlayer1Zone}
             isPlayer2Zone={isPlayer2Zone}
           />
@@ -119,4 +122,4 @@ export const HexMap: React.FC<HexMapProps> = ({
       )}
     </svg>
   );
-};
+});

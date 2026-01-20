@@ -17,6 +17,7 @@ var UnitType;
     UnitType["GENERAL"] = "general";
     UnitType["BALLISTA"] = "ballista";
     UnitType["CHARIOT"] = "chariot";
+    UnitType["CATAPULT"] = "catapult";
     UnitType["NEUTRAL_MARKER"] = "neutral_marker";
 })(UnitType || (exports.UnitType = UnitType = {}));
 // 方向 (六边形有6个方向，对应6条边)

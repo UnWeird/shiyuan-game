@@ -47,6 +47,15 @@ class UnitSchema extends schema_1.Schema {
         this.killCount = 0;
         this.pierceCount = 0;
         this.hasActedThisTurn = false;
+        this.chargeLevel = 0; // 投石车蓄力层数
+        // 战斗状态标记
+        this.moveDistance = 0; // 骑兵本回合移动距离
+        this.movementRestricted = false; // 步兵纵深抗击限制
+        this.movementRestrictionSourceQ = 0; // 限制来源Q坐标
+        this.movementRestrictionSourceR = 0; // 限制来源R坐标
+        this.movementRestrictionSourceS = 0; // 限制来源S坐标
+        this.cannotMoveNextTurn = false; // 弩车贯穿限制
+        this.cannotRotateNextTurn = false; // 弩车贯穿限制
     }
 }
 exports.UnitSchema = UnitSchema;
@@ -150,6 +159,38 @@ __decorate([
     (0, schema_1.type)("boolean"),
     __metadata("design:type", Boolean)
 ], UnitSchema.prototype, "hasActedThisTurn", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], UnitSchema.prototype, "chargeLevel", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], UnitSchema.prototype, "moveDistance", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], UnitSchema.prototype, "movementRestricted", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], UnitSchema.prototype, "movementRestrictionSourceQ", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], UnitSchema.prototype, "movementRestrictionSourceR", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], UnitSchema.prototype, "movementRestrictionSourceS", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], UnitSchema.prototype, "cannotMoveNextTurn", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], UnitSchema.prototype, "cannotRotateNextTurn", void 0);
 /**
  * 游戏状态 Schema
  * 这是整个游戏的核心状态，会自动同步到所有客户端

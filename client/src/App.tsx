@@ -61,7 +61,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen" key={phase}>
       {phase === GamePhase.GENERAL_SELECT && <GeneralSelect />}
       {phase === GamePhase.ARMY_BUILD && <ArmyBuild />}
       {phase === GamePhase.BASE_SETUP && <BaseSetup />}

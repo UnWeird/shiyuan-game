@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ShiyuanRoom = void 0;
 const core_1 = require("@colyseus/core");
 const GameState_1 = require("../schema/GameState");
-// 导入共享的六边形工具函数
+// 导入共享的六边形工具函数和类型
 const hexUtils_1 = require("../../../shared/utils/hexUtils");
 /**
  * 十元（Shiyuan）游戏房间
@@ -407,7 +407,12 @@ class ShiyuanRoom extends core_1.Room {
             client.send("error", { message: "该位置被机关单位占据，无法部署" });
             return;
         }
-        // TODO: 验证位置是否在起始区
+        // 验证位置是否在起始区
+        const playerSide = role === "player1" ? "top" : "bottom";
+        if (!(0, hexUtils_1.isInStartZone)(position, playerSide)) {
+            client.send("error", { message: "只能在己方起始区（底部三排）部署单位" });
+            return;
+        }
         // 验证库存：检查是否还有该类型的单位可以部署（基于已消耗库存而非场上数量）
         if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer") {
             // 获取该玩家该类型单位的已消耗库存和配置上限
@@ -727,6 +732,7 @@ class ShiyuanRoom extends core_1.Room {
     }
     /**
      * 计算单位的合法移动位置
+     * 对于骑兵，返回带有步数信息的结果
      */
     getValidMoves(unit) {
         const MAP_RADIUS = 5;
@@ -796,7 +802,66 @@ class ShiyuanRoom extends core_1.Room {
             });
         }
         // 普通单位移动逻辑
-        const range = unit.type === 'cavalry' ? 2 : 1;
+        const range = unit.type === 'cavalry' ? 3 : 1; // 骑兵最多移动3格
+        // 对于骑兵，使用BFS计算所有可达的格子（考虑路径阻挡）
+        if (unit.type === 'cavalry') {
+            const reachable = new Map(); // key: "q,r,s", value: 到达该格子的最短步数
+            const queue = [];
+            const visited = new Set();
+            // 起点
+            queue.push({ pos: unitPos, steps: 0 });
+            visited.add(`${unitPos.q},${unitPos.r},${unitPos.s}`);
+            while (queue.length > 0) {
+                const current = queue.shift();
+                // 如果已经达到移动上限，不再展开
+                if (current.steps >= range)
+                    continue;
+                // 获取所有相邻格子
+                const neighbors = (0, hexUtils_1.hexNeighbors)(current.pos);
+                for (const neighbor of neighbors) {
+                    const neighborKey = `${neighbor.q},${neighbor.r},${neighbor.s}`;
+                    // 如果已访问过，跳过
+                    if (visited.has(neighborKey))
+                        continue;
+                    // 检查是否在地图范围内
+                    if (!(0, hexUtils_1.isInMapRange)(neighbor, MAP_RADIUS))
+                        continue;
+                    // 检查是否被占用
+                    let occupied = false;
+                    for (const u of this.state.units.values()) {
+                        if ((0, hexUtils_1.hexEquals)({ q: u.q, r: u.r, s: u.s }, neighbor) && u.id !== unit.id) {
+                            occupied = true;
+                            break;
+                        }
+                    }
+                    // 检查是否被机关单位占据
+                    if (this.isHexOccupiedByMachine(neighbor)) {
+                        occupied = true;
+                    }
+                    // 如果被占用，这条路径不通，但继续尝试其他路径
+                    if (occupied) {
+                        visited.add(neighborKey); // 标记为已访问，避免重复检查
+                        continue;
+                    }
+                    // 标记为已访问并加入队列
+                    visited.add(neighborKey);
+                    const nextSteps = current.steps + 1;
+                    queue.push({ pos: neighbor, steps: nextSteps });
+                    // 记录到达该格子的最短步数
+                    if (!reachable.has(neighborKey)) {
+                        reachable.set(neighborKey, nextSteps);
+                    }
+                }
+            }
+            // 将结果转换为数组格式
+            const result = [];
+            for (const [key, steps] of reachable.entries()) {
+                const [q, r, s] = key.split(',').map(Number);
+                result.push({ q, r, s, steps });
+            }
+            return result;
+        }
+        // 非骑兵单位的移动逻辑
         const possibleMoves = (0, hexUtils_1.hexRange)(unitPos, range);
         // 过滤掉已被占用的位置和不在地图范围内的位置
         return possibleMoves.filter(hex => {
@@ -1205,15 +1270,15 @@ class ShiyuanRoom extends core_1.Room {
         attacker.hasAttacked = true;
         attacker.actionsThisTurn = (attacker.actionsThisTurn || 0) + 1; // 增加行动次数
         this.addBattleLog(`${role}的${attacker.type}攻击了${target.owner}的${target.type}，造成${damage}点伤害（消耗${actionCost}点行动值）`);
-        // 骑兵受伤后立即变成步兵（满血）
-        if (target.type === "cavalry" && target.hp > 0) {
-            console.log(`[DEBUG] 骑兵受伤，变成满血步兵`);
+        // 骑兵特殊机制：骑兵的死亡等同于变成1血步兵
+        if (target.type === "cavalry" && target.hp <= 0) {
+            console.log(`[DEBUG] 骑兵死亡（hp=${target.hp}），掉马变成1血步兵`);
             target.type = "infantry";
             target.maxHp = 2;
-            target.hp = 2; // 骑兵变步兵后是满血（2点）
-            this.addBattleLog(`${target.owner}的骑兵受伤，变成满血步兵！`);
+            target.hp = 1; // 掉马后固定为1血步兵
+            this.addBattleLog(`${target.owner}的骑兵受致命伤，掉马变成1血步兵！`);
         }
-        // 检查是否击杀
+        // 检查是否击杀（骑兵已经在上面处理，这里只处理其他单位）
         if (target.hp <= 0) {
             // 检查是否是仁德阵营的击杀
             const rendeGeneral = Array.from(this.state.units.values()).find(u => u.owner === role && u.type === "general" && u.generalType === "rende");
@@ -1349,14 +1414,14 @@ class ShiyuanRoom extends core_1.Room {
         // 对所有被击中的单位造成伤害
         hitUnits.forEach(target => {
             target.hp -= 1;
-            // 骑兵受伤后变步兵
-            if (target.type === "cavalry" && target.hp > 0) {
+            // 骑兵特殊机制：骑兵的死亡等同于变成1血步兵
+            if (target.type === "cavalry" && target.hp <= 0) {
                 target.type = "infantry";
                 target.maxHp = 2;
-                target.hp = 2;
-                this.addBattleLog(`${target.owner}的骑兵被贯穿受伤，变成满血步兵！`);
+                target.hp = 1;
+                this.addBattleLog(`${target.owner}的骑兵被贯穿受致命伤，掉马变成1血步兵！`);
             }
-            // 检查是否击杀
+            // 检查是否击杀（骑兵已经在上面处理）
             if (target.hp <= 0) {
                 // 如果击杀的是战车，先生成2个不可行动的步兵，再删除战车
                 if (target.type === 'chariot') {
@@ -1461,14 +1526,14 @@ class ShiyuanRoom extends core_1.Room {
         ballista.hasAttacked = true;
         ballista.actionsThisTurn = (ballista.actionsThisTurn || 0) + 1;
         this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的弩车近战攻击${target.owner}的${target.type}，造成1点伤害`);
-        // 骑兵受伤后变步兵
-        if (target.type === "cavalry" && target.hp > 0) {
+        // 骑兵特殊机制：骑兵的死亡等同于变成1血步兵
+        if (target.type === "cavalry" && target.hp <= 0) {
             target.type = "infantry";
             target.maxHp = 2;
-            target.hp = 2;
-            this.addBattleLog(`${target.owner}的骑兵受伤，变成满血步兵！`);
+            target.hp = 1;
+            this.addBattleLog(`${target.owner}的骑兵受致命伤，掉马变成1血步兵！`);
         }
-        // 检查是否击杀
+        // 检查是否击杀（骑兵已经在上面处理）
         if (target.hp <= 0) {
             // 如果击杀的是战车，先生成2个不可行动的步兵，再删除战车
             if (target.type === 'chariot') {
@@ -2285,9 +2350,10 @@ class ShiyuanRoom extends core_1.Room {
             if (u.owner === role || u.id === general.id)
                 return false;
             // 检查是否是机关单位
-            if (u.type === 'ballista' || u.type === 'chariot') {
-                const machineType = u.type === 'ballista' ? 'ballista' : 'chariot';
-                const occupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)({ q: u.q, r: u.r, s: u.s }, machineType);
+            if (u.type === 'ballista' || u.type === 'chariot' || u.type === 'catapult') {
+                const machineType = u.type === 'ballista' ? 'ballista' : u.type === 'catapult' ? 'catapult' : 'chariot';
+                const isPlayerOne = u.owner === 'player1';
+                const occupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)({ q: u.q, r: u.r, s: u.s }, machineType, isPlayerOne);
                 return occupiedHexes.some(hex => neighbors.some(neighbor => (0, hexUtils_1.hexEquals)(neighbor, hex)));
             }
             // 普通单位
@@ -2320,8 +2386,10 @@ class ShiyuanRoom extends core_1.Room {
         adjacentEnemies.forEach(enemy => {
             // 直接改变单位的所有者为仁德所属阵营
             enemy.owner = role;
-            // 如果是弩车，需要翻转方向（player1的弩车指向北，player2的弩车指向南）
-            if (enemy.type === 'ballista') {
+            // 机关单位需要翻转方向（因为它们不是中心对称的）
+            if (enemy.type === 'ballista' || enemy.type === 'catapult') {
+                // 弩车和投石车的朝向需要翻转
+                // player1的机关朝北（敌人在北），player2的机关朝南（敌人在南）
                 enemy.direction = role === 'player1' ? 6 : 7; // NORTH : SOUTH
             }
             convertedCount++;

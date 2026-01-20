@@ -169,7 +169,7 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
               y={0}
               textAnchor="middle"
               dominantBaseline="middle"
-              fontSize={size * 0.5}
+              fontSize={size * 0.4}
               fill={colors.text}
               fontWeight="bold"
             >
@@ -182,25 +182,12 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
         // 弓箭手 - 三角形
         const trianglePoints = `0,${-size / 2} ${size / 2},${size / 2} ${-size / 2},${size / 2}`;
         return (
-          <g>
-            <polygon
-              points={trianglePoints}
-              fill={colors.primary}
-              stroke={colors.stroke}
-              strokeWidth={3}
-            />
-            <text
-              x={0}
-              y={size * 0.1}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fontSize={size * 0.45}
-              fill={colors.text}
-              fontWeight="bold"
-            >
-              弓
-            </text>
-          </g>
+          <polygon
+            points={trianglePoints}
+            fill={colors.primary}
+            stroke={colors.stroke}
+            strokeWidth={3}
+          />
         );
 
       case UnitType.GENERAL:
@@ -238,44 +225,57 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
               stroke={colors.stroke}
               strokeWidth={2}
             />
-            <text
-              x={0}
-              y={0}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fontSize={size * 0.35}
-              fill={colors.text}
-              fontWeight="bold"
-            >
-              将
-            </text>
           </g>
         );
 
       case UnitType.NEUTRAL_MARKER:
-        // 中立单位标记 - 小圆形带"中"字
+        // 中立单位标记 - 小圆形
         return (
-          <g>
-            <circle
-              cx={0}
-              cy={0}
-              r={size / 3}
-              fill="#9ca3af"
-              stroke="#4b5563"
-              strokeWidth={2}
-            />
-            <text
-              x={0}
-              y={0}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fontSize={size * 0.35}
-              fill="#ffffff"
-              fontWeight="bold"
-            >
-              中
-            </text>
-          </g>
+          <circle
+            cx={0}
+            cy={0}
+            r={size / 3}
+            fill="#9ca3af"
+            stroke="#4b5563"
+            strokeWidth={2}
+          />
+        );
+
+      case UnitType.BALLISTA:
+        // 弩车 - 倒V形三角形（有方向指示）
+        const ballistaTrianglePoints = `0,${size / 2} ${size / 2},${-size / 2} ${-size / 2},${-size / 2}`;
+        return (
+          <polygon
+            points={ballistaTrianglePoints}
+            fill={colors.primary}
+            stroke={colors.stroke}
+            strokeWidth={3}
+          />
+        );
+
+      case UnitType.CHARIOT:
+        // 战车 - 圆形
+        return (
+          <circle
+            cx={0}
+            cy={0}
+            r={size / 2}
+            fill={colors.primary}
+            stroke={colors.stroke}
+            strokeWidth={3}
+          />
+        );
+
+      case UnitType.CATAPULT:
+        // 投石车 - V形三角形（有方向指示，类似弓箭手）
+        const catapultTrianglePoints = `0,${-size / 2} ${size / 2},${size / 2} ${-size / 2},${size / 2}`;
+        return (
+          <polygon
+            points={catapultTrianglePoints}
+            fill={colors.primary}
+            stroke={colors.stroke}
+            strokeWidth={3}
+          />
         );
 
       default:
@@ -292,9 +292,9 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
     }
   };
 
-  // 绘制方向指示器 (弓箭手需要)
+  // 绘制方向指示器 (弓箭手、弩车、投石车需要)
   const renderDirectionIndicator = () => {
-    if (unit.type !== UnitType.ARCHER && unit.type !== UnitType.BALLISTA) return null;
+    if (unit.type !== UnitType.ARCHER && unit.type !== UnitType.BALLISTA && unit.type !== UnitType.CATAPULT) return null;
 
     // 对于 flat-top 六边形，6个边的角度 + 正北/正南
     const angleMap: Record<Direction, number> = {

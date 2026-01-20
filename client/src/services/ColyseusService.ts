@@ -222,11 +222,12 @@ class ColyseusService {
         }
 
         // 机关单位专属字段
-        if (unit.type === 'ballista' || unit.type === 'chariot') {
+        if (unit.type === 'ballista' || unit.type === 'chariot' || unit.type === 'catapult') {
           Object.assign(units[id], {
             killCount: unit.killCount,
             pierceCount: unit.pierceCount,
             hasActedThisTurn: unit.hasActedThisTurn,
+            chargeLevel: unit.chargeLevel, // 投石车蓄力层数
           });
         }
       });
@@ -530,9 +531,17 @@ class ColyseusService {
   /**
    * 神机将军部署机关单位
    */
-  shenjiDeployMachine(machineType: 'ballista' | 'chariot', position: { q: number; r: number; s: number }) {
+  shenjiDeployMachine(machineType: 'ballista' | 'chariot' | 'catapult', position: { q: number; r: number; s: number }) {
     if (!this.room) return;
     this.room.send('shenjiDeployMachine', { machineType, position });
+  }
+
+  /**
+   * 投石车蓄力
+   */
+  catapultCharge(unitId: string) {
+    if (!this.room) return;
+    this.room.send('catapultCharge', { catapultId: unitId });
   }
 
   /**

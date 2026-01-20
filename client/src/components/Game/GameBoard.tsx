@@ -158,31 +158,24 @@ export const GameBoard: React.FC = () => {
 
   // 处理待激活的仁德技能（在选中仁德后自动激活）
   useEffect(() => {
-    console.log('仁德技能 useEffect 触发:', { pendingRendeSkill, selectedUnit: selectedUnit?.id });
-
     if (!pendingRendeSkill || !selectedUnit) return;
-
-    console.log('selectedUnit 完整对象:', selectedUnit);
-    console.log('selectedUnit.type:', selectedUnit.type);
-    console.log('UnitType.GENERAL:', UnitType.GENERAL);
-    console.log('类型比较:', selectedUnit.type, '!==', UnitType.GENERAL, '=', selectedUnit.type !== UnitType.GENERAL);
 
     // 确保选中的是仁德将军
     if (selectedUnit.type !== UnitType.GENERAL) {
-      console.log('选中的不是将军，清除待激活技能');
       setPendingRendeSkill(null);
       return;
     }
 
-    console.log('激活仁德技能:', pendingRendeSkill);
+    // 在需要时获取最新的 units（而不是依赖它）
+    const currentUnits = useGameStore.getState().units;
 
     // 激活对应的技能
     if (pendingRendeSkill === 'convert') {
       // 转化接触单位
       const adjacentHexes = hexNeighbors(selectedUnit.position);
-      const adjacentUnits: typeof units[keyof typeof units][] = [];
+      const adjacentUnits: Unit[] = [];
 
-      Object.values(units).forEach(u => {
+      Object.values(currentUnits).forEach(u => {
         if (u.id === selectedUnit.id || u.owner === selectedUnit.owner) return;
 
         if (isMachineUnit(u.type)) {
@@ -203,26 +196,26 @@ export const GameBoard: React.FC = () => {
         }
       });
 
-      console.log('找到相邻单位:', adjacentUnits.length);
       setHighlightedHexes(adjacentUnits.map(u => u.position));
       setActionMode('rende-convert');
     } else if (pendingRendeSkill === 'neutral') {
       // 转化中立标记
-      const neutralMarkers = Object.values(units)
+      const neutralMarkers = Object.values(currentUnits)
         .filter(u =>
           u.type === UnitType.NEUTRAL_MARKER &&
           u.owner === Player.NEUTRAL &&
           hexDistance(selectedUnit.position, u.position) === 1
         );
 
-      console.log('找到中立标记:', neutralMarkers.length);
       setHighlightedHexes(neutralMarkers.map(u => u.position));
       setActionMode('rende-neutral');
     }
 
     // 清除待激活状态
     setPendingRendeSkill(null);
-  }, [pendingRendeSkill, selectedUnit, units]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRendeSkill, selectedUnit]);
+
 
   // 判断是否是自己的回合
   const isMyTurn = !isOnlineMode ||
@@ -650,6 +643,38 @@ export const GameBoard: React.FC = () => {
 
       // 合并显示贯穿路径和近战范围
       setHighlightedHexes([...shootingPath, ...meleeRange]);
+      setActionMode('attack');
+      return;
+    }
+
+    // 投石车：显示射击路径 + 近战范围
+    if (selectedUnit.type === UnitType.CATAPULT) {
+      const shootingPath = getShootingPath(selectedUnit.position, selectedUnit.direction, 5);
+
+      // 计算近战范围：投石车所有占据格子的相邻格子
+      const catapultOccupiedHexes = getMachineOccupiedHexes(
+        selectedUnit.position,
+        'catapult',
+        selectedUnit.owner === Player.PLAYER1
+      );
+      const allNeighbors: HexCoord[] = [];
+
+      // 获取所有占用格子的相邻格子（去重）
+      catapultOccupiedHexes.forEach(occupiedHex => {
+        const neighbors = hexNeighbors(occupiedHex);
+        neighbors.forEach(neighbor => {
+          // 去重：检查是否已经在列表中，且不是投石车自己占用的格子
+          const isCatapultTile = catapultOccupiedHexes.some(h => hexEquals(h, neighbor));
+          const alreadyAdded = allNeighbors.some(h => hexEquals(h, neighbor));
+          if (!isCatapultTile && !alreadyAdded) {
+            allNeighbors.push(neighbor);
+          }
+        });
+      });
+
+      // 组合射击路径和近战范围
+      const combinedRange = [...shootingPath, ...allNeighbors];
+      setHighlightedHexes(combinedRange);
       setActionMode('attack');
       return;
     }

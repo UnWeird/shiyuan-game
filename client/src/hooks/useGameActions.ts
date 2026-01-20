@@ -1243,23 +1243,8 @@ export const useGameActions = () => {
 
       // 记录击杀
       recordKill(currentPlayer);
-    } else {
-      // 目标受伤
-      if (target.type === UnitType.CAVALRY && newHp === 1) {
-        // 骑兵退化
-        updateUnit(target.id, {
-          type: UnitType.INFANTRY,
-          hp: 2,
-          maxHp: 2,
-          isFlipped: false,
-        });
-      } else {
-        updateUnit(target.id, {
-          hp: newHp,
-          isFlipped: true,
-        });
-      }
     }
+    // 注意：目标受伤/死亡的状态变更由服务端同步，客户端不做预测
 
     // 更新弩车状态
     updateUnit(ballista.id, {

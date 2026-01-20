@@ -289,6 +289,22 @@ export const useGameActions = () => {
 
       if (occupiedByMachine) return false;
 
+      // 检查步兵纵深抗击的移动限制
+      if ('movementRestricted' in unit && unit.movementRestricted && unit.type === UnitType.INFANTRY) {
+        if ('movementRestrictionSource' in unit && unit.movementRestrictionSource) {
+          const restrictionSource = unit.movementRestrictionSource as HexCoord;
+
+          // 计算到限制来源的距离
+          const currentDistance = hexDistance(unit.position, restrictionSource);
+          const newDistance = hexDistance(hex, restrictionSource);
+
+          // 如果移动后距离变小（朝向敌人），禁止移动
+          if (newDistance < currentDistance) {
+            return false;
+          }
+        }
+      }
+
       return hexDistance(unit.position, hex) <= finalRange;
     });
   };

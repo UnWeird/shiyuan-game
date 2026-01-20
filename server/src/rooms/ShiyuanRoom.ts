@@ -1164,6 +1164,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
+    // 检查是否被定身（无法移动）
+    if (unit.cannotMoveNextTurn) {
+      client.send("error", { message: "该单位被定身，无法移动" });
+      return;
+    }
+
     // 检查弓兵行动次数上限（2次）
     if (unit.type === 'archer' && unit.actionsThisTurn >= 2) {
       client.send("error", { message: "该单位本回合已达行动次数上限" });
@@ -2320,6 +2326,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     const unit = this.state.units.get(data.unitId);
     if (!unit || unit.owner !== role) return;
+
+    // 检查是否被定身（无法旋转）
+    if (unit.cannotRotateNextTurn) {
+      client.send("error", { message: "该单位被定身，无法旋转" });
+      return;
+    }
 
     // 检查弓兵行动次数上限（2次）
     if (unit.type === 'archer' && unit.actionsThisTurn >= 2) {

@@ -203,6 +203,10 @@ class ShiyuanRoom extends core_1.Room {
         this.onMessage("shenjiModifyDice", (client, data) => {
             this.handleShenjiModifyDice(client, data);
         });
+        // === 投石车蓄力 ===
+        this.onMessage("catapultCharge", (client, data) => {
+            this.handleCatapultCharge(client, data);
+        });
         // === 弩车攻击 ===
         this.onMessage("ballistaPierceAttack", (client, data) => {
             this.handleBallistaPierceAttack(client, data);
@@ -996,6 +1000,11 @@ class ShiyuanRoom extends core_1.Room {
             client.send("error", { message: "这不是你的单位" });
             return;
         }
+        // 检查是否被定身（无法移动）
+        if (unit.cannotMoveNextTurn) {
+            client.send("error", { message: "该单位被定身，无法移动" });
+            return;
+        }
         // 检查弓兵行动次数上限（2次）
         if (unit.type === 'archer' && unit.actionsThisTurn >= 2) {
             client.send("error", { message: "该单位本回合已达行动次数上限" });
@@ -1369,12 +1378,38 @@ class ShiyuanRoom extends core_1.Room {
         let damage = 0;
         if (!depthDefenseTriggered) {
             damage = 1;
-            // 近战单位（步兵、骑兵、将军）攻击弩车：造成2点伤害
-            if (target.type === "ballista") {
-                if (attacker.type === "infantry" || attacker.type === "cavalry" || attacker.type === "general") {
-                    damage = 2;
-                    console.log(`[DEBUG] ${attacker.type}近战攻击弩车，造成2点伤害`);
+            // 判断是否为近战攻击（考虑机关单位的占据范围）
+            let isMelee = false;
+            if (attacker.type === 'archer') {
+                // 弓箭手始终是远程攻击
+                isMelee = false;
+            }
+            else {
+                // 获取攻击者占据的所有格子
+                let attackerOccupiedHexes = [{ q: attacker.q, r: attacker.r, s: attacker.s }];
+                if (attacker.type === 'ballista' || attacker.type === 'chariot' || attacker.type === 'catapult') {
+                    const machineType = attacker.type === 'ballista' ? 'ballista'
+                        : attacker.type === 'catapult' ? 'catapult'
+                            : 'chariot';
+                    const isAttackerPlayerOne = attacker.owner === 'player1';
+                    attackerOccupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)({ q: attacker.q, r: attacker.r, s: attacker.s }, machineType, isAttackerPlayerOne);
                 }
+                // 获取目标占据的所有格子
+                let targetOccupiedHexes = [{ q: target.q, r: target.r, s: target.s }];
+                if (target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult') {
+                    const machineType = target.type === 'ballista' ? 'ballista'
+                        : target.type === 'catapult' ? 'catapult'
+                            : 'chariot';
+                    const isTargetPlayerOne = target.owner === 'player1';
+                    targetOccupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)({ q: target.q, r: target.r, s: target.s }, machineType, isTargetPlayerOne);
+                }
+                // 检查攻击者的任意占据格子是否与目标的任意占据格子相邻
+                isMelee = attackerOccupiedHexes.some(attackerHex => targetOccupiedHexes.some(targetHex => (0, hexUtils_1.hexDistance)(attackerHex, targetHex) === 1));
+            }
+            // 近战攻击机关单位：伤害+1
+            if (isMelee && (target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult')) {
+                damage += 1;
+                this.addBattleLog(`近战攻击机关单位：伤害+1`);
             }
             // 骑兵移动距离影响伤害
             if (attacker.type === 'cavalry' && attacker.moveDistance === 2) {
@@ -1863,6 +1898,73 @@ class ShiyuanRoom extends core_1.Room {
         client.send("info", { message: "近战攻击成功" });
     }
     /**
+     * 处理投石车蓄力
+     */
+    handleCatapultCharge(client, data) {
+        const role = this.getPlayerRole(client);
+        if (!role)
+            return;
+        // 验证是否是当前玩家
+        if (role !== this.state.currentPlayer) {
+            client.send("error", { message: "不是你的回合" });
+            return;
+        }
+        // 验证阶段（只能在行动阶段蓄力）
+        if (this.state.phase !== "action") {
+            client.send("error", { message: "当前阶段不能蓄力" });
+            return;
+        }
+        // 查找投石车
+        const catapult = this.state.units.get(data.catapultId);
+        if (!catapult) {
+            client.send("error", { message: "投石车不存在" });
+            return;
+        }
+        // 验证单位类型
+        if (catapult.type !== 'catapult') {
+            client.send("error", { message: "该单位不是投石车" });
+            return;
+        }
+        // 验证所有权
+        if (catapult.owner !== role) {
+            client.send("error", { message: "这不是你的投石车" });
+            return;
+        }
+        // 验证是否已行动
+        if (catapult.hasActedThisTurn) {
+            client.send("error", { message: "投石车本回合已行动" });
+            return;
+        }
+        // 验证蓄力层数（最多2层）
+        const currentCharge = catapult.chargeLevel || 0;
+        if (currentCharge >= 2) {
+            client.send("error", { message: "投石车已达到最大蓄力层数" });
+            return;
+        }
+        // 检查行动点是否足够（蓄力消耗1点行动点）
+        const currentActionPoints = role === "player1"
+            ? this.state.player1ActionPoints
+            : this.state.player2ActionPoints;
+        if (currentActionPoints < 1) {
+            client.send("error", { message: "行动点不足" });
+            return;
+        }
+        // 执行蓄力
+        catapult.chargeLevel = currentCharge + 1;
+        catapult.hasActedThisTurn = true;
+        catapult.actionsThisTurn = (catapult.actionsThisTurn || 0) + 1;
+        // 消耗行动点
+        if (role === "player1") {
+            this.state.player1ActionPoints -= 1;
+        }
+        else {
+            this.state.player2ActionPoints -= 1;
+        }
+        this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的投石车蓄力成功，当前层数：${catapult.chargeLevel}/2`);
+        client.send("info", { message: `投石车蓄力成功 (${catapult.chargeLevel}/2)` });
+        console.log(`[DEBUG] 投石车蓄力 - catapultId: ${data.catapultId}, chargeLevel: ${catapult.chargeLevel}`);
+    }
+    /**
      * 计算弩车垂直贯穿路径
      */
     getBallistaVerticalPath(ballista, isPlayerOne) {
@@ -1897,6 +1999,11 @@ class ShiyuanRoom extends core_1.Room {
         const unit = this.state.units.get(data.unitId);
         if (!unit || unit.owner !== role)
             return;
+        // 检查是否被定身（无法旋转）
+        if (unit.cannotRotateNextTurn) {
+            client.send("error", { message: "该单位被定身，无法旋转" });
+            return;
+        }
         // 检查弓兵行动次数上限（2次）
         if (unit.type === 'archer' && unit.actionsThisTurn >= 2) {
             client.send("error", { message: "该单位本回合已达行动次数上限" });

@@ -679,6 +679,51 @@ export const GameBoard: React.FC = () => {
       return;
     }
 
+    // 其他单位的攻击范围处理
+    // 对于近战单位（步兵、骑兵、将军），需要特殊处理机关单位的高亮
+    if (selectedUnit.type === UnitType.INFANTRY ||
+        selectedUnit.type === UnitType.CAVALRY ||
+        selectedUnit.type === UnitType.GENERAL) {
+      // 计算攻击者相邻的所有格子
+      const adjacentHexes = hexNeighbors(selectedUnit.position);
+      const highlightHexes: HexCoord[] = [];
+
+      // 查找相邻格子上的所有敌方单位
+      adjacentHexes.forEach(adjHex => {
+        Object.values(units).forEach(u => {
+          if (u.owner === selectedUnit.owner || u.id === selectedUnit.id) return;
+
+          // 检查是否是机关单位
+          if (isMachineUnit(u.type)) {
+            const machineType = getMachineTypeStr(u.type)!;
+            const isPlayerOne = u.owner === Player.PLAYER1;
+            const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
+
+            // 如果机关单位的任意占据格子与相邻格子重合，高亮机关单位的所有占据格子
+            if (occupiedHexes.some(hex => hexEquals(hex, adjHex))) {
+              occupiedHexes.forEach(hex => {
+                if (!highlightHexes.some(h => hexEquals(h, hex))) {
+                  highlightHexes.push(hex);
+                }
+              });
+            }
+          } else {
+            // 普通单位：检查中心位置
+            if (hexEquals(u.position, adjHex)) {
+              if (!highlightHexes.some(h => hexEquals(h, u.position))) {
+                highlightHexes.push(u.position);
+              }
+            }
+          }
+        });
+      });
+
+      setHighlightedHexes(highlightHexes);
+      setActionMode('attack');
+      return;
+    }
+
+    // 弓箭手等其他单位：使用原有逻辑
     const targets = getValidAttacks(selectedUnit);
     // 只高亮敌人的位置,不是整个范围
     setHighlightedHexes(targets.map(t => t.position));
@@ -1711,53 +1756,65 @@ export const GameBoard: React.FC = () => {
                 <div className="mt-4 space-y-2">
                   <button
                     onClick={handleShowMoves}
-                    disabled={!isMyTurn || currentActionPoints < 1 || (() => {
-                      // 部署阶段：玩家1不能移动，玩家2可以移动
-                      if (phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1) return true;
+                    disabled={
+                      !isMyTurn ||
+                      currentActionPoints < 1 ||
+                      ('cannotMoveNextTurn' in selectedUnit && selectedUnit.cannotMoveNextTurn === true) ||
+                      (() => {
+                        // 部署阶段：玩家1不能移动，玩家2可以移动
+                        if (phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1) return true;
 
-                      // 弓兵特殊处理：行动次数上限为2
-                      if (selectedUnit.type === UnitType.ARCHER) {
-                        // 达到行动次数上限
-                        if (selectedUnit.actionsThisTurn >= 2) return true;
-                        // 已经移动过（即使还有行动次数也不能再移动）
-                        if (selectedUnit.hasMoved) return true;
+                        // 弓兵特殊处理：行动次数上限为2
+                        if (selectedUnit.type === UnitType.ARCHER) {
+                          // 达到行动次数上限
+                          if (selectedUnit.actionsThisTurn >= 2) return true;
+                          // 已经移动过（即使还有行动次数也不能再移动）
+                          if (selectedUnit.hasMoved) return true;
+                          return false;
+                        }
+
+                        // 弩车特殊处理：行动次数上限为1
+                        if (selectedUnit.type === UnitType.BALLISTA) {
+                          if (selectedUnit.actionsThisTurn >= 1) return true;
+                          if ('hasActedThisTurn' in selectedUnit && selectedUnit.hasActedThisTurn) return true;
+                          return false;
+                        }
+
+                        // 战车特殊处理：行动次数上限为1
+                        if (selectedUnit.type === UnitType.CHARIOT) {
+                          if (selectedUnit.actionsThisTurn >= 1) return true;
+                          if ('hasActedThisTurn' in selectedUnit && selectedUnit.hasActedThisTurn) return true;
+                          return false;
+                        }
+
+                        // 投石车特殊处理：行动次数上限为1
+                        if (selectedUnit.type === UnitType.CATAPULT) {
+                          if (selectedUnit.actionsThisTurn >= 1) return true;
+                          if ('hasActedThisTurn' in selectedUnit && selectedUnit.hasActedThisTurn) return true;
+                          return false;
+                        }
+
+                        // 计算行动次数上限（普通单位和将军）
+                        const bonusActions = (selectedUnit.type === UnitType.GENERAL && 'bonusActionLimit' in selectedUnit && typeof selectedUnit.bonusActionLimit === 'number')
+                          ? selectedUnit.bonusActionLimit
+                          : 0;
+                        const actionLimit = 2 + bonusActions;
+
+                        // 检查是否已达到行动次数上限
+                        if (selectedUnit.actionsThisTurn >= actionLimit) return true;
+
+                        // 检查是否有无限行动标志
+                        const hasUnlimitedActions = 'unlimitedActions' in selectedUnit && selectedUnit.unlimitedActions;
+
+                        // 如果没有无限行动且没有额外行动次数，检查是否已移动过
+                        if (!hasUnlimitedActions && bonusActions === 0 && selectedUnit.hasMoved) return true;
+
                         return false;
-                      }
-
-                      // 弩车特殊处理：行动次数上限为1
-                      if (selectedUnit.type === UnitType.BALLISTA) {
-                        if (selectedUnit.actionsThisTurn >= 1) return true;
-                        if ('hasActedThisTurn' in selectedUnit && selectedUnit.hasActedThisTurn) return true;
-                        return false;
-                      }
-
-                      // 战车特殊处理：行动次数上限为1
-                      if (selectedUnit.type === UnitType.CHARIOT) {
-                        if (selectedUnit.actionsThisTurn >= 1) return true;
-                        if ('hasActedThisTurn' in selectedUnit && selectedUnit.hasActedThisTurn) return true;
-                        return false;
-                      }
-
-                      // 计算行动次数上限（普通单位和将军）
-                      const bonusActions = (selectedUnit.type === UnitType.GENERAL && 'bonusActionLimit' in selectedUnit && typeof selectedUnit.bonusActionLimit === 'number')
-                        ? selectedUnit.bonusActionLimit
-                        : 0;
-                      const actionLimit = 2 + bonusActions;
-
-                      // 检查是否已达到行动次数上限
-                      if (selectedUnit.actionsThisTurn >= actionLimit) return true;
-
-                      // 检查是否有无限行动标志
-                      const hasUnlimitedActions = 'unlimitedActions' in selectedUnit && selectedUnit.unlimitedActions;
-
-                      // 如果没有无限行动且没有额外行动次数，检查是否已移动过
-                      if (!hasUnlimitedActions && bonusActions === 0 && selectedUnit.hasMoved) return true;
-
-                      return false;
-                    })()}
+                      })()
+                    }
                     className="w-full px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg shadow-md hover:from-green-600 hover:to-green-700 hover:shadow-lg disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-semibold transition-all"
                   >
-                    移动 {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1 ? '(部署阶段不可用)' : ''}
+                    移动 {!isMyTurn ? '(非你的回合)' : ('cannotMoveNextTurn' in selectedUnit && selectedUnit.cannotMoveNextTurn) ? '(被定身)' : phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1 ? '(部署阶段不可用)' : ''}
                   </button>
 
                   {/* 无双将领：扇形攻击替代普通攻击 */}
@@ -2171,10 +2228,16 @@ export const GameBoard: React.FC = () => {
                       {/* 转向按钮 */}
                       <button
                         onClick={handleShowRotation}
-                        disabled={!isMyTurn || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1}
+                        disabled={
+                          !isMyTurn ||
+                          phase === GamePhase.DEPLOY ||
+                          ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) ||
+                          selectedUnit.actionsThisTurn >= 1 ||
+                          ('cannotRotateNextTurn' in selectedUnit && selectedUnit.cannotRotateNextTurn === true)
+                        }
                         className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
                       >
-                        转向 {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可用)' : ''}
+                        转向 {!isMyTurn ? '(非你的回合)' : ('cannotRotateNextTurn' in selectedUnit && selectedUnit.cannotRotateNextTurn) ? '(被定身)' : phase === GamePhase.DEPLOY ? '(部署阶段不可用)' : ''}
                       </button>
                     </div>
                   ) : (
@@ -2197,20 +2260,23 @@ export const GameBoard: React.FC = () => {
                         (phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1) ||
                         (selectedUnit as any).hasRotated ||
                         currentActionPoints < 1 ||
-                        selectedUnit.actionsThisTurn >= 2
+                        selectedUnit.actionsThisTurn >= 2 ||
+                        ('cannotRotateNextTurn' in selectedUnit && selectedUnit.cannotRotateNextTurn === true)
                       }
                       className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
                     >
                       {actionMode === 'rotate' ? '选择射击方向' : '转向 (显示射程)'}
                       {!isMyTurn
                         ? ' (非你的回合)'
-                        : (selectedUnit as any).hasRotated
-                          ? ' (本回合已转向)'
-                          : phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1
-                            ? ' (部署阶段不可用)'
-                            : currentActionPoints < 1
-                              ? ' (行动点不足)'
-                              : ''}
+                        : ('cannotRotateNextTurn' in selectedUnit && selectedUnit.cannotRotateNextTurn)
+                          ? ' (被定身)'
+                          : (selectedUnit as any).hasRotated
+                            ? ' (本回合已转向)'
+                            : phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1
+                              ? ' (部署阶段不可用)'
+                              : currentActionPoints < 1
+                                ? ' (行动点不足)'
+                                : ''}
                     </button>
                   )}
                 </div>

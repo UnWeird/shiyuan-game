@@ -2077,7 +2077,7 @@ class ShiyuanRoom extends core_1.Room {
                     unit.hasAttacked = false;
                     unit.hasRotated = false;
                     unit.actionsThisTurn = 0;
-                    if (unit.type === "ballista" || unit.type === "chariot") {
+                    if (unit.type === "ballista" || unit.type === "chariot" || unit.type === "catapult") {
                         unit.hasActedThisTurn = false;
                     }
                 });
@@ -2104,7 +2104,7 @@ class ShiyuanRoom extends core_1.Room {
                     unit.bonusActionLimit = 0;
                 }
                 // 重置机关单位的已行动状态
-                if (unit.type === "ballista" || unit.type === "chariot") {
+                if (unit.type === "ballista" || unit.type === "chariot" || unit.type === "catapult") {
                     unit.hasActedThisTurn = false;
                 }
             }

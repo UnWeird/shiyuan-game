@@ -1787,7 +1787,7 @@ export const GameBoard: React.FC = () => {
 
                         // 投石车特殊处理：行动次数上限为1
                         if (selectedUnit.type === UnitType.CATAPULT) {
-                          if (selectedUnit.actionsThisTurn >= 1) return true;
+                          // 只检查hasActedThisTurn，因为投石车每回合只能行动一次
                           if ('hasActedThisTurn' in selectedUnit && selectedUnit.hasActedThisTurn) return true;
                           return false;
                         }

@@ -699,13 +699,11 @@ export const GameBoard: React.FC = () => {
             const isPlayerOne = u.owner === Player.PLAYER1;
             const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
 
-            // 如果机关单位的任意占据格子与相邻格子重合，高亮机关单位的所有占据格子
+            // 如果机关单位的任意占据格子与相邻格子重合，高亮机关单位的核心位置（主要棋子）
             if (occupiedHexes.some(hex => hexEquals(hex, adjHex))) {
-              occupiedHexes.forEach(hex => {
-                if (!highlightHexes.some(h => hexEquals(h, hex))) {
-                  highlightHexes.push(hex);
-                }
-              });
+              if (!highlightHexes.some(h => hexEquals(h, u.position))) {
+                highlightHexes.push(u.position);  // 只高亮核心位置，不高亮所有占据格子
+              }
             }
           } else {
             // 普通单位：检查中心位置

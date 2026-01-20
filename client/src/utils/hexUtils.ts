@@ -175,23 +175,29 @@ export function isInDirection(from: HexCoord, to: HexCoord, direction: Direction
 }
 
 /**
- * 获取从指定位置沿某方向的射击路径 (直到地图边界或被阻挡)
+ * 获取从指定位置沿某方向的射击路径 (直到射程上限或被阻挡)
  * @param from 起始位置
  * @param direction 方向
- * @param mapRadius 地图半径
+ * @param maxRange 最大射程（格数）
  * @param blockedHexes 被占用的位置（可选，用于检测阻挡）
  * @returns 射击路径上的所有六边形坐标
  */
 export function getShootingPath(
   from: HexCoord,
   direction: Direction,
-  mapRadius: number,
+  maxRange: number,
   blockedHexes?: HexCoord[]
 ): HexCoord[] {
   const path: HexCoord[] = [];
   let current = hexNeighbor(from, direction);
+  let distance = 1; // 当前距离起点的步数
 
-  while (isInMapRange(current, mapRadius)) {
+  while (distance <= maxRange) {
+    // 检查是否还在地图范围内（地图半径固定为5）
+    if (!isInMapRange(current, 5)) {
+      break;
+    }
+
     path.push(current);
 
     // 如果遇到阻挡，停止延伸
@@ -200,6 +206,7 @@ export function getShootingPath(
     }
 
     current = hexNeighbor(current, direction);
+    distance++;
   }
 
   return path;

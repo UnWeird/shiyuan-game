@@ -33,7 +33,6 @@ class UnitSchema extends schema_1.Schema {
         this.hasMoved = false;
         this.hasAttacked = false;
         this.hasRotated = false; // 弓箭手是否已转向
-        this.isFlipped = false;
         // 将军专属字段
         this.generalType = ""; // wushuang, shenji, rende
         this.abilityUsed = false;
@@ -111,10 +110,6 @@ __decorate([
     (0, schema_1.type)("boolean"),
     __metadata("design:type", Boolean)
 ], UnitSchema.prototype, "hasRotated", void 0);
-__decorate([
-    (0, schema_1.type)("boolean"),
-    __metadata("design:type", Boolean)
-], UnitSchema.prototype, "isFlipped", void 0);
 __decorate([
     (0, schema_1.type)("string"),
     __metadata("design:type", String)

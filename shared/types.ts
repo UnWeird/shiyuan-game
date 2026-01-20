@@ -56,7 +56,6 @@ export interface Unit {
   actionsThisTurn: number;  // 本回合已执行的行动次数
   hasMoved: boolean;        // 本回合是否已移动
   hasAttacked: boolean;     // 本回合是否已攻击
-  isFlipped: boolean;       // 是否被翻面 (受伤)
   moveDistance?: number;    // 骑兵：本回合移动的距离（1/2/3）
   movementRestricted?: boolean; // 步兵：是否被限制前进（纵深抗击效果）
   movementRestrictionSource?: HexCoord; // 步兵：限制移动的攻击来源位置（用于判定是否可移动到某格）

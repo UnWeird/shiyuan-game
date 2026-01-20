@@ -26,6 +26,8 @@ exports.getAxisDirection = getAxisDirection;
 exports.getAxisLineFromTarget = getAxisLineFromTarget;
 exports.getDistanceToBaseline = getDistanceToBaseline;
 exports.tryKnockback = tryKnockback;
+exports.knockbackInfantryChain = knockbackInfantryChain;
+exports.getCatapultSplashTargets = getCatapultSplashTargets;
 const types_1 = require("../types");
 /**
  * 创建六边形坐标
@@ -186,23 +188,29 @@ function isInDirection(from, to, direction) {
     return hexEquals(path[1], nextHex);
 }
 /**
- * 获取从指定位置沿某方向的射击路径 (直到地图边界或被阻挡)
+ * 获取从指定位置沿某方向的射击路径 (直到射程上限或被阻挡)
  * @param from 起始位置
  * @param direction 方向
- * @param mapRadius 地图半径
+ * @param maxRange 最大射程（格数）
  * @param blockedHexes 被占用的位置（可选，用于检测阻挡）
  * @returns 射击路径上的所有六边形坐标
  */
-function getShootingPath(from, direction, mapRadius, blockedHexes) {
+function getShootingPath(from, direction, maxRange, blockedHexes) {
     const path = [];
     let current = hexNeighbor(from, direction);
-    while (isInMapRange(current, mapRadius)) {
+    let distance = 1; // 当前距离起点的步数
+    while (distance <= maxRange) {
+        // 检查是否还在地图范围内（地图半径固定为5）
+        if (!isInMapRange(current, 5)) {
+            break;
+        }
         path.push(current);
         // 如果遇到阻挡，停止延伸
         if (blockedHexes && blockedHexes.some(hex => hexEquals(hex, current))) {
             break;
         }
         current = hexNeighbor(current, direction);
+        distance++;
     }
     return path;
 }
@@ -478,4 +486,162 @@ function tryKnockback(position, awayFromSource, mapRadius, isPositionBlocked) {
         return null; // 被占用
     }
     return knockbackPos;
+}
+/**
+ * 步兵击退传导机制
+ * @param startPosition 第一个被击退的步兵位置
+ * @param awayFromSource 远离的攻击来源位置
+ * @param mapRadius 地图半径
+ * @param getUnitAtPosition 获取指定位置的单位（返回单位类型和ID）
+ * @param isPositionOccupied 检查位置是否被占用
+ * @returns 击退结果数组，每项包含单位ID、新位置（成功击退）或伤害（被阻挡）
+ */
+function knockbackInfantryChain(startPosition, awayFromSource, mapRadius, getUnitAtPosition, isPositionOccupied) {
+    const results = [];
+    const processedIds = new Set(); // 防止重复处理
+    // 获取击退方向
+    const axisDir = getAxisDirection(awayFromSource, startPosition);
+    if (!axisDir) {
+        return results; // 不在轴线上，无法击退
+    }
+    let currentPos = startPosition;
+    // 沿击退方向查找连续的步兵
+    while (true) {
+        const currentUnit = getUnitAtPosition(currentPos);
+        // 检查当前位置是否有步兵
+        if (!currentUnit || currentUnit.type !== 'infantry') {
+            // 遇到非步兵或空格子，停止传导
+            break;
+        }
+        // 防止重复处理
+        if (processedIds.has(currentUnit.id)) {
+            break;
+        }
+        processedIds.add(currentUnit.id);
+        // 计算击退目标位置
+        let knockbackPos;
+        if (axisDir.axis === 'q') {
+            knockbackPos = createHex(currentPos.q, currentPos.r + axisDir.direction);
+        }
+        else if (axisDir.axis === 'r') {
+            knockbackPos = createHex(currentPos.q + axisDir.direction, currentPos.r);
+        }
+        else {
+            knockbackPos = createHex(currentPos.q + axisDir.direction, currentPos.r - axisDir.direction);
+        }
+        // 检查击退目标位置
+        const isOutOfBounds = !isInMapRange(knockbackPos, mapRadius);
+        const isBlocked = isPositionOccupied(knockbackPos, Array.from(processedIds));
+        if (isOutOfBounds || isBlocked) {
+            // 遇到边界或被阻挡
+            const blockingUnit = getUnitAtPosition(knockbackPos);
+            // 如果被阻挡是因为有非步兵单位，则停止传导并给当前步兵扣血
+            if (blockingUnit && blockingUnit.type !== 'infantry') {
+                results.push({ id: currentUnit.id, takeDamage: true });
+                break;
+            }
+            // 如果是地图边界或空格子阻挡，也扣血并停止
+            if (isOutOfBounds || !blockingUnit) {
+                results.push({ id: currentUnit.id, takeDamage: true });
+                break;
+            }
+            // 如果被阻挡是因为另一个已处理的步兵，扣血并停止
+            if (blockingUnit && processedIds.has(blockingUnit.id)) {
+                results.push({ id: currentUnit.id, takeDamage: true });
+                break;
+            }
+        }
+        // 可以击退，记录结果
+        results.push({ id: currentUnit.id, newPosition: knockbackPos });
+        // 继续检查下一个位置
+        currentPos = knockbackPos;
+    }
+    return results;
+}
+/**
+ * 获取投石车攻击的溅射目标格子
+ * @param attackerPos 攻击者位置
+ * @param targetPos 主要目标位置
+ * @param chargeLevel 蓄力层数（0=无蓄力, 1=一层蓄力, 2=两层蓄力）
+ * @param mapRadius 地图半径
+ * @returns 溅射目标格子数组
+ */
+function getCatapultSplashTargets(attackerPos, targetPos, chargeLevel, mapRadius) {
+    const splashTargets = [];
+    if (chargeLevel === 0) {
+        // 无蓄力，无溅射
+        return splashTargets;
+    }
+    // 计算击退方向（从攻击者指向目标）
+    const dq = targetPos.q - attackerPos.q;
+    const dr = targetPos.r - attackerPos.r;
+    const ds = targetPos.s - attackerPos.s;
+    // 找到主要移动方向（六边形的6个方向之一）
+    let knockbackDirection = null;
+    const neighbors = hexNeighbors(attackerPos);
+    // 找到从攻击者到目标路径上的第一个相邻格子
+    const pathToTarget = hexLineDraw(attackerPos, targetPos);
+    if (pathToTarget.length >= 2) {
+        const firstStep = pathToTarget[1]; // 第一步（攻击者的下一个格子）
+        // 找到对应的方向
+        for (let dir = 0; dir < 6; dir++) {
+            if (hexEquals(neighbors[dir], firstStep)) {
+                knockbackDirection = dir;
+                break;
+            }
+        }
+    }
+    // 如果找不到明确方向，尝试根据坐标差值估算
+    if (knockbackDirection === null) {
+        const absQ = Math.abs(dq);
+        const absR = Math.abs(dr);
+        const absS = Math.abs(ds);
+        // 找出最大的坐标差值，确定主要方向
+        if (dq > 0 && absQ >= absR && absQ >= absS) {
+            knockbackDirection = dr < 0 ? types_1.Direction.NORTH_EAST : types_1.Direction.EAST;
+        }
+        else if (dq < 0 && absQ >= absR && absQ >= absS) {
+            knockbackDirection = dr > 0 ? types_1.Direction.SOUTH_WEST : types_1.Direction.WEST;
+        }
+        else if (dr < 0 && absR >= absQ && absR >= absS) {
+            knockbackDirection = dq > 0 ? types_1.Direction.NORTH_EAST : types_1.Direction.NORTH_WEST;
+        }
+        else if (dr > 0 && absR >= absQ && absR >= absS) {
+            knockbackDirection = dq < 0 ? types_1.Direction.SOUTH_WEST : types_1.Direction.SOUTH_EAST;
+        }
+        else {
+            // 默认使用东方向
+            knockbackDirection = types_1.Direction.EAST;
+        }
+    }
+    // 计算目标背后的格子
+    const behindTarget = hexNeighbor(targetPos, knockbackDirection);
+    if (chargeLevel === 1) {
+        // 一层蓄力：溅射目标背后的1个格子
+        if (isInMapRange(behindTarget, mapRadius)) {
+            splashTargets.push(behindTarget);
+        }
+    }
+    else if (chargeLevel >= 2) {
+        // 两层蓄力：溅射目标背后120°扇形的3个格子
+        // 中心方向 + 左右各60°
+        const centerDir = knockbackDirection;
+        const leftDir = ((knockbackDirection + 5) % 6); // 逆时针60度
+        const rightDir = ((knockbackDirection + 1) % 6); // 顺时针60度
+        // 获取3个方向上目标背后的格子
+        const centerSplash = hexNeighbor(targetPos, centerDir);
+        const leftSplash = hexNeighbor(targetPos, leftDir);
+        const rightSplash = hexNeighbor(targetPos, rightDir);
+        // 添加在地图范围内的格子
+        if (isInMapRange(centerSplash, mapRadius)) {
+            splashTargets.push(centerSplash);
+        }
+        if (isInMapRange(leftSplash, mapRadius)) {
+            splashTargets.push(leftSplash);
+        }
+        if (isInMapRange(rightSplash, mapRadius)) {
+            splashTargets.push(rightSplash);
+        }
+    }
+    return splashTargets;
 }

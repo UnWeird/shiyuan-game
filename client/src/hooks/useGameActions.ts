@@ -57,7 +57,6 @@ export const useGameActions = () => {
       actionsThisTurn: canAct ? 0 : 2,
       hasMoved: !canAct,
       hasAttacked: !canAct,
-      isFlipped: false,
     };
 
     addUnit(infantry1);
@@ -94,7 +93,6 @@ export const useGameActions = () => {
         actionsThisTurn: canAct ? 0 : 2,
         hasMoved: !canAct,
         hasAttacked: !canAct,
-        isFlipped: false,
       };
       addUnit(infantry2);
     }
@@ -188,9 +186,9 @@ export const useGameActions = () => {
 
     const range = unit.type === UnitType.CAVALRY ? 3 : 1; // 骑兵最多移动3格
 
-    // 仁德单位移动范围+1
+    // 仁德将军本身移动范围+1（不适用于其他单位）
     let finalRange = range;
-    if (isRendeFaction(unit.owner)) {
+    if (unit.type === UnitType.GENERAL && isRendeFaction(unit.owner)) {
       finalRange = range + 1;
     }
 
@@ -677,7 +675,6 @@ export const useGameActions = () => {
             } else {
               updateUnit(rearInfantry.id, {
                 hp: newHp,
-                isFlipped: true,
               });
             }
           }
@@ -689,7 +686,6 @@ export const useGameActions = () => {
           } else {
             updateUnit(rearInfantry.id, {
               hp: newHp,
-              isFlipped: true,
             });
           }
         }
@@ -752,7 +748,6 @@ export const useGameActions = () => {
           type: UnitType.INFANTRY,
           hp: 1,
           maxHp: 2,
-          isFlipped: true, // 半血步兵
         });
       } else {
         // 检查是否是仁德阵营的击杀，如果是则不立即处理
@@ -819,7 +814,6 @@ export const useGameActions = () => {
       // 其他单位受伤，直接减血
       updateUnit(target.id, {
         hp: newHp,
-        isFlipped: true,
       });
     }
 
@@ -906,7 +900,6 @@ export const useGameActions = () => {
       actionsThisTurn: 1, // 部署算一次行动
       hasMoved: false,
       hasAttacked: false,
-      isFlipped: false,
       ...(unitType === UnitType.GENERAL && generalType ? {
         generalType,
         abilityUsed: false,
@@ -1002,7 +995,6 @@ export const useGameActions = () => {
       actionsThisTurn: 0, // 机关刚部署时行动次数为0
       hasMoved: false,
       hasAttacked: false,
-      isFlipped: false,
       killCount: 0,
       pierceCount: 0,
       hasActedThisTurn: false,
@@ -1143,7 +1135,6 @@ export const useGameActions = () => {
               type: UnitType.INFANTRY,
               hp: 1,
               maxHp: 2,
-              isFlipped: true,
             });
           } else {
             removeUnit(firstUnit.id);
@@ -1157,7 +1148,6 @@ export const useGameActions = () => {
         } else {
           updateUnit(firstUnit.id, {
             hp: newHp,
-            isFlipped: true,
           });
         }
       }
@@ -1430,7 +1420,6 @@ export const useGameActions = () => {
         actionsThisTurn: 0, // 可以行动
         hasMoved: false,
         hasAttacked: false,
-        isFlipped: false,
       };
 
       const neighbors = hexNeighbors(to);
@@ -1464,7 +1453,6 @@ export const useGameActions = () => {
           actionsThisTurn: 0, // 可以行动
           hasMoved: false,
           hasAttacked: false,
-          isFlipped: false,
         };
         addUnit(infantry1);
         addUnit(infantry2);
@@ -1494,7 +1482,6 @@ export const useGameActions = () => {
         hasActedThisTurn: true,
         actionsThisTurn: chariot.actionsThisTurn + 1,
         killCount: ('killCount' in chariot ? (chariot as any).killCount : 0) + killedCount,
-        isFlipped: newHp < chariot.maxHp,
       } as any);
     }
 
@@ -1646,7 +1633,6 @@ export const useGameActions = () => {
         actionsThisTurn: 0,
         hasMoved: false,
         hasAttacked: false,
-        isFlipped: false,
       });
     });
 
@@ -1740,7 +1726,6 @@ export const useGameActions = () => {
             type: UnitType.INFANTRY,
             hp: 1,
             maxHp: 2,
-            isFlipped: true,
           });
         } else {
           removeUnit(hitUnit.id);
@@ -1754,7 +1739,6 @@ export const useGameActions = () => {
       } else {
         updateUnit(hitUnit.id, {
           hp: newHp,
-          isFlipped: true,
         });
       }
     });

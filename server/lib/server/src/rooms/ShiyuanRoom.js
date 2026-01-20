@@ -633,6 +633,25 @@ class ShiyuanRoom extends core_1.Room {
      * 为指定玩家投骰子（行动阶段）
      */
     rollDiceForPlayer(role) {
+        // 清除当前玩家所有单位的定身效果和移动限制（新回合开始）
+        this.state.units.forEach((unit) => {
+            if (unit.owner === role) {
+                if (unit.cannotMoveNextTurn || unit.cannotRotateNextTurn) {
+                    this.addBattleLog(`${unit.owner}的${unit.type}定身效果解除`);
+                }
+                unit.cannotMoveNextTurn = false;
+                unit.cannotRotateNextTurn = false;
+                // 清除步兵纵深抗击的移动限制
+                if (unit.movementRestricted) {
+                    unit.movementRestricted = false;
+                    unit.movementRestrictionSourceQ = 0;
+                    unit.movementRestrictionSourceR = 0;
+                    unit.movementRestrictionSourceS = 0;
+                }
+                // 清除骑兵移动距离记录
+                unit.moveDistance = 0;
+            }
+        });
         // 战斗阶段的骰子逻辑
         // 计算当前玩家的骰子数量：基础骰子(将军存活?1:0) + 每2元1颗
         const playerUnits = Array.from(this.state.units.values()).filter(u => u.owner === role);
@@ -803,6 +822,11 @@ class ShiyuanRoom extends core_1.Room {
         }
         // 普通单位移动逻辑
         const range = unit.type === 'cavalry' ? 3 : 1; // 骑兵最多移动3格
+        // 仁德将军本身移动范围+1（不适用于其他单位）
+        let finalRange = range;
+        if (unit.type === 'general' && unit.generalType === 'rende') {
+            finalRange = range + 1;
+        }
         // 对于骑兵，使用BFS计算所有可达的格子（考虑路径阻挡）
         if (unit.type === 'cavalry') {
             const reachable = new Map(); // key: "q,r,s", value: 到达该格子的最短步数
@@ -862,7 +886,7 @@ class ShiyuanRoom extends core_1.Room {
             return result;
         }
         // 非骑兵单位的移动逻辑
-        const possibleMoves = (0, hexUtils_1.hexRange)(unitPos, range);
+        const possibleMoves = (0, hexUtils_1.hexRange)(unitPos, finalRange);
         // 过滤掉已被占用的位置和不在地图范围内的位置
         return possibleMoves.filter(hex => {
             if ((0, hexUtils_1.hexEquals)(hex, unitPos))
@@ -878,7 +902,22 @@ class ShiyuanRoom extends core_1.Room {
             if (this.isHexOccupiedByMachine(hex)) {
                 occupied = true;
             }
-            return !occupied && (0, hexUtils_1.hexDistance)(unitPos, hex) <= range;
+            // 检查步兵纵深抗击的移动限制
+            if (unit.movementRestricted && unit.type === 'infantry') {
+                const restrictionSource = {
+                    q: unit.movementRestrictionSourceQ,
+                    r: unit.movementRestrictionSourceR,
+                    s: unit.movementRestrictionSourceS
+                };
+                // 计算到限制来源的距离
+                const currentDistance = (0, hexUtils_1.hexDistance)(unitPos, restrictionSource);
+                const newDistance = (0, hexUtils_1.hexDistance)(hex, restrictionSource);
+                // 如果移动后距离变小（朝向敌人），禁止移动
+                if (newDistance < currentDistance) {
+                    return false;
+                }
+            }
+            return !occupied && (0, hexUtils_1.hexDistance)(unitPos, hex) <= finalRange;
         });
     }
     /**
@@ -986,13 +1025,25 @@ class ShiyuanRoom extends core_1.Room {
             this.state.player2ActionPoints--;
         }
         // 执行移动
+        const oldPos = { q: unit.q, r: unit.r, s: unit.s };
         unit.q = data.toQ;
         unit.r = data.toR;
         unit.s = data.toS;
         unit.hasMoved = true;
         unit.actionsThisTurn = (unit.actionsThisTurn || 0) + 1; // 增加行动次数
-        // 机关单位（弩车、战车）需要标记已行动
-        if (unit.type === 'ballista' || unit.type === 'chariot') {
+        // 骑兵：记录移动距离
+        if (unit.type === 'cavalry') {
+            const targetPos = { q: data.toQ, r: data.toR, s: data.toS };
+            const moveDistance = (0, hexUtils_1.hexDistance)(oldPos, targetPos);
+            unit.moveDistance = moveDistance;
+            // 移动3格则不能攻击
+            if (moveDistance === 3) {
+                unit.hasAttacked = true; // 标记为已攻击，阻止本回合攻击
+                this.addBattleLog(`骑兵移动3格，本回合无法攻击`);
+            }
+        }
+        // 机关单位（弩车、战车、投石车）需要标记已行动
+        if (unit.type === 'ballista' || unit.type === 'chariot' || unit.type === 'catapult') {
             unit.hasActedThisTurn = true;
         }
         this.addBattleLog(`${role}移动${unit.type}到(${data.toQ},${data.toR},${data.toS})`);
@@ -1255,21 +1306,175 @@ class ShiyuanRoom extends core_1.Room {
             this.state.player2ActionPoints -= actionCost;
         }
         // TODO: 验证攻击范围、计算伤害
-        // 计算伤害：
-        // 1. 近战单位（步兵、骑兵、将军）攻击弩车：造成2点伤害
-        // 2. 其他情况：造成1点伤害
-        let damage = 1;
-        if (target.type === "ballista") {
-            // 步兵、骑兵、将军都是近战单位，攻击弩车造成2点伤害
-            if (attacker.type === "infantry" || attacker.type === "cavalry" || attacker.type === "general") {
-                damage = 2;
-                console.log(`[DEBUG] ${attacker.type}近战攻击弩车，造成2点伤害`);
+        // === 步兵纵深抗击和击退传导机制 ===
+        let depthDefenseTriggered = false;
+        if (target.type === 'infantry') {
+            const target_cell = { q: target.q, r: target.r, s: target.s };
+            const source_cell = { q: attacker.q, r: attacker.r, s: attacker.s };
+            // 查找反方向轴线上的己方步兵
+            const axisLine = (0, hexUtils_1.getAxisLineFromTarget)(target_cell, source_cell, 5);
+            const rearInfantries = axisLine
+                .map(hex => {
+                const unit = Array.from(this.state.units.values()).find(u => u.owner === target.owner && u.type === 'infantry' &&
+                    u.q === hex.q && u.r === hex.r && u.s === hex.s);
+                return unit ? { unit, distance: (0, hexUtils_1.hexDistance)(hex, source_cell) } : null;
+            })
+                .filter(item => item !== null);
+            if (rearInfantries.length > 0) {
+                depthDefenseTriggered = true;
+                this.addBattleLog(`纵深抗击触发！${target.owner}的步兵后方有支援`);
+                // 找到最远的后排步兵
+                const rearmost = rearInfantries.sort((a, b) => b.distance - a.distance)[0];
+                const rearUnit = rearmost.unit;
+                // 使用击退传导机制
+                const rearUnitPos = { q: rearUnit.q, r: rearUnit.r, s: rearUnit.s };
+                const knockbackResults = (0, hexUtils_1.knockbackInfantryChain)(rearUnitPos, source_cell, 5, (pos) => {
+                    const unit = Array.from(this.state.units.values()).find(u => u.q === pos.q && u.r === pos.r && u.s === pos.s);
+                    return unit ? { type: unit.type, id: unit.id, owner: unit.owner } : null;
+                }, (pos, excludeIds) => {
+                    return Array.from(this.state.units.values()).some(u => !excludeIds.includes(u.id) &&
+                        u.q === pos.q && u.r === pos.r && u.s === pos.s);
+                });
+                // 应用击退结果
+                for (const result of knockbackResults) {
+                    const unit = this.state.units.get(result.id);
+                    if (!unit)
+                        continue;
+                    if (result.newPosition) {
+                        // 击退成功
+                        unit.q = result.newPosition.q;
+                        unit.r = result.newPosition.r;
+                        unit.s = result.newPosition.s;
+                        this.addBattleLog(`步兵被击退到(${result.newPosition.q}, ${result.newPosition.r}, ${result.newPosition.s})`);
+                    }
+                    else if (result.takeDamage) {
+                        // 被阻挡，受到1点伤害
+                        unit.hp -= 1;
+                        this.addBattleLog(`步兵无法击退，受到1点伤害`);
+                        if (unit.hp <= 0) {
+                            this.state.units.delete(unit.id);
+                            this.addBattleLog(`步兵阵亡！`);
+                        }
+                    }
+                }
+                // 限制前排机动
+                target.movementRestricted = true;
+                target.movementRestrictionSourceQ = source_cell.q;
+                target.movementRestrictionSourceR = source_cell.r;
+                target.movementRestrictionSourceS = source_cell.s;
+                this.addBattleLog(`前排步兵本回合被限制向敌方方向移动`);
             }
         }
-        target.hp -= damage;
+        // === 计算伤害（如果触发纵深抗击则免伤） ===
+        let damage = 0;
+        if (!depthDefenseTriggered) {
+            damage = 1;
+            // 近战单位（步兵、骑兵、将军）攻击弩车：造成2点伤害
+            if (target.type === "ballista") {
+                if (attacker.type === "infantry" || attacker.type === "cavalry" || attacker.type === "general") {
+                    damage = 2;
+                    console.log(`[DEBUG] ${attacker.type}近战攻击弩车，造成2点伤害`);
+                }
+            }
+            // 骑兵移动距离影响伤害
+            if (attacker.type === 'cavalry' && attacker.moveDistance === 2) {
+                // 检查目标是否是步兵，且相邻己方步兵≥3（步兵抗击机制）
+                if (target.type === 'infantry') {
+                    // 统计目标步兵周围的己方步兵数量
+                    const targetPos = { q: target.q, r: target.r, s: target.s };
+                    const neighbors = (0, hexUtils_1.hexNeighbors)(targetPos);
+                    const adjacentAllies = neighbors.filter(neighborPos => {
+                        const neighborUnit = Array.from(this.state.units.values()).find(u => u.q === neighborPos.q && u.r === neighborPos.r && u.s === neighborPos.s);
+                        return neighborUnit &&
+                            neighborUnit.owner === target.owner &&
+                            neighborUnit.type === 'infantry';
+                    }).length;
+                    if (adjacentAllies >= 3) {
+                        this.addBattleLog(`步兵抗击：相邻己方步兵≥3，骑兵冲锋伤害+1无效`);
+                    }
+                    else {
+                        damage += 1;
+                        this.addBattleLog(`骑兵冲锋：伤害+1`);
+                    }
+                }
+                else {
+                    // 非步兵目标，正常获得冲锋伤害加成
+                    damage += 1;
+                    this.addBattleLog(`骑兵冲锋：伤害+1`);
+                }
+            }
+            target.hp -= damage;
+        }
         attacker.hasAttacked = true;
         attacker.actionsThisTurn = (attacker.actionsThisTurn || 0) + 1; // 增加行动次数
         this.addBattleLog(`${role}的${attacker.type}攻击了${target.owner}的${target.type}，造成${damage}点伤害（消耗${actionCost}点行动值）`);
+        // === 投石车溅射伤害 ===
+        if (attacker.type === 'catapult') {
+            const chargeLevel = attacker.chargeLevel || 0;
+            if (chargeLevel > 0) {
+                // 获取溅射目标格子
+                const attackerPos = { q: attacker.q, r: attacker.r, s: attacker.s };
+                const targetPos = { q: target.q, r: target.r, s: target.s };
+                const splashHexes = (0, hexUtils_1.getCatapultSplashTargets)(attackerPos, targetPos, chargeLevel, 5);
+                if (splashHexes.length > 0) {
+                    this.addBattleLog(`投石车溅射效果触发！蓄力层数：${chargeLevel}`);
+                    // 对每个溅射格子上的单位造成1点伤害
+                    for (const splashHex of splashHexes) {
+                        // 查找该格子上的单位
+                        const splashTarget = Array.from(this.state.units.values()).find(u => u.q === splashHex.q && u.r === splashHex.r && u.s === splashHex.s);
+                        if (splashTarget) {
+                            // 造成1点溅射伤害
+                            splashTarget.hp -= 1;
+                            this.addBattleLog(`溅射伤害：${splashTarget.owner}的${splashTarget.type}受到1点伤害`);
+                            // 检查溅射目标是否被击杀
+                            if (splashTarget.hp <= 0) {
+                                // 骑兵特殊机制：掉马变成1血步兵
+                                if (splashTarget.type === "cavalry") {
+                                    splashTarget.type = "infantry";
+                                    splashTarget.maxHp = 2;
+                                    splashTarget.hp = 1;
+                                    this.addBattleLog(`${splashTarget.owner}的骑兵受溅射致命伤，掉马变成1血步兵！`);
+                                }
+                                else {
+                                    // 其他单位直接击杀
+                                    if (splashTarget.type === 'chariot') {
+                                        this.handleChariotDeath(splashTarget);
+                                    }
+                                    this.state.units.delete(splashTarget.id);
+                                    this.addBattleLog(`溅射击杀：${splashTarget.owner}的${splashTarget.type}被击杀！`);
+                                    // 处理首次击杀奖励
+                                    if (role === "player1" && !this.state.player1KilledThisTurn) {
+                                        this.state.player1KilledThisTurn = true;
+                                        this.state.player1KillDice++;
+                                        const extraRoll = Math.floor(Math.random() * 6) + 1;
+                                        this.state.player1Dice++;
+                                        this.state.player1DiceResults.push(extraRoll);
+                                        this.state.player1ActionPoints += extraRoll;
+                                        this.addBattleLog(`玩家1首次击杀（溅射）！获得额外骰子，投出${extraRoll}点`);
+                                    }
+                                    else if (role === "player2" && !this.state.player2KilledThisTurn) {
+                                        this.state.player2KilledThisTurn = true;
+                                        this.state.player2KillDice++;
+                                        const extraRoll = Math.floor(Math.random() * 6) + 1;
+                                        this.state.player2Dice++;
+                                        this.state.player2DiceResults.push(extraRoll);
+                                        this.state.player2ActionPoints += extraRoll;
+                                        this.addBattleLog(`玩家2首次击杀（溅射）！获得额外骰子，投出${extraRoll}点`);
+                                    }
+                                    // 检查是否溅射击杀了将军
+                                    if (splashTarget.type === "general") {
+                                        this.addBattleLog(`溅射击杀将军！${splashTarget.owner === "player1" ? "玩家1" : "玩家2"}下回合失去基础骰子`);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // 溅射攻击后，重置蓄力层数
+                attacker.chargeLevel = 0;
+                this.addBattleLog(`投石车蓄力层数重置为0`);
+            }
+        }
         // 骑兵特殊机制：骑兵的死亡等同于变成1血步兵
         if (target.type === "cavalry" && target.hp <= 0) {
             console.log(`[DEBUG] 骑兵死亡（hp=${target.hp}），掉马变成1血步兵`);
@@ -1411,9 +1616,71 @@ class ShiyuanRoom extends core_1.Room {
             }
             return;
         }
-        // 对所有被击中的单位造成伤害
+        console.log(`\n=== 弩车贯穿攻击调试 ===`);
+        console.log(`弩车位置: (${ballista.q}, ${ballista.r}, ${ballista.s})`);
+        console.log(`击中单位数: ${hitUnits.length}`);
+        console.log(`第一个目标: (${hitUnits[0].q}, ${hitUnits[0].r}, ${hitUnits[0].s}) - ${hitUnits[0].type}`);
+        console.log(`最后目标: (${hitUnits[hitUnits.length - 1].q}, ${hitUnits[hitUnits.length - 1].r}, ${hitUnits[hitUnits.length - 1].s}) - ${hitUnits[hitUnits.length - 1].type}`);
+        console.log(`======================\n`);
+        // === 第1步：结算最后一个目标的定身效果 ===
+        const lastTarget = hitUnits[hitUnits.length - 1];
+        lastTarget.cannotMoveNextTurn = true;
+        lastTarget.cannotRotateNextTurn = true;
+        this.addBattleLog(`${lastTarget.owner}的${lastTarget.type}被贯穿最后命中，定身1回合！`);
+        // === 第2步：结算第一个目标的击退 ===
+        const firstTarget = hitUnits[0];
+        let firstTargetExtraDamage = 0;
+        // 尝试击退第一个目标
+        // 计算击退位置：沿着弩车贯穿方向继续前进一格
+        // 玩家1正前方：(q+1, r-2, s+1)
+        // 玩家2正前方：(q-1, r+2, s-1)
+        const dq = isPlayerOne ? 1 : -1;
+        const dr = isPlayerOne ? -2 : 2;
+        const ds = isPlayerOne ? 1 : -1;
+        const knockbackPos = {
+            q: firstTarget.q + dq,
+            r: firstTarget.r + dr,
+            s: firstTarget.s + ds
+        };
+        // 检查击退位置是否有效
+        const isKnockbackValid = (0, hexUtils_1.isInMapRange)(knockbackPos, 6);
+        // 检查击退位置是否被占用
+        const isKnockbackBlocked = isKnockbackValid && Array.from(this.state.units.values()).some(u => {
+            if (u.id === firstTarget.id)
+                return false;
+            // 检查是否是机关单位
+            if (u.type === 'ballista' || u.type === 'chariot') {
+                const machineType = u.type === 'ballista' ? 'ballista' : 'chariot';
+                const unitIsPlayerOne = u.owner === 'player1';
+                const occupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)({ q: u.q, r: u.r, s: u.s }, machineType, unitIsPlayerOne);
+                return occupiedHexes.some(hex => (0, hexUtils_1.hexEquals)(hex, knockbackPos));
+            }
+            // 普通单位只检查中心位置
+            return u.q === knockbackPos.q && u.r === knockbackPos.r && u.s === knockbackPos.s;
+        });
+        console.log(`击退检查: 目标位置(${knockbackPos.q}, ${knockbackPos.r}, ${knockbackPos.s}), 有效=${isKnockbackValid}, 被阻挡=${isKnockbackBlocked}`);
+        if (isKnockbackValid && !isKnockbackBlocked) {
+            // 击退成功
+            firstTarget.q = knockbackPos.q;
+            firstTarget.r = knockbackPos.r;
+            firstTarget.s = knockbackPos.s;
+            this.addBattleLog(`${firstTarget.owner}的${firstTarget.type}被贯穿击退到(${knockbackPos.q}, ${knockbackPos.r}, ${knockbackPos.s})`);
+        }
+        else {
+            // 击退失败，受到额外1点伤害
+            firstTargetExtraDamage = 1;
+            const reason = !isKnockbackValid ? "越界" : "被阻挡";
+            this.addBattleLog(`${firstTarget.owner}的${firstTarget.type}无法被击退(${reason})，受到额外1点伤害`);
+        }
+        // === 第3步：对所有目标造成基础1点伤害 ===
+        const unitsToDelete = [];
         hitUnits.forEach(target => {
-            target.hp -= 1;
+            // 计算总伤害
+            let totalDamage = 1;
+            if (target.id === firstTarget.id) {
+                totalDamage += firstTargetExtraDamage;
+            }
+            target.hp -= totalDamage;
             // 骑兵特殊机制：骑兵的死亡等同于变成1血步兵
             if (target.type === "cavalry" && target.hp <= 0) {
                 target.type = "infantry";
@@ -1426,12 +1693,12 @@ class ShiyuanRoom extends core_1.Room {
                 // 如果击杀的是战车，先生成2个不可行动的步兵，再删除战车
                 if (target.type === 'chariot') {
                     this.handleChariotDeath(target);
-                    this.state.units.delete(target.id);
+                    unitsToDelete.push(target.id);
                     this.addBattleLog(`${target.owner}的战车被弩车贯穿击杀，崩毁！`);
                 }
                 else {
                     // 非战车单位：直接删除
-                    this.state.units.delete(target.id);
+                    unitsToDelete.push(target.id);
                     this.addBattleLog(`${target.owner}的${target.type}被弩车贯穿击杀！`);
                 }
                 // 如果击杀了将军，永久减少对方骰子数
@@ -1469,10 +1736,16 @@ class ShiyuanRoom extends core_1.Room {
                 }
             }
             else {
-                this.addBattleLog(`${target.owner}的${target.type}被弩车贯穿，受到1点伤害`);
-                target.isFlipped = true;
+                if (totalDamage > 1) {
+                    this.addBattleLog(`${target.owner}的${target.type}被弩车贯穿，共受到${totalDamage}点伤害`);
+                }
+                else {
+                    this.addBattleLog(`${target.owner}的${target.type}被弩车贯穿，受到1点伤害`);
+                }
             }
         });
+        // 删除所有被击杀的单位
+        unitsToDelete.forEach(id => this.state.units.delete(id));
         // 更新弩车状态：增加贯穿计数
         ballista.pierceCount += hitUnits.length;
         ballista.hasActedThisTurn = true;
@@ -1585,7 +1858,7 @@ class ShiyuanRoom extends core_1.Room {
             }
         }
         else {
-            target.isFlipped = true;
+            // 目标受伤但未击杀
         }
         client.send("info", { message: "近战攻击成功" });
     }
@@ -2065,7 +2338,6 @@ class ShiyuanRoom extends core_1.Room {
             else {
                 // 造成伤害
                 target.hp = newHp;
-                target.isFlipped = true;
                 this.addBattleLog(`扇形攻击命中${target.type}`);
             }
         });

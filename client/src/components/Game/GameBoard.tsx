@@ -7,7 +7,7 @@ import { useIsMobile } from '../../hooks/useMobile';
 import { HexMap } from '../Map/HexMap';
 import { UnitPiece } from '../Unit/UnitPiece';
 import { BattleLog } from '../UI/BattleLog';
-import { hexEquals, hexToPixel, generateHexMap, isInStartZone, getShootingPath, getFanShapedHexes, getMachineOccupiedHexes, getBallistaVerticalPath, hexDistance, hexNeighbors } from '../../utils/hexUtils';
+import { hexEquals, hexToPixel, generateHexMap, isInStartZone, getShootingPath, getFanShapedHexes, getMachineOccupiedHexes, getBallistaVerticalPath, hexDistance, hexNeighbors, getDistanceToBaseline } from '../../utils/hexUtils';
 import { colyseusService } from '../../services/ColyseusService';
 
 interface BattleLogEntry {
@@ -665,17 +665,23 @@ export const GameBoard: React.FC = () => {
     setDeployUnitType(unitType);
     setActionMode('deploy');
 
-    // 计算可部署区域 - 允许在任何未被占用的位置部署（包括敌方部署区）
+    // 计算可部署区域 - 只能在己方起始区（底部三排）部署
     const allHexes = generateHexMap(5);
+    const playerSide = currentPlayer === Player.PLAYER1 ? 'top' : 'bottom';
 
     const availableHexes = allHexes.filter(hex => {
+      // 检查是否在己方起始区
+      if (!isInStartZone(hex, playerSide)) {
+        return false;
+      }
+
       const occupied = Object.values(units).some(u => hexEquals(u.position, hex));
 
       // 机关单位占据多个格子，需要检查所有占据的格子
       if (isMachineUnit(unitType)) {
         const machineTypeStr = unitType === UnitType.BALLISTA ? 'ballista' :
                               unitType === UnitType.CHARIOT ? 'chariot' : 'catapult';
-        const occupiedHexes = getMachineOccupiedHexes(hex, machineTypeStr);
+        const occupiedHexes = getMachineOccupiedHexes(hex, machineTypeStr, currentPlayer === Player.PLAYER1);
 
         // 检查机关单位的所有格子是否都未被占用
         const hasCollision = occupiedHexes.some(occupiedHex =>
@@ -685,7 +691,7 @@ export const GameBoard: React.FC = () => {
         return !occupied && !hasCollision;
       }
 
-      // 普通单位可以部署在任何未被占用的位置
+      // 普通单位可以部署在己方起始区任何未被占用的位置
       return !occupied;
     });
 
@@ -708,10 +714,40 @@ export const GameBoard: React.FC = () => {
     // 计算所有6个方向的射击路径
     const paths = new Map<Direction, HexCoord[]>();
 
-    // 获取敌方单位位置（用于阻挡射击）
-    const enemyPositions = Object.values(units)
-      .filter(u => u.owner !== selectedUnit.owner && u.id !== selectedUnit.id)
-      .map(u => u.position);
+    // 计算射程范围
+    let maxRange = 5; // 默认地图半径
+    if (selectedUnit.type === UnitType.ARCHER) {
+      // 弓箭手射程 = 3 + 到己方基线的距离
+      const playerSide = selectedUnit.owner === Player.PLAYER1 ? 'top' : 'bottom';
+      const distToBaseline = getDistanceToBaseline(selectedUnit.position, playerSide);
+      maxRange = 3 + distToBaseline;
+    }
+
+    // 获取阻挡位置（用于阻挡射击）
+    // 弓箭手/弩车：只被敌方单位阻挡，友方的弩车和战车不阻挡射击
+    const blockedPositions: HexCoord[] = [];
+    Object.values(units).forEach(u => {
+      if (u.id === selectedUnit.id) return;
+
+      // 友方的弩车和战车不阻挡射击
+      if (u.owner === selectedUnit.owner && (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT)) {
+        return;
+      }
+
+      // 敌方单位会阻挡
+      if (u.owner !== selectedUnit.owner) {
+        // 检查机关单位的所有占用格子
+        if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT) {
+          const machineType = u.type === UnitType.BALLISTA ? 'ballista' :
+                             u.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
+          const isPlayerOne = u.owner === Player.PLAYER1;
+          const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
+          blockedPositions.push(...occupiedHexes);
+        } else {
+          blockedPositions.push(u.position);
+        }
+      }
+    });
 
     [
       Direction.EAST,
@@ -721,16 +757,11 @@ export const GameBoard: React.FC = () => {
       Direction.SOUTH_WEST,
       Direction.SOUTH_EAST,
     ].forEach(dir => {
-      // 获取该方向的射击路径（会被敌方单位阻挡）
-      const path = getShootingPath(selectedUnit.position, dir, 5, enemyPositions);
+      // 获取该方向的射击路径（使用计算后的射程，会被阻挡）
+      const path = getShootingPath(selectedUnit.position, dir, maxRange, blockedPositions);
 
-      // 检查路径上是否有敌方单位
-      const hasEnemy = path.some(hex =>
-        enemyPositions.some(enemyPos => hexEquals(enemyPos, hex))
-      );
-
-      // 只有路径上有敌人时才添加到可选方向
-      if (hasEnemy && path.length > 0) {
+      // 所有方向都添加，显示完整射程
+      if (path.length > 0) {
         paths.set(dir, path);
       }
     });
@@ -738,7 +769,7 @@ export const GameBoard: React.FC = () => {
     setRotationPaths(paths);
     setActionMode('rotate');
 
-    // 高亮所有有敌人的路径
+    // 高亮所有方向的射程路径
     const allPathHexes: HexCoord[] = [];
     paths.forEach(path => allPathHexes.push(...path));
     setHighlightedHexes(allPathHexes);
@@ -1054,7 +1085,6 @@ export const GameBoard: React.FC = () => {
         } else {
           updateUnit(targetUnit.id, {
             hp: newHp,
-            isFlipped: true,
           });
           addLog(`无双扇形攻击命中${targetUnit.type}`, 'attack');
         }
@@ -1214,7 +1244,6 @@ export const GameBoard: React.FC = () => {
       } else {
         updateUnit(targetUnit.id, {
           hp: newHp,
-          isFlipped: true,
         });
         addLog(`第二次攻击命中${targetUnit.type}`, 'attack');
       }
@@ -1268,7 +1297,6 @@ export const GameBoard: React.FC = () => {
       } else {
         updateUnit(targetUnit.id, {
           hp: newHp,
-          isFlipped: true,
         });
         addLog(`第三次攻击命中${targetUnit.type}`, 'attack');
       }

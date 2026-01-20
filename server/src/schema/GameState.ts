@@ -22,7 +22,6 @@ export class UnitSchema extends Schema {
   @type("boolean") hasMoved: boolean = false;
   @type("boolean") hasAttacked: boolean = false;
   @type("boolean") hasRotated: boolean = false; // 弓箭手是否已转向
-  @type("boolean") isFlipped: boolean = false;
 
   // 将军专属字段
   @type("string") generalType: string = ""; // wushuang, shenji, rende

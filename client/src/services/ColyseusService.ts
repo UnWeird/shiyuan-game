@@ -204,7 +204,6 @@ class ColyseusService {
           actionsThisTurn: unit.actionsThisTurn,
           hasMoved: unit.hasMoved,
           hasAttacked: unit.hasAttacked,
-          isFlipped: unit.isFlipped,
         };
 
         // 将军专属字段

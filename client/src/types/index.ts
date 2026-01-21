@@ -58,7 +58,11 @@ export interface Unit {
   hasAttacked: boolean;     // 本回合是否已攻击
   moveDistance?: number;    // 骑兵：本回合移动的距离（1/2/3）
   movementRestricted?: boolean; // 步兵：是否被限制前进（纵深抗击效果）
-  cannotActNextTurn?: boolean;  // 弩车贯穿击中的最后单位：下回合不能移动/转向
+  movementRestrictionSourceQ?: number; // 步兵移动限制来源Q坐标
+  movementRestrictionSourceR?: number; // 步兵移动限制来源R坐标
+  movementRestrictionSourceS?: number; // 步兵移动限制来源S坐标
+  cannotMoveNextTurn?: boolean;  // 弩车贯穿击中的最后单位：下回合不能移动
+  cannotRotateNextTurn?: boolean; // 弩车贯穿击中的最后单位：下回合不能转向
 }
 
 // 将军单位 (继承 Unit)

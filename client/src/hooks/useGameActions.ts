@@ -111,6 +111,15 @@ export const useGameActions = () => {
 
   // 获取可移动的位置（骑兵返回带步数信息的结果）
   const getValidMoves = (unit: Unit): (HexCoord & { steps?: number })[] => {
+    const { isOnlineMode } = useGameStore.getState();
+    console.log('[getValidMoves] 在线模式:', isOnlineMode);
+    console.log('[getValidMoves] 开始计算可移动范围, 单位:', unit.id, unit.type);
+    console.log('[getValidMoves] movementRestricted:', unit.movementRestricted);
+    console.log('[getValidMoves] movementRestrictionSourceQ:', (unit as any).movementRestrictionSourceQ);
+    console.log('[getValidMoves] movementRestrictionSourceR:', (unit as any).movementRestrictionSourceR);
+    console.log('[getValidMoves] movementRestrictionSourceS:', (unit as any).movementRestrictionSourceS);
+    console.log('[getValidMoves] 完整单位对象:', unit);
+
     // 计算行动次数上限（基础2次 + 额外行动次数）
     const bonusActions = (unit.type === UnitType.GENERAL && 'bonusActionLimit' in unit && typeof unit.bonusActionLimit === 'number') ? unit.bonusActionLimit : 0;
     const actionLimit = 2 + bonusActions;
@@ -291,17 +300,36 @@ export const useGameActions = () => {
 
       // 检查步兵纵深抗击的移动限制
       if ('movementRestricted' in unit && unit.movementRestricted && unit.type === UnitType.INFANTRY) {
-        if ('movementRestrictionSource' in unit && unit.movementRestrictionSource) {
-          const restrictionSource = unit.movementRestrictionSource as HexCoord;
+        console.log('[移动限制检查] 单位被限制:', unit.id, unit);
+        if ('movementRestrictionSourceQ' in unit &&
+            'movementRestrictionSourceR' in unit &&
+            'movementRestrictionSourceS' in unit &&
+            typeof unit.movementRestrictionSourceQ === 'number' &&
+            typeof unit.movementRestrictionSourceR === 'number' &&
+            typeof unit.movementRestrictionSourceS === 'number') {
+          const restrictionSource: HexCoord = {
+            q: unit.movementRestrictionSourceQ,
+            r: unit.movementRestrictionSourceR,
+            s: unit.movementRestrictionSourceS
+          };
+
+          console.log('[移动限制检查] 限制来源:', restrictionSource);
+          console.log('[移动限制检查] 当前位置:', unit.position);
+          console.log('[移动限制检查] 检查目标:', hex);
 
           // 计算到限制来源的距离
           const currentDistance = hexDistance(unit.position, restrictionSource);
           const newDistance = hexDistance(hex, restrictionSource);
 
+          console.log('[移动限制检查] 当前距离:', currentDistance, '新距离:', newDistance);
+
           // 如果移动后距离变小（朝向敌人），禁止移动
           if (newDistance < currentDistance) {
+            console.log('[移动限制检查] 禁止移动！距离变小');
             return false;
           }
+        } else {
+          console.log('[移动限制检查] 坐标字段不存在或类型错误');
         }
       }
 
@@ -398,7 +426,7 @@ export const useGameActions = () => {
       const shootingPath = getShootingPath(
         unit.position,
         unit.direction,
-        5,
+        999, // 投石车无射程限制，只受地图边界限制
         blockedPositions
       );
 
@@ -707,9 +735,14 @@ export const useGameActions = () => {
         }
 
         // Step 4: 限制前排机动
+        console.log('[纵深抗击-客户端] 设置前排移动限制, targetId:', target.id, 'sourceCell:', sourceCell);
         updateUnit(target.id, {
           movementRestricted: true,
+          movementRestrictionSourceQ: sourceCell.q,
+          movementRestrictionSourceR: sourceCell.r,
+          movementRestrictionSourceS: sourceCell.s,
         });
+        console.log('[纵深抗击-客户端] 设置后，检查units中的状态:', useGameStore.getState().units[target.id]);
       }
     }
 
@@ -1171,7 +1204,8 @@ export const useGameActions = () => {
 
     // 结算最后一个单位：下回合不能移动/转向
     updateUnit(lastUnit.id, {
-      cannotActNextTurn: true,
+      cannotMoveNextTurn: true,
+      cannotRotateNextTurn: true,
     });
 
     // 如果first和last是同一单位，上述两效果同时作用（已处理）

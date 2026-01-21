@@ -193,6 +193,17 @@ class ColyseusService {
     const units: Record<string, any> = {};
     if (state.units) {
       state.units.forEach((unit: any, id: string) => {
+        // 如果是步兵且有移动限制，打印详细信息
+        if (unit.type === 'infantry' && unit.movementRestricted) {
+          console.log('[Colyseus同步] 发现被限制的步兵:', {
+            id: unit.id,
+            movementRestricted: unit.movementRestricted,
+            sourceQ: unit.movementRestrictionSourceQ,
+            sourceR: unit.movementRestrictionSourceR,
+            sourceS: unit.movementRestrictionSourceS
+          });
+        }
+
         units[id] = {
           id: unit.id,
           type: unit.type,
@@ -204,6 +215,13 @@ class ColyseusService {
           actionsThisTurn: unit.actionsThisTurn,
           hasMoved: unit.hasMoved,
           hasAttacked: unit.hasAttacked,
+          moveDistance: unit.moveDistance,
+          movementRestricted: unit.movementRestricted,
+          movementRestrictionSourceQ: unit.movementRestrictionSourceQ,
+          movementRestrictionSourceR: unit.movementRestrictionSourceR,
+          movementRestrictionSourceS: unit.movementRestrictionSourceS,
+          cannotMoveNextTurn: unit.cannotMoveNextTurn,
+          cannotRotateNextTurn: unit.cannotRotateNextTurn,
         };
 
         // 将军专属字段

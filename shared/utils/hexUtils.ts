@@ -622,7 +622,7 @@ export function knockbackInfantryChain(
  * 获取投石车攻击的溅射目标格子
  * @param attackerPos 攻击者位置
  * @param targetPos 主要目标位置
- * @param chargeLevel 蓄力层数（0=无蓄力, 1=一层蓄力, 2=两层蓄力）
+ * @param chargeLevel 蓄力层数（0=常态溅射，背后1格；1+=蓄力溅射，背后120°扇形）
  * @param mapRadius 地图半径
  * @returns 溅射目标格子数组
  */
@@ -633,11 +633,6 @@ export function getCatapultSplashTargets(
   mapRadius: number
 ): HexCoord[] {
   const splashTargets: HexCoord[] = [];
-
-  if (chargeLevel === 0) {
-    // 无蓄力，无溅射
-    return splashTargets;
-  }
 
   // 计算击退方向（从攻击者指向目标）
   const dq = targetPos.q - attackerPos.q;
@@ -686,13 +681,13 @@ export function getCatapultSplashTargets(
   // 计算目标背后的格子
   const behindTarget = hexNeighbor(targetPos, knockbackDirection);
 
-  if (chargeLevel === 1) {
-    // 一层蓄力：溅射目标背后的1个格子
+  if (chargeLevel === 0) {
+    // 常态溅射：目标背后1格
     if (isInMapRange(behindTarget, mapRadius)) {
       splashTargets.push(behindTarget);
     }
-  } else if (chargeLevel >= 2) {
-    // 两层蓄力：溅射目标背后120°扇形的3个格子
+  } else if (chargeLevel >= 1) {
+    // 蓄力溅射（1层或2层）：溅射目标背后120°扇形的3个格子
     // 中心方向 + 左右各60°
     const centerDir = knockbackDirection;
     const leftDir = ((knockbackDirection + 5) % 6) as Direction; // 逆时针60度

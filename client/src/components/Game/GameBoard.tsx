@@ -789,33 +789,55 @@ export const GameBoard: React.FC = () => {
       const playerSide = selectedUnit.owner === Player.PLAYER1 ? 'top' : 'bottom';
       const distToBaseline = getDistanceToBaseline(selectedUnit.position, playerSide);
       maxRange = 3 + distToBaseline;
+    } else if (selectedUnit.type === UnitType.CATAPULT) {
+      // 投石车无射程限制，只受地图边界限制
+      maxRange = 999;
     }
 
     // 获取阻挡位置（用于阻挡射击）
-    // 弓箭手/弩车：只被敌方单位阻挡，友方的弩车和战车不阻挡射击
     const blockedPositions: HexCoord[] = [];
-    Object.values(units).forEach(u => {
-      if (u.id === selectedUnit.id) return;
 
-      // 友方的弩车和战车不阻挡射击
-      if (u.owner === selectedUnit.owner && (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT)) {
-        return;
-      }
-
-      // 敌方单位会阻挡
-      if (u.owner !== selectedUnit.owner) {
-        // 检查机关单位的所有占用格子
-        if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT) {
-          const machineType = u.type === UnitType.BALLISTA ? 'ballista' :
-                             u.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
-          const isPlayerOne = u.owner === Player.PLAYER1;
-          const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
-          blockedPositions.push(...occupiedHexes);
-        } else {
-          blockedPositions.push(u.position);
+    if (selectedUnit.type === UnitType.CATAPULT) {
+      // 投石车：只被敌方单位阻挡
+      Object.values(units).forEach(u => {
+        if (u.id === selectedUnit.id) return;
+        if (u.owner !== selectedUnit.owner) {
+          if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT) {
+            const machineType = u.type === UnitType.BALLISTA ? 'ballista' :
+                               u.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
+            const isPlayerOne = u.owner === Player.PLAYER1;
+            const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
+            blockedPositions.push(...occupiedHexes);
+          } else {
+            blockedPositions.push(u.position);
+          }
         }
-      }
-    });
+      });
+    } else {
+      // 弓箭手/弩车：只被敌方单位阻挡，友方的弩车和战车不阻挡射击
+      Object.values(units).forEach(u => {
+        if (u.id === selectedUnit.id) return;
+
+        // 友方的弩车和战车不阻挡射击
+        if (u.owner === selectedUnit.owner && (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT)) {
+          return;
+        }
+
+        // 敌方单位会阻挡
+        if (u.owner !== selectedUnit.owner) {
+          // 检查机关单位的所有占用格子
+          if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT) {
+            const machineType = u.type === UnitType.BALLISTA ? 'ballista' :
+                               u.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
+            const isPlayerOne = u.owner === Player.PLAYER1;
+            const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
+            blockedPositions.push(...occupiedHexes);
+          } else {
+            blockedPositions.push(u.position);
+          }
+        }
+      });
+    }
 
     [
       Direction.EAST,

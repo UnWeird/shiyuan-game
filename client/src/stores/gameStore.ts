@@ -245,12 +245,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   updateUnit: (unitId: string, updates: Partial<Unit>) => {
-    set(state => ({
-      units: {
+    console.log('[updateUnit] 更新单位:', unitId, '更新内容:', updates);
+    set(state => {
+      const newUnits = {
         ...state.units,
         [unitId]: { ...state.units[unitId], ...updates },
-      },
-    }));
+      };
+      console.log('[updateUnit] 更新后的单位:', newUnits[unitId]);
+      return { units: newUnits };
+    });
   },
 
   selectUnit: (unitId: string | null) => {

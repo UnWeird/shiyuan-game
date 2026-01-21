@@ -734,25 +734,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
    * 为指定玩家投骰子（行动阶段）
    */
   private rollDiceForPlayer(role: "player1" | "player2") {
-    // 清除当前玩家所有单位的定身效果和移动限制（新回合开始）
+    // 调试：检查所有单位的定身状态
+    console.log(`\n[定身调试] rollDiceForPlayer 开始 - ${role}的回合`);
     this.state.units.forEach((unit) => {
-      if (unit.owner === role) {
-        if (unit.cannotMoveNextTurn || unit.cannotRotateNextTurn) {
-          this.addBattleLog(`${unit.owner}的${unit.type}定身效果解除`);
-        }
-        unit.cannotMoveNextTurn = false;
-        unit.cannotRotateNextTurn = false;
-
-        // 清除步兵纵深抗击的移动限制
-        if (unit.movementRestricted) {
-          unit.movementRestricted = false;
-          unit.movementRestrictionSourceQ = 0;
-          unit.movementRestrictionSourceR = 0;
-          unit.movementRestrictionSourceS = 0;
-        }
-
-        // 清除骑兵移动距离记录
-        unit.moveDistance = 0;
+      if (unit.cannotMoveNextTurn || unit.cannotRotateNextTurn) {
+        console.log(`[定身调试] 单位 ${unit.id} (${unit.owner}, ${unit.type}): cannotMove=${unit.cannotMoveNextTurn}, cannotRotate=${unit.cannotRotateNextTurn}`);
       }
     });
 
@@ -1059,18 +1045,26 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       // 检查步兵纵深抗击的移动限制
       if (unit.movementRestricted && unit.type === 'infantry') {
+        console.log(`[服务端移动验证] 单位被限制 - ID: ${unit.id}, movementRestricted: ${unit.movementRestricted}`);
         const restrictionSource = {
           q: unit.movementRestrictionSourceQ,
           r: unit.movementRestrictionSourceR,
           s: unit.movementRestrictionSourceS
         };
 
+        console.log(`[服务端移动验证] 限制来源:`, restrictionSource);
+        console.log(`[服务端移动验证] 当前位置:`, unitPos);
+        console.log(`[服务端移动验证] 目标位置:`, hex);
+
         // 计算到限制来源的距离
         const currentDistance = hexDistance(unitPos, restrictionSource);
         const newDistance = hexDistance(hex, restrictionSource);
 
+        console.log(`[服务端移动验证] 当前距离: ${currentDistance}, 新距离: ${newDistance}`);
+
         // 如果移动后距离变小（朝向敌人），禁止移动
         if (newDistance < currentDistance) {
+          console.log(`[服务端移动验证] 禁止移动！距离变小`);
           return false;
         }
       }
@@ -1534,17 +1528,28 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       const target_cell = { q: target.q, r: target.r, s: target.s };
       const source_cell = { q: attacker.q, r: attacker.r, s: attacker.s };
 
-      // 查找反方向轴线上的己方步兵
+      // 查找反方向轴线上**连续**的己方步兵
       const axisLine = getAxisLineFromTarget(target_cell, source_cell, 5);
-      const rearInfantries = axisLine
-        .map(hex => {
-          const unit = Array.from(this.state.units.values()).find(u =>
-            u.owner === target.owner && u.type === 'infantry' &&
-            u.q === hex.q && u.r === hex.r && u.s === hex.s
-          );
-          return unit ? { unit, distance: hexDistance(hex, source_cell) } : null;
-        })
-        .filter(item => item !== null);
+      const rearInfantries: Array<{ unit: UnitSchema; distance: number }> = [];
+
+      // 逐格检查，必须连续
+      for (const hex of axisLine) {
+        const unit = Array.from(this.state.units.values()).find(u =>
+          u.owner === target.owner && u.type === 'infantry' &&
+          u.q === hex.q && u.r === hex.r && u.s === hex.s
+        );
+
+        if (unit) {
+          // 找到己方步兵，加入列表
+          rearInfantries.push({
+            unit,
+            distance: hexDistance(hex, source_cell)
+          });
+        } else {
+          // 遇到空格子或非己方步兵，停止检查
+          break;
+        }
+      }
 
       if (rearInfantries.length > 0) {
         depthDefenseTriggered = true;
@@ -1602,6 +1607,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         target.movementRestrictionSourceQ = source_cell.q;
         target.movementRestrictionSourceR = source_cell.r;
         target.movementRestrictionSourceS = source_cell.s;
+        console.log(`[纵深抗击] 设置移动限制 - 单位ID: ${target.id}, 限制来源: (${source_cell.q}, ${source_cell.r}, ${source_cell.s})`);
+        console.log(`[纵深抗击] 限制后状态 - movementRestricted: ${target.movementRestricted}, sourceQ: ${target.movementRestrictionSourceQ}`);
         this.addBattleLog(`前排步兵本回合被限制向敌方方向移动`);
       }
     }
@@ -1702,75 +1709,76 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     if (attacker.type === 'catapult') {
       const chargeLevel = attacker.chargeLevel || 0;
 
-      if (chargeLevel > 0) {
-        // 获取溅射目标格子
-        const attackerPos = { q: attacker.q, r: attacker.r, s: attacker.s };
-        const targetPos = { q: target.q, r: target.r, s: target.s };
-        const splashHexes = getCatapultSplashTargets(attackerPos, targetPos, chargeLevel, 5);
+      // 投石车总是有溅射效果（常态或蓄力）
+      const attackerPos = { q: attacker.q, r: attacker.r, s: attacker.s };
+      const targetPos = { q: target.q, r: target.r, s: target.s };
+      const splashHexes = getCatapultSplashTargets(attackerPos, targetPos, chargeLevel, 5);
 
-        if (splashHexes.length > 0) {
-          this.addBattleLog(`投石车溅射效果触发！蓄力层数：${chargeLevel}`);
+      if (splashHexes.length > 0) {
+        const splashType = chargeLevel === 0 ? "常态" : `蓄力${chargeLevel}层`;
+        this.addBattleLog(`投石车${splashType}溅射效果触发！`);
 
-          // 对每个溅射格子上的单位造成1点伤害
-          for (const splashHex of splashHexes) {
-            // 查找该格子上的单位
-            const splashTarget = Array.from(this.state.units.values()).find(u =>
-              u.q === splashHex.q && u.r === splashHex.r && u.s === splashHex.s
-            );
+        // 对每个溅射格子上的单位造成1点伤害
+        for (const splashHex of splashHexes) {
+          // 查找该格子上的单位
+          const splashTarget = Array.from(this.state.units.values()).find(u =>
+            u.q === splashHex.q && u.r === splashHex.r && u.s === splashHex.s
+          );
 
-            if (splashTarget) {
-              // 造成1点溅射伤害
-              splashTarget.hp -= 1;
-              this.addBattleLog(`溅射伤害：${splashTarget.owner}的${splashTarget.type}受到1点伤害`);
+          if (splashTarget) {
+            // 造成1点溅射伤害
+            splashTarget.hp -= 1;
+            this.addBattleLog(`溅射伤害：${splashTarget.owner}的${splashTarget.type}受到1点伤害`);
 
-              // 检查溅射目标是否被击杀
-              if (splashTarget.hp <= 0) {
-                // 骑兵特殊机制：掉马变成1血步兵
-                if (splashTarget.type === "cavalry") {
-                  splashTarget.type = "infantry";
-                  splashTarget.maxHp = 2;
-                  splashTarget.hp = 1;
-                  this.addBattleLog(`${splashTarget.owner}的骑兵受溅射致命伤，掉马变成1血步兵！`);
-                } else {
-                  // 其他单位直接击杀
-                  if (splashTarget.type === 'chariot') {
-                    this.handleChariotDeath(splashTarget);
-                  }
-                  this.state.units.delete(splashTarget.id);
-                  this.addBattleLog(`溅射击杀：${splashTarget.owner}的${splashTarget.type}被击杀！`);
+            // 检查溅射目标是否被击杀
+            if (splashTarget.hp <= 0) {
+              // 骑兵特殊机制：掉马变成1血步兵
+              if (splashTarget.type === "cavalry") {
+                splashTarget.type = "infantry";
+                splashTarget.maxHp = 2;
+                splashTarget.hp = 1;
+                this.addBattleLog(`${splashTarget.owner}的骑兵受溅射致命伤，掉马变成1血步兵！`);
+              } else {
+                // 其他单位直接击杀
+                if (splashTarget.type === 'chariot') {
+                  this.handleChariotDeath(splashTarget);
+                }
+                this.state.units.delete(splashTarget.id);
+                this.addBattleLog(`溅射击杀：${splashTarget.owner}的${splashTarget.type}被击杀！`);
 
-                  // 处理首次击杀奖励
-                  if (role === "player1" && !this.state.player1KilledThisTurn) {
-                    this.state.player1KilledThisTurn = true;
-                    this.state.player1KillDice++;
-                    const extraRoll = Math.floor(Math.random() * 6) + 1;
-                    this.state.player1Dice++;
-                    this.state.player1DiceResults.push(extraRoll);
-                    this.state.player1ActionPoints += extraRoll;
-                    this.addBattleLog(`玩家1首次击杀（溅射）！获得额外骰子，投出${extraRoll}点`);
-                  } else if (role === "player2" && !this.state.player2KilledThisTurn) {
-                    this.state.player2KilledThisTurn = true;
-                    this.state.player2KillDice++;
-                    const extraRoll = Math.floor(Math.random() * 6) + 1;
-                    this.state.player2Dice++;
-                    this.state.player2DiceResults.push(extraRoll);
-                    this.state.player2ActionPoints += extraRoll;
-                    this.addBattleLog(`玩家2首次击杀（溅射）！获得额外骰子，投出${extraRoll}点`);
-                  }
+                // 处理首次击杀奖励
+                if (role === "player1" && !this.state.player1KilledThisTurn) {
+                  this.state.player1KilledThisTurn = true;
+                  this.state.player1KillDice++;
+                  const extraRoll = Math.floor(Math.random() * 6) + 1;
+                  this.state.player1Dice++;
+                  this.state.player1DiceResults.push(extraRoll);
+                  this.state.player1ActionPoints += extraRoll;
+                  this.addBattleLog(`玩家1首次击杀（溅射）！获得额外骰子，投出${extraRoll}点`);
+                } else if (role === "player2" && !this.state.player2KilledThisTurn) {
+                  this.state.player2KilledThisTurn = true;
+                  this.state.player2KillDice++;
+                  const extraRoll = Math.floor(Math.random() * 6) + 1;
+                  this.state.player2Dice++;
+                  this.state.player2DiceResults.push(extraRoll);
+                  this.state.player2ActionPoints += extraRoll;
+                  this.addBattleLog(`玩家2首次击杀（溅射）！获得额外骰子，投出${extraRoll}点`);
+                }
 
-                  // 检查是否溅射击杀了将军
-                  if (splashTarget.type === "general") {
-                    this.addBattleLog(`溅射击杀将军！${splashTarget.owner === "player1" ? "玩家1" : "玩家2"}下回合失去基础骰子`);
-                  }
+                // 检查是否溅射击杀了将军
+                if (splashTarget.type === "general") {
+                  this.addBattleLog(`溅射击杀将军！${splashTarget.owner === "player1" ? "玩家1" : "玩家2"}下回合失去基础骰子`);
                 }
               }
             }
           }
         }
+      }
 
-        // 溅射攻击后，重置蓄力层数
-        attacker.chargeLevel = 0;
-        this.addBattleLog(`投石车蓄力层数重置为0`);
+      // 攻击后消耗1层蓄力（不是清零）
+      if (chargeLevel > 0) {
+        attacker.chargeLevel = chargeLevel - 1;
+        this.addBattleLog(`投石车蓄力层数：${chargeLevel} -> ${attacker.chargeLevel}`);
       }
     }
 
@@ -1947,6 +1955,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     const lastTarget = hitUnits[hitUnits.length - 1];
     lastTarget.cannotMoveNextTurn = true;
     lastTarget.cannotRotateNextTurn = true;
+    console.log(`[定身] 设置定身效果 - 单位ID: ${lastTarget.id}, cannotMoveNextTurn: ${lastTarget.cannotMoveNextTurn}, cannotRotateNextTurn: ${lastTarget.cannotRotateNextTurn}`);
     this.addBattleLog(`${lastTarget.owner}的${lastTarget.type}被贯穿最后命中，定身1回合！`);
 
     // === 第2步：结算第一个目标的击退 ===
@@ -2448,6 +2457,29 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         // 重置机关单位的已行动状态
         if (unit.type === "ballista" || unit.type === "chariot" || unit.type === "catapult") {
           unit.hasActedThisTurn = false;
+        }
+
+        // 清除定身效果（回合结束时清除）
+        if (unit.cannotMoveNextTurn || unit.cannotRotateNextTurn) {
+          console.log(`[定身] 清除定身效果 - 单位ID: ${unit.id}, 之前状态: cannotMove=${unit.cannotMoveNextTurn}, cannotRotate=${unit.cannotRotateNextTurn}`);
+          this.addBattleLog(`${unit.owner}的${unit.type}定身效果解除`);
+          unit.cannotMoveNextTurn = false;
+          unit.cannotRotateNextTurn = false;
+        }
+
+        // 清除步兵纵深抗击的移动限制（回合结束时清除）
+        if (unit.movementRestricted) {
+          console.log(`[纵深抗击] 清除移动限制 - 单位ID: ${unit.id}, 类型: ${unit.type}`);
+          this.addBattleLog(`${unit.owner}的步兵移动限制解除`);
+          unit.movementRestricted = false;
+          unit.movementRestrictionSourceQ = 0;
+          unit.movementRestrictionSourceR = 0;
+          unit.movementRestrictionSourceS = 0;
+        }
+
+        // 清除骑兵移动距离记录（回合结束时清除）
+        if (unit.moveDistance > 0) {
+          unit.moveDistance = 0;
         }
       }
     });
@@ -2962,7 +2994,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 检查是否有足够的兵力库存
     // 弩车需要：4步兵 + 1弓箭手
-    // 战车需要：6步兵
+    // 战车需要：4步兵
     const totalInfantryStock = role === 'player1' ? this.state.player1Infantry : this.state.player2Infantry;
     const totalArcherStock = role === 'player1' ? this.state.player1Archer : this.state.player2Archer;
     const consumedInfantry = role === 'player1' ? this.state.player1ConsumedInfantry : this.state.player2ConsumedInfantry;
@@ -2978,8 +3010,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         return;
       }
     } else if (data.machineType === 'chariot') {
-      if (availableInfantry < 6) {
-        client.send("error", { message: `兵力库存不足：部署战车需要6步兵（剩余：${availableInfantry}步兵）` });
+      if (availableInfantry < 4) {
+        client.send("error", { message: `兵力库存不足：部署战车需要4步兵（剩余：${availableInfantry}步兵）` });
         return;
       }
     }
@@ -3056,11 +3088,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         this.state.player2ConsumedArcher += 1;
       }
     } else if (data.machineType === 'chariot') {
-      // 战车：消耗6步兵库存
+      // 战车：消耗4步兵库存
       if (role === 'player1') {
-        this.state.player1ConsumedInfantry += 6;
+        this.state.player1ConsumedInfantry += 4;
       } else {
-        this.state.player2ConsumedInfantry += 6;
+        this.state.player2ConsumedInfantry += 4;
       }
     }
 
@@ -3217,7 +3249,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       // 直接改变单位的所有者为仁德所属阵营
       enemy.owner = role;
 
-      // 机关单位需要翻转方向（因为它们不是中心对称的）
+      // 机关单位需要翻转方向（因为它们��是中心对称的）
       if (enemy.type === 'ballista' || enemy.type === 'catapult') {
         // 弩车和投石车的朝向需要翻转
         // player1的机关朝北（敌人在北），player2的机关朝南（敌人在南）

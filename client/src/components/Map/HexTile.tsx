@@ -65,6 +65,7 @@ export const HexTile: React.FC<HexTileProps> = React.memo(({
   let strokeColor = '#d0d0d0';
   let strokeWidth = 1;
   let hexClass = 'hex-hover';
+  let useFilter = false;
 
   if (isBase) {
     fillColor = isPlayer1Zone ? '#fef3c7' : '#dbeafe';
@@ -73,7 +74,8 @@ export const HexTile: React.FC<HexTileProps> = React.memo(({
   } else if (isSelected) {
     fillColor = '#86efac';
     strokeColor = '#16a34a';
-    strokeWidth = 2;
+    strokeWidth = 3;
+    useFilter = true;
   } else if (isHighlighted) {
     // 统一使用橙色高亮
     fillColor = '#fcd34d';
@@ -86,8 +88,28 @@ export const HexTile: React.FC<HexTileProps> = React.memo(({
     fillColor = '#e0f2fe';
   }
 
+  // 为选中状态生成唯一的滤镜ID
+  const filterId = `glow-filter-${hex.q}-${hex.r}`;
+
   return (
     <>
+      {/* 选中状态的发光滤镜定义 */}
+      {isSelected && (
+        <defs>
+          <filter id={filterId} x="-50%" y="-50%" width="200%" height="200%">
+            {/* 创建均匀的外发光效果 */}
+            <feMorphology operator="dilate" radius="2" in="SourceAlpha" result="thicken" />
+            <feGaussianBlur in="thicken" stdDeviation="1.5" result="blurred" />
+            <feFlood floodColor="#16a34a" floodOpacity="0.4" result="glowColor" />
+            <feComposite in="glowColor" in2="blurred" operator="in" result="softGlow" />
+            <feMerge>
+              <feMergeNode in="softGlow" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+      )}
+
       <path
         d={pathData}
         fill={fillColor}
@@ -97,9 +119,13 @@ export const HexTile: React.FC<HexTileProps> = React.memo(({
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
         className={hexClass}
+        filter={useFilter ? `url(#${filterId})` : undefined}
         style={{
           cursor: onClick ? 'pointer' : 'default',
           touchAction: 'none', // 防止默认的触摸行为（如滚动）
+          strokeLinejoin: 'miter', // 使用尖角连接
+          strokeLinecap: 'butt', // 使用平直端点
+          vectorEffect: 'non-scaling-stroke', // 确保描边不随缩放变化
         }}
       />
 

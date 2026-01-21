@@ -14,6 +14,10 @@ interface GameStore extends GameState {
   wushuangSelectedDirection: number | null;
   wushuangDiceRolls: number[];
 
+  // 规则书模态状态
+  isRulesModalOpen: boolean;
+  setRulesModalOpen: (open: boolean) => void;
+
   // 初始化游戏
   initGame: () => void;
 
@@ -145,6 +149,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   wushuangAttackPhase: 'select-direction',
   wushuangSelectedDirection: null,
   wushuangDiceRolls: [],
+
+  // 规则书模态初始值
+  isRulesModalOpen: false,
+  setRulesModalOpen: (open: boolean) => set({ isRulesModalOpen: open }),
 
   initGame: () => {
     set(initialState);

@@ -6,9 +6,10 @@ import { ArmyBuild } from './components/Game/ArmyBuild';
 import { BaseSetup } from './components/Game/BaseSetup';
 import { GameBoard } from './components/Game/GameBoard';
 import RoomLobby from './components/Game/RoomLobby';
+import RulesModal from './components/UI/RulesModal';
 
 function App() {
-  const { phase, isOnlineMode } = useGameStore();
+  const { phase, isOnlineMode, isRulesModalOpen, setRulesModalOpen } = useGameStore();
   const [showLobby, setShowLobby] = useState(false);
   const [showModeSelect, setShowModeSelect] = useState(true);
 
@@ -79,6 +80,9 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* 规则书模态 */}
+      <RulesModal isOpen={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
     </div>
   );
 }

@@ -504,7 +504,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 验证库存：检查是否还有该类型的单位可以部署（基于已消耗库存而非场上数量）
-    if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer") {
+    if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer" || unitType === "general") {
       // 获取该玩家该类型单位的已消耗库存和配置上限
       let consumedCount = 0;
       let maxCount = 0;
@@ -519,6 +519,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         } else if (unitType === "archer") {
           consumedCount = this.state.player1ConsumedArcher;
           maxCount = this.state.player1Archer;
+        } else if (unitType === "general") {
+          // 将军消耗1个步兵库存
+          consumedCount = this.state.player1ConsumedInfantry;
+          maxCount = this.state.player1Infantry;
         }
       } else {
         if (unitType === "infantry") {
@@ -530,12 +534,17 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         } else if (unitType === "archer") {
           consumedCount = this.state.player2ConsumedArcher;
           maxCount = this.state.player2Archer;
+        } else if (unitType === "general") {
+          // 将军消耗1个步兵库存
+          consumedCount = this.state.player2ConsumedInfantry;
+          maxCount = this.state.player2Infantry;
         }
       }
 
       // 检查是否超过库存：剩余 = 配置上限 - 已消耗
       if (consumedCount >= maxCount) {
-        client.send("error", { message: `${unitType}单位库存已耗尽，无法部署` });
+        const unitName = unitType === "general" ? "步兵（部署将军需要）" : unitType;
+        client.send("error", { message: `${unitName}单位库存已耗尽，无法部署` });
         return;
       }
     }
@@ -591,8 +600,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 添加到地图
     this.state.units.set(unit.id, unit);
 
-    // 增加已消耗库存（只对三个基础兵种）
-    if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer") {
+    // 增加已消耗库存（三个基础兵种 + 将军）
+    if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer" || unitType === "general") {
       if (role === "player1") {
         if (unitType === "infantry") {
           this.state.player1ConsumedInfantry++;
@@ -600,6 +609,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           this.state.player1ConsumedCavalry++;
         } else if (unitType === "archer") {
           this.state.player1ConsumedArcher++;
+        } else if (unitType === "general") {
+          // 将军消耗1个步兵库存
+          this.state.player1ConsumedInfantry++;
         }
       } else {
         if (unitType === "infantry") {
@@ -608,6 +620,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           this.state.player2ConsumedCavalry++;
         } else if (unitType === "archer") {
           this.state.player2ConsumedArcher++;
+        } else if (unitType === "general") {
+          // 将军消耗1个步兵库存
+          this.state.player2ConsumedInfantry++;
         }
       }
     }

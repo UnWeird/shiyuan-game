@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { colyseusService } from '../../services/ColyseusService';
 import { useGameStore } from '../../stores/gameStore';
+import RulesModal from '../UI/RulesModal';
 
 interface RoomLobbyProps {
   onRoomJoined: () => void;
@@ -15,6 +16,8 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
   const [opponentJoined, setOpponentJoined] = useState(false);
   const [isSpectator, setIsSpectator] = useState(false);
   const phase = useGameStore(state => state.phase);
+  const isRulesModalOpen = useGameStore(state => state.isRulesModalOpen);
+  const setRulesModalOpen = useGameStore(state => state.setRulesModalOpen);
 
   // 监听游戏开始消息（当对手加入时服务器会发送）
   useEffect(() => {
@@ -121,12 +124,22 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
             >
               单机模式
             </button>
+
+            <button
+              onClick={() => setRulesModalOpen(true)}
+              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200"
+            >
+              📖 查看规则
+            </button>
           </div>
 
           <p className="text-center text-gray-500 text-sm mt-6">
             创建房间后，将房间ID分享给好友即可一起游戏
           </p>
         </div>
+
+        {/* 规则书模态 */}
+        <RulesModal isOpen={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
       </div>
     );
   }

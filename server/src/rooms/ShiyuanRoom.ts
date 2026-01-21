@@ -1522,9 +1522,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // TODO: 验证攻击范围、计算伤害
 
-    // === 步兵纵深抗击和击退传导机制 ===
+    // === 步兵纵深抗击和击退传导机制（仅对弓箭手攻击有效）===
     let depthDefenseTriggered = false;
-    if (target.type === 'infantry') {
+    if (target.type === 'infantry' && attacker.type === 'archer') {
       const target_cell = { q: target.q, r: target.r, s: target.s };
       const source_cell = { q: attacker.q, r: attacker.r, s: attacker.s };
 

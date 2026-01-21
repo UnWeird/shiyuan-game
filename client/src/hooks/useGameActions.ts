@@ -906,13 +906,57 @@ export const useGameActions = () => {
   const deployUnit = (unitType: UnitType, position: HexCoord, direction: Direction = Direction.EAST) => {
     if (currentActionPoints < 1) return false;
 
-    // 允许在任何位置部署（包括敌方部署区）
-    // 只需检查是否在地图范围内
+    // 检查位置是否在地图范围内
     if (!isInMapRange(position, 5)) return false;
+
+    // 检查位置是否在己方部署区域
+    const playerSide = currentPlayer === Player.PLAYER1 ? 'top' : 'bottom';
+    if (!isInStartZone(position, playerSide)) return false;
 
     // 检查位置是否被占用
     const occupied = Object.values(units).some(u => hexEquals(u.position, position));
     if (occupied) return false;
+
+    // 获取最新的游戏状态（一次性获取，避免多次调用产生不一致）
+    const gameState = useGameStore.getState();
+    const { isOnlineMode } = gameState;
+
+    // 将军只能部署一个（仅在单机模式下检查）
+    if (!isOnlineMode && unitType === UnitType.GENERAL) {
+      const hasGeneral = Object.values(units).some(u =>
+        u.type === UnitType.GENERAL && u.owner === currentPlayer
+      );
+      if (hasGeneral) {
+        return false;
+      }
+    }
+
+    // 检查库存（仅在单机模式下）
+    if (!isOnlineMode) {
+      const currentArmy = currentPlayer === Player.PLAYER1
+        ? gameState.player1Army
+        : gameState.player2Army;
+
+      const consumedStock = currentPlayer === Player.PLAYER1
+        ? gameState.player1ConsumedStock
+        : gameState.player2ConsumedStock;
+
+      // 计算剩余可用库存
+      const availableInfantry = currentArmy.infantry - consumedStock.infantry;
+      const availableCavalry = currentArmy.cavalry - consumedStock.cavalry;
+      const availableArcher = currentArmy.archer - consumedStock.archer;
+
+      // 根据单位类型检查库存（将军消耗1个步兵）
+      if (unitType === UnitType.INFANTRY && availableInfantry < 1) {
+        return false;
+      } else if (unitType === UnitType.CAVALRY && availableCavalry < 1) {
+        return false;
+      } else if (unitType === UnitType.ARCHER && availableArcher < 1) {
+        return false;
+      } else if (unitType === UnitType.GENERAL && availableInfantry < 1) {
+        return false;
+      }
+    }
 
     // 如果是将军,需要获取玩家选择的将军类型
     const generalType = currentPlayer === Player.PLAYER1
@@ -966,6 +1010,82 @@ export const useGameActions = () => {
     addUnit(newUnit);
     consumeActionPoint(currentPlayer);
 
+    // 扣除库存（仅在单机模式下）
+    // 重要：使用之前获取的 consumedStock 值来计算新的库存，而不是重新调用 getState()
+    // 这样可以避免状态更新异步导致的问题
+    if (!isOnlineMode) {
+      const consumedStock = currentPlayer === Player.PLAYER1
+        ? gameState.player1ConsumedStock
+        : gameState.player2ConsumedStock;
+
+      if (unitType === UnitType.INFANTRY) {
+        if (currentPlayer === Player.PLAYER1) {
+          useGameStore.setState({
+            player1ConsumedStock: {
+              ...consumedStock,
+              infantry: consumedStock.infantry + 1,
+            }
+          });
+        } else {
+          useGameStore.setState({
+            player2ConsumedStock: {
+              ...consumedStock,
+              infantry: consumedStock.infantry + 1,
+            }
+          });
+        }
+      } else if (unitType === UnitType.CAVALRY) {
+        if (currentPlayer === Player.PLAYER1) {
+          useGameStore.setState({
+            player1ConsumedStock: {
+              ...consumedStock,
+              cavalry: consumedStock.cavalry + 1,
+            }
+          });
+        } else {
+          useGameStore.setState({
+            player2ConsumedStock: {
+              ...consumedStock,
+              cavalry: consumedStock.cavalry + 1,
+            }
+          });
+        }
+      } else if (unitType === UnitType.ARCHER) {
+        if (currentPlayer === Player.PLAYER1) {
+          useGameStore.setState({
+            player1ConsumedStock: {
+              ...consumedStock,
+              archer: consumedStock.archer + 1,
+            }
+          });
+        } else {
+          useGameStore.setState({
+            player2ConsumedStock: {
+              ...consumedStock,
+              archer: consumedStock.archer + 1,
+            }
+          });
+        }
+      } else if (unitType === UnitType.GENERAL) {
+        // 将军消耗1个步兵
+        if (currentPlayer === Player.PLAYER1) {
+          useGameStore.setState({
+            player1ConsumedStock: {
+              ...consumedStock,
+              infantry: consumedStock.infantry + 1,
+            }
+          });
+        } else {
+          useGameStore.setState({
+            player2ConsumedStock: {
+              ...consumedStock,
+              infantry: consumedStock.infantry + 1,
+            }
+          });
+        }
+      }
+    }
+
     return true;
   };
 
@@ -983,9 +1103,12 @@ export const useGameActions = () => {
 
     if (generalType !== 'shenji') return false;
 
-    // 允许在任何位置部署（包括敌方部署区）
-    // 只需检查是否在地图范围内
+    // 检查位置是否在地图范围内
     if (!isInMapRange(position, 5)) return false;
+
+    // 检查位置是否在己方部署区域
+    const playerSide = currentPlayer === Player.PLAYER1 ? 'top' : 'bottom';
+    if (!isInStartZone(position, playerSide)) return false;
 
     // 获取机关单位占用的所有格子
     const machineTypeStr = machineType === UnitType.BALLISTA ? 'ballista' :

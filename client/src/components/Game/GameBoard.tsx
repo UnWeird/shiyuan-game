@@ -7,6 +7,7 @@ import { useIsMobile } from '../../hooks/useMobile';
 import { HexMap } from '../Map/HexMap';
 import { UnitPiece } from '../Unit/UnitPiece';
 import { BattleLog } from '../UI/BattleLog';
+import RulesModal from '../UI/RulesModal';
 import { hexEquals, hexToPixel, generateHexMap, isInStartZone, getShootingPath, getFanShapedHexes, getMachineOccupiedHexes, getBallistaVerticalPath, hexDistance, hexNeighbors, getDistanceToBaseline } from '../../utils/hexUtils';
 import { colyseusService } from '../../services/ColyseusService';
 
@@ -98,6 +99,9 @@ export const GameBoard: React.FC = () => {
     rendeCompleteKill,
     rendeSpareAsNeutral,
   } = useGameActions();
+
+  const isRulesModalOpen = useGameStore(state => state.isRulesModalOpen);
+  const setRulesModalOpen = useGameStore(state => state.setRulesModalOpen);
 
   const [highlightedHexes, setHighlightedHexes] = useState<HexCoord[]>([]);
   const [actionMode, setActionMode] = useState<'move' | 'attack' | 'deploy' | 'rotate' | 'rende-convert' | 'rende-neutral' | null>(null);
@@ -254,8 +258,9 @@ export const GameBoard: React.FC = () => {
       ? player1ConsumedStock
       : player2ConsumedStock;
 
-    // 在线模式：使用服务器同步的consumedStock
-    if (isOnlineMode && consumedStock) {
+    // 在线模式和单机模式都使用 consumedStock 来计算剩余库存
+    // consumedStock 是永久消耗，不会因单位死亡而减少
+    if (consumedStock) {
       return {
         infantry: army.infantry - (consumedStock.infantry || 0),
         cavalry: army.cavalry - (consumedStock.cavalry || 0),
@@ -264,7 +269,7 @@ export const GameBoard: React.FC = () => {
       };
     }
 
-    // 单机模式：继续使用场上数量（单机模式暂不实施consumedStock）
+    // 兜底：如果 consumedStock 未定义（不应该发生），使用场上数量
     const myUnits = Object.values(units).filter(u => u.owner === currentPlayer);
     return {
       infantry: army.infantry - myUnits.filter(u => u.type === UnitType.INFANTRY).length,
@@ -1464,15 +1469,69 @@ export const GameBoard: React.FC = () => {
         {/* 顶部信息栏 */}
         <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
           <div className="flex justify-between items-center">
-            <div>
-              <h2 className="text-2xl font-bold">
-                {currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 的回合
-              </h2>
-              <p className="text-sm text-gray-600">
-                {phase === GamePhase.DEPLOY ? '部署阶段' : '行动阶段'}
-              </p>
+            <div className="flex items-center gap-4">
+              <div>
+                <h2 className="text-2xl font-bold">
+                  {currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 的回合
+                </h2>
+                <p className="text-sm text-gray-600">
+                  {phase === GamePhase.DEPLOY ? '部署阶段' : '行动阶段'}
+                </p>
+              </div>
+
+              {/* 将领显示 */}
+              <div className="flex items-center gap-3 ml-6 pl-6 border-l-2 border-gray-200">
+                {/* 玩家1将领 - 琥珀色/金色 */}
+                <div className="flex items-center gap-2 bg-amber-50 px-3 py-2 rounded-lg border-2 border-amber-400">
+                  <img
+                    src={`/generals/${player1General}.svg`}
+                    alt={player1General || '未选择'}
+                    className="w-8 h-8 rounded-full border-2 border-amber-500"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none'
+                    }}
+                  />
+                  <div className="text-left">
+                    <p className="text-xs text-gray-500">玩家1</p>
+                    <p className="text-sm font-bold text-amber-600">
+                      {player1General === 'wushuang' ? '无双' : player1General === 'shenji' ? '神机' : player1General === 'rende' ? '仁德' : '未知'}
+                    </p>
+                  </div>
+                </div>
+
+                <span className="text-gray-400 font-bold">VS</span>
+
+                {/* 玩家2将领 - 浅蓝色 */}
+                <div className="flex items-center gap-2 bg-blue-50 px-3 py-2 rounded-lg border-2 border-blue-400">
+                  <img
+                    src={`/generals/${player2General}.svg`}
+                    alt={player2General || '未选择'}
+                    className="w-8 h-8 rounded-full border-2 border-blue-500"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none'
+                    }}
+                  />
+                  <div className="text-left">
+                    <p className="text-xs text-gray-500">玩家2</p>
+                    <p className="text-sm font-bold text-blue-600">
+                      {player2General === 'wushuang' ? '无双' : player2General === 'shenji' ? '神机' : player2General === 'rende' ? '仁德' : '未知'}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
+
             <div className="flex items-center gap-6">
+              {/* 帮助按钮 */}
+              <button
+                onClick={() => setRulesModalOpen(true)}
+                className="flex items-center gap-1 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors shadow-sm"
+                title="查看游戏规则"
+              >
+                <span className="text-lg">❓</span>
+                <span className="text-sm font-semibold">规则</span>
+              </button>
+
               {/* 部署价值显示 */}
               <div className="text-center">
                 <p className="text-sm text-gray-600">部署价值</p>
@@ -2322,6 +2381,20 @@ export const GameBoard: React.FC = () => {
               )}
 
               <div className="space-y-2">
+                {/* 将军按钮 - 优先推荐 */}
+                <button
+                  className="w-full px-4 py-2 bg-gradient-to-r from-yellow-500 via-amber-500 to-orange-500 text-white rounded-lg shadow-lg hover:from-yellow-600 hover:via-amber-600 hover:to-orange-600 hover:shadow-xl text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all relative overflow-hidden"
+                  onClick={() => handleStartDeploy(UnitType.GENERAL)}
+                  disabled={!isMyTurn || remainingCounts.general <= 0 || currentActionPoints < 1}
+                >
+                  {remainingCounts.general > 0 && (
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
+                  )}
+                  <div className="relative">
+                    将军 ({remainingCounts.general}/1) {!isMyTurn ? '(非你的回合)' : ''}
+                  </div>
+                </button>
+
                 <button
                   className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 hover:shadow-lg text-sm font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
                   onClick={() => handleStartDeploy(UnitType.INFANTRY)}
@@ -2342,13 +2415,6 @@ export const GameBoard: React.FC = () => {
                   disabled={!isMyTurn || remainingCounts.archer <= 0 || currentActionPoints < 1}
                 >
                   弓箭手 ({remainingCounts.archer}/{army.archer}) {!isMyTurn ? '(非你的回合)' : ''}
-                </button>
-                <button
-                  className="w-full px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-lg shadow-md hover:from-amber-600 hover:to-amber-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
-                  onClick={() => handleStartDeploy(UnitType.GENERAL)}
-                  disabled={!isMyTurn || remainingCounts.general <= 0 || currentActionPoints < 1}
-                >
-                  将军 ({remainingCounts.general}/1) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
               </div>
             </div>
@@ -2584,7 +2650,7 @@ export const GameBoard: React.FC = () => {
           <div className="bg-white rounded-lg p-6 shadow-xl max-w-md">
             <h3 className="text-xl font-bold mb-4">仁德将军击杀</h3>
             <p className="mb-6 text-gray-700">
-              你的仁德将军即将击杀敌方{rendeKillConfirm.target.type}，请选择：
+              你的仁��将军即将击杀敌方{rendeKillConfirm.target.type}，请选择：
             </p>
             <div className="flex gap-4">
               <button
@@ -2645,6 +2711,9 @@ export const GameBoard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 规则书模态 */}
+      <RulesModal isOpen={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
     </div>
   );
 };

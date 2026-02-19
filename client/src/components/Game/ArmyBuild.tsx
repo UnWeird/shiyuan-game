@@ -141,10 +141,10 @@ export const ArmyBuild: React.FC = () => {
   const waitingForOpponent = isOnlineMode && hasSubmitted && !opponentDone;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex items-center justify-center p-8">
-      <div className="max-w-6xl w-full bg-white rounded-lg shadow-xl p-8">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold mb-2">配置部队</h1>
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex items-center justify-center p-4 md:p-8">
+      <div className="max-w-6xl w-full bg-white rounded-lg shadow-xl p-4 md:p-8">
+        <div className="text-center mb-6 md:mb-8">
+          <h1 className="text-2xl md:text-4xl font-bold mb-2">配置部队</h1>
           <p className="text-xl text-gray-600">
             {isOnlineMode
               ? `${myPlayerRole === 'player1' ? '玩家 1' : '玩家 2'} (你) 请分配你的 4 元预算`
@@ -159,9 +159,9 @@ export const ArmyBuild: React.FC = () => {
         </div>
 
         {/* 推荐配置 */}
-        <div className="mb-8">
+        <div className="mb-6 md:mb-8">
           <h2 className="text-lg font-bold mb-3">推荐配置</h2>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {RECOMMENDED_BUILDS.map((build, index) => (
               <button
                 key={index}
@@ -180,8 +180,8 @@ export const ArmyBuild: React.FC = () => {
           </div>
         </div>
 
-        <div className="mb-8">
-          <div className="flex justify-between items-center mb-4 p-4 bg-gray-100 rounded-lg">
+        <div className="mb-6 md:mb-8">
+          <div className="flex justify-between items-center mb-4 p-3 md:p-4 bg-gray-100 rounded-lg">
             <span className="text-lg font-semibold">剩余预算:</span>
             <span className={`text-2xl font-bold ${remaining < 0 ? 'text-red-500' : 'text-green-500'}`}>
               {remaining.toFixed(1)} 元

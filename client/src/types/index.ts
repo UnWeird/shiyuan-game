@@ -22,6 +22,8 @@ export enum UnitType {
   CHARIOT = 'chariot',         // 战车 (神机机关)
   CATAPULT = 'catapult',       // 投石车 (神机机关)
   NEUTRAL_MARKER = 'neutral_marker', // 中立单位标记 (仁德专属)
+  HUANGJIN_LISHI = 'huangjin_lishi', // 黄巾力士 (太平将军专属)
+  HUANGJIN_ZEI = 'huangjin_zei',    // 黄巾贼 (太平将军起义后)
 }
 
 // 方向 (六边形有6个方向，对应6条边)
@@ -42,6 +44,7 @@ export enum GeneralType {
   WUSHUANG = 'wushuang',   // 无双
   SHENJI = 'shenji',       // 神机
   RENDE = 'rende',         // 仁德
+  TAIPING = 'taiping',     // 太平
 }
 
 // 单位状态
@@ -63,6 +66,7 @@ export interface Unit {
   movementRestrictionSourceS?: number; // 步兵移动限制来源S坐标
   cannotMoveNextTurn?: boolean;  // 弩车贯穿击中的最后单位：下回合不能移动
   cannotRotateNextTurn?: boolean; // 弩车贯穿击中的最后单位：下回合不能转向
+  statusTag?: string; // 太平将军专属：'' 普通 | 'lishi' 力士 | 'zei' 贼
 }
 
 // 将军单位 (继承 Unit)
@@ -181,6 +185,25 @@ export interface GameState {
   wushuangAttackPhase?: 'select-direction' | 'second-roll' | 'second-attack' | 'third-roll' | 'third-attack';
   wushuangSelectedDirection?: number | null;
   wushuangDiceRolls?: number[];
+
+  // 太平将军专属状态
+  player1DestinyValue?: number;
+  player2DestinyValue?: number;
+  taipingFushuiActive?: boolean;
+  taipingFushuiPlayer?: string;
+  taipingTianmingActive?: boolean;
+  taipingTianmingPlayer?: string;
+  taipingTianmingCangtiandi?: number;
+  taipingTianmingHuangtian?: number;
+  taipingTianmingDamage?: number;
+  taipingTianmingOldDestiny?: number;
+  // 双太平共享状态
+  taipingSharedHp?: number;
+  taipingSharedMaxHp?: number;
+  player1DoufanUsedThisTurn?: boolean;
+  player2DoufanUsedThisTurn?: boolean;
+  player1TaipingDeployInitDone?: boolean;
+  player2TaipingDeployInitDone?: boolean;
 
   // 历史记录 (用于回放和撤销)
   history: GameState[];

@@ -24,6 +24,7 @@ class ColyseusService {
   async createRoom(): Promise<string> {
     try {
       this.room = await this.client.create('shiyuan_room');
+      this.saveReconnectionToken();
       this.setupRoomListeners();
       console.log('✅ 房间创建成功:', this.room.roomId);
       return this.room.roomId;
@@ -39,6 +40,7 @@ class ColyseusService {
   async joinRoom(roomId: string, asSpectator: boolean = false): Promise<void> {
     try {
       this.room = await this.client.joinById(roomId, { spectator: asSpectator });
+      this.saveReconnectionToken();
       this.setupRoomListeners();
       console.log(`✅ 加入房间成功 (${asSpectator ? '观战者' : '玩家'}):`, roomId);
     } catch (error) {
@@ -47,22 +49,60 @@ class ColyseusService {
     }
   }
 
+  /** 将重连 token 存入 localStorage */
+  private saveReconnectionToken() {
+    if (!this.room) return;
+    try {
+      localStorage.setItem('sy_reconnectionToken', this.room.reconnectionToken);
+      localStorage.setItem('sy_roomId', this.room.roomId);
+      console.log('💾 重连 token 已保存');
+    } catch (e) {
+      console.warn('无法保存重连 token:', e);
+    }
+  }
+
+  /** 清除 localStorage 中的重连 token */
+  private clearReconnectionToken() {
+    localStorage.removeItem('sy_reconnectionToken');
+    localStorage.removeItem('sy_roomId');
+  }
+
   /**
    * 设置房间监听器
    */
   private setupRoomListeners() {
     if (!this.room) return;
 
-    // 监听玩家角色分配
-    this.room.onMessage('role', (data: { role: 'player1' | 'player2' | 'spectator'; message: string }) => {
+    // 监听玩家角色分配（含接管/重连场景）
+    this.room.onMessage('role', (data: {
+      role: 'player1' | 'player2' | 'spectator';
+      message: string;
+      takenOver?: boolean;
+      reconnected?: boolean;
+      gamePhase?: string;
+      actionPoints?: number;
+      currentPlayer?: string;
+    }) => {
       this.myPlayerRole = data.role;
-      console.log('👤 我的角色:', data.role);
+      console.log('👤 我的角色:', data.role, data);
 
-      // 更新本地状态
       useGameStore.setState({
         isOnlineMode: true,
         myPlayerRole: data.role
       });
+
+      // 接管或重连时弹出提示
+      if (data.takenOver || data.reconnected) {
+        const roleLabel = data.role === 'spectator' ? '观战者' : data.role;
+        const actionLabel = data.takenOver ? '接管' : '重连';
+        alert(
+          `${actionLabel}成功！\n` +
+          `你的角色：${roleLabel}\n` +
+          `当前阶段：${data.gamePhase ?? '未知'}\n` +
+          `当前行动方：${data.currentPlayer ?? '未知'}\n` +
+          `可用行动点：${data.actionPoints ?? 0}`
+        );
+      }
     });
 
     // 监听游戏开始
@@ -91,10 +131,34 @@ class ColyseusService {
       console.log('ℹ️  服务器信息:', data.message);
     });
 
-    // 监听玩家离开
+    // 监听玩家离开（主动）
     this.room.onMessage('playerLeft', (data: { role: string; message: string }) => {
       console.log('👋 玩家离开:', data.message);
       alert(data.message);
+    });
+
+    // 监听玩家断线
+    this.room.onMessage('playerDisconnected', (data: { role: string; message: string }) => {
+      console.log('⚠️ 玩家断线:', data.message);
+      alert(`提示：${data.message}`);
+    });
+
+    // 监听断线槽位已释放（60秒超时，可加入新玩家）
+    this.room.onMessage('playerSlotOpen', (data: { role: string; message: string }) => {
+      console.log('🔓 槽位释放:', data.message);
+      alert(`提示：${data.message}`);
+    });
+
+    // 监听新玩家接管
+    this.room.onMessage('playerTookOver', (data: { role: string; message: string }) => {
+      console.log('🔄 玩家接管:', data.message);
+      alert(`提示：${data.message}`);
+    });
+
+    // 监听玩家重连
+    this.room.onMessage('playerReconnected', (data: { role: string; message: string }) => {
+      console.log('✅ 玩家重连:', data.message);
+      alert(`提示：${data.message}`);
     });
 
     // 监听游戏结束
@@ -145,42 +209,44 @@ class ColyseusService {
         // 异常断开，尝试重连
         this.attemptReconnection();
       } else {
-        // 正常离开
+        // 正常离开，清除重连 token
         this.room = null;
         this.myPlayerRole = null;
+        this.clearReconnectionToken();
       }
     });
   }
 
   /**
-   * 尝试重连
+   * 尝试重连：优先使用 room 对象上的 token，其次使用 localStorage 持久化的 token
    */
   private async attemptReconnection() {
-    if (!this.room) return;
+    // 优先用内存中的 token，断线后 room 对象可能还存活
+    const token =
+      (this.room?.reconnectionToken) ||
+      localStorage.getItem('sy_reconnectionToken');
 
-    const roomId = this.room.roomId;
-    const reconnectionToken = this.room.reconnectionToken;
+    console.log('🔄 尝试重连...', { token });
 
-    console.log('🔄 尝试重连...', { roomId, reconnectionToken });
-
-    if (!reconnectionToken) {
+    if (!token) {
       console.error('❌ 没有重连令牌，无法重连');
       this.room = null;
       this.myPlayerRole = null;
+      this.clearReconnectionToken();
       alert('连接已断开，无法重连');
       return;
     }
 
     try {
-      // 使用重连令牌重新加入房间
-      this.room = await this.client.reconnect(reconnectionToken);
+      this.room = await this.client.reconnect(token);
+      this.saveReconnectionToken(); // 更新 token
       this.setupRoomListeners();
       console.log('✅ 重连成功！');
-      alert('重连成功！');
     } catch (error) {
       console.error('❌ 重连失败:', error);
       this.room = null;
       this.myPlayerRole = null;
+      this.clearReconnectionToken();
       alert('重连失败，请刷新页面重新加入');
     }
   }
@@ -222,6 +288,7 @@ class ColyseusService {
           movementRestrictionSourceS: unit.movementRestrictionSourceS,
           cannotMoveNextTurn: unit.cannotMoveNextTurn,
           cannotRotateNextTurn: unit.cannotRotateNextTurn,
+          statusTag: unit.statusTag || '',
         };
 
         // 将军专属字段
@@ -334,6 +401,25 @@ class ColyseusService {
       wushuangAttackPhase: state.wushuangAttackPhase ? state.wushuangAttackPhase as any : 'select-direction',
       wushuangSelectedDirection: state.wushuangSelectedDirection === -1 ? null : state.wushuangSelectedDirection,
       wushuangDiceRolls,
+
+      // 太平将军状态
+      player1DestinyValue: state.player1DestinyValue || 0,
+      player2DestinyValue: state.player2DestinyValue || 0,
+      taipingFushuiActive: state.taipingFushuiActive || false,
+      taipingFushuiPlayer: state.taipingFushuiPlayer || '',
+      taipingTianmingActive: state.taipingTianmingActive || false,
+      taipingTianmingPlayer: state.taipingTianmingPlayer || '',
+      taipingTianmingCangtiandi: state.taipingTianmingCangtiandi || 0,
+      taipingTianmingHuangtian: state.taipingTianmingHuangtian || 0,
+      taipingTianmingDamage: state.taipingTianmingDamage || 0,
+      taipingTianmingOldDestiny: state.taipingTianmingOldDestiny || 0,
+      // 双太平共享状态
+      taipingSharedHp: state.taipingSharedHp ?? 3,
+      taipingSharedMaxHp: state.taipingSharedMaxHp ?? 3,
+      player1DoufanUsedThisTurn: state.player1DoufanUsedThisTurn || false,
+      player2DoufanUsedThisTurn: state.player2DoufanUsedThisTurn || false,
+      player1TaipingDeployInitDone: state.player1TaipingDeployInitDone || false,
+      player2TaipingDeployInitDone: state.player2TaipingDeployInitDone || false,
     });
   }
 
@@ -601,6 +687,48 @@ class ColyseusService {
   rendeSpareAsNeutral(targetId: string) {
     if (!this.room) return;
     this.room.send('rendeSpareAsNeutral', { targetId });
+  }
+
+  // ==================== 太平将军技能 API ====================
+
+  /**
+   * 符水粥：转化一个残血步兵为力士
+   */
+  taipingFushuiConvert(unitId: string) {
+    if (!this.room) return;
+    this.room.send('taipingFushuiConvert', { unitId });
+  }
+
+  /**
+   * 豆饭：召唤力士
+   */
+  taipingDoufan() {
+    if (!this.room) return;
+    this.room.send('taipingDoufan', {});
+  }
+
+  /**
+   * 夺天命：结算天命骰（进入待确认状态）
+   */
+  taipingTianmingRoll() {
+    if (!this.room) return;
+    this.room.send('taipingTianmingRoll', {});
+  }
+
+  /**
+   * 天命结算确认：看完结果后实际结束回合
+   */
+  taipingTianmingConfirm() {
+    if (!this.room) return;
+    this.room.send('taipingTianmingConfirm', {});
+  }
+
+  /**
+   * 部署阶段天命初始化：苍天已死，黄天当立
+   */
+  taipingDeployInit() {
+    if (!this.room) return;
+    this.room.send('taipingDeployInit', {});
   }
 
   /**

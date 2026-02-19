@@ -22,6 +22,8 @@ export enum UnitType {
   CHARIOT = 'chariot',         // 战车 (神机机关)
   CATAPULT = 'catapult',       // 投石车 (神机机关)
   NEUTRAL_MARKER = 'neutral_marker', // 中立单位标记 (仁德专属)
+  HUANGJIN_LISHI = 'huangjin_lishi', // 黄巾力士 (太平将军专属)
+  HUANGJIN_ZEI = 'huangjin_zei',    // 黄巾贼 (太平将军起义后)
 }
 
 // 方向 (六边形有6个方向，对应6条边)
@@ -42,6 +44,7 @@ export enum GeneralType {
   WUSHUANG = 'wushuang',   // 无双
   SHENJI = 'shenji',       // 神机
   RENDE = 'rende',         // 仁德
+  TAIPING = 'taiping',     // 太平
 }
 
 // 单位状态

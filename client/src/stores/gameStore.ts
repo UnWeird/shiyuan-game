@@ -14,6 +14,30 @@ interface GameStore extends GameState {
   wushuangSelectedDirection: number | null;
   wushuangDiceRolls: number[];
 
+  // 太平将军专属状态（显式声明）
+  player1DestinyValue: number;
+  player2DestinyValue: number;
+  taipingFushuiActive: boolean;
+  taipingFushuiPlayer: string;
+  taipingTianmingActive: boolean;
+  taipingTianmingPlayer: string;
+  taipingTianmingCangtiandi: number;
+  taipingTianmingHuangtian: number;
+  taipingTianmingDamage: number;
+  taipingTianmingOldDestiny: number;
+  taipingSharedHp: number;
+  taipingSharedMaxHp: number;
+  player1DoufanUsedThisTurn: boolean;
+  player2DoufanUsedThisTurn: boolean;
+  player1TaipingDeployInitDone: boolean;
+  player2TaipingDeployInitDone: boolean;
+
+  // 太平将军行动（单机模式本地逻辑）
+  taipingFushuiConvert: (player: Player, unitId: string) => void;
+  taipingDoufan: (player: Player) => void;
+  taipingTianmingRoll: (player: Player) => void;
+  taipingDeployInit: (player: Player) => void;
+
   // 规则书模态状态
   isRulesModalOpen: boolean;
   setRulesModalOpen: (open: boolean) => void;
@@ -133,6 +157,24 @@ const initialState: GameState = {
   wushuangSelectedDirection: null,
   wushuangDiceRolls: [],
 
+  // 太平将军专属状态
+  player1DestinyValue: 0,
+  player2DestinyValue: 0,
+  taipingFushuiActive: false,
+  taipingFushuiPlayer: '',
+  taipingTianmingActive: false,
+  taipingTianmingPlayer: '',
+  taipingTianmingCangtiandi: 0,
+  taipingTianmingHuangtian: 0,
+  taipingTianmingDamage: 0,
+  taipingTianmingOldDestiny: 0,
+  taipingSharedHp: 3,
+  taipingSharedMaxHp: 3,
+  player1DoufanUsedThisTurn: false,
+  player2DoufanUsedThisTurn: false,
+  player1TaipingDeployInitDone: false,
+  player2TaipingDeployInitDone: false,
+
   history: [],
 };
 
@@ -149,6 +191,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
   wushuangAttackPhase: 'select-direction',
   wushuangSelectedDirection: null,
   wushuangDiceRolls: [],
+
+  // 太平将军状态初始值
+  player1DestinyValue: 0,
+  player2DestinyValue: 0,
+  taipingFushuiActive: false,
+  taipingFushuiPlayer: '',
+  taipingTianmingActive: false,
+  taipingTianmingPlayer: '',
+  taipingTianmingCangtiandi: 0,
+  taipingTianmingHuangtian: 0,
+  taipingTianmingDamage: 0,
+  taipingTianmingOldDestiny: 0,
 
   // 规则书模态初始值
   isRulesModalOpen: false,
@@ -329,16 +383,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     // 设置行动点和骰子结果
-    if (player === Player.PLAYER1) {
-      set({
-        player1ActionPoints: totalPoints,
-        player1DiceResults: results,
-      });
-    } else {
-      set({
-        player2ActionPoints: totalPoints,
-        player2DiceResults: results,
-      });
+    const apUpdate = player === Player.PLAYER1
+      ? { player1ActionPoints: totalPoints, player1DiceResults: results }
+      : { player2ActionPoints: totalPoints, player2DiceResults: results };
+    set(apUpdate);
+
+    // 重置豆饭每回合限制
+    const doufanReset = player === Player.PLAYER1
+      ? { player1DoufanUsedThisTurn: false }
+      : { player2DoufanUsedThisTurn: false };
+    set(doufanReset);
+
+    // 太平将军：若有存活将军且有可转化残血步兵（普通步兵），进入符水粥模式
+    const stateAfter = get();
+    const taipingGeneral = Object.values(stateAfter.units).find((u: any) =>
+      u.owner === player && u.type === UnitType.GENERAL && u.generalType === GeneralType.TAIPING
+    );
+    if (taipingGeneral && totalPoints > 0) {
+      const candidates = Object.values(stateAfter.units).filter((u: any) =>
+        u.owner === player && u.type === UnitType.INFANTRY && u.hp === 1
+      );
+      if (candidates.length > 0) {
+        set({ taipingFushuiActive: true, taipingFushuiPlayer: player });
+      }
     }
 
     return results;
@@ -556,6 +623,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   endTurn: () => {
+    const state = get();
+    // 太平将军：若将军存活且未完成天命结算，拒绝结束回合
+    const taipingGeneral = Object.values(state.units).find(u =>
+      u.owner === state.currentPlayer && u.type === UnitType.GENERAL && (u as any).generalType === GeneralType.TAIPING
+    );
+    if (taipingGeneral && !state.taipingTianmingActive) {
+      console.warn('[太平] 请先点击「结算天命」完成天命结算');
+      return;
+    }
+    // 清除天命结算状态
+    if (state.taipingTianmingActive) {
+      set({ taipingTianmingActive: false, taipingTianmingPlayer: '' });
+    }
     get().nextTurn();
   },
 
@@ -590,6 +670,201 @@ export const useGameStore = create<GameStore>((set, get) => ({
       get().addActionPoints(Player.PLAYER2, extraRoll);
     }
   },
+
+  // ── 太平将军单机模式本地逻辑 ──────────────────────────────
+
+  taipingFushuiConvert: (player: Player, unitId: string) => {
+    const state = get();
+    if (!state.taipingFushuiActive || state.taipingFushuiPlayer !== player) return;
+
+    const unit = state.units[unitId];
+    if (!unit || unit.owner !== player || unit.type !== UnitType.INFANTRY || unit.hp !== 1) return;
+
+    const ap = player === Player.PLAYER1 ? state.player1ActionPoints : state.player2ActionPoints;
+    if (ap < 1) return;
+
+    // 转化步兵为黄巾力士（独立单位类型）
+    const newUnits = {
+      ...state.units,
+      [unitId]: { ...unit, type: UnitType.HUANGJIN_LISHI, hp: 2, maxHp: 2 },
+    };
+    const newAP = ap - 1;
+    const apUpdate = player === Player.PLAYER1
+      ? { player1ActionPoints: newAP }
+      : { player2ActionPoints: newAP };
+
+    // 检查是否退出符水粥模式（只剩普通步兵才算候选）
+    const remaining = Object.values(newUnits).filter((u: any) =>
+      u.owner === player && u.type === UnitType.INFANTRY && u.hp === 1
+    );
+    const exitFushui = newAP <= 0 || remaining.length === 0;
+
+    set({
+      units: newUnits,
+      ...apUpdate,
+      ...(exitFushui ? { taipingFushuiActive: false, taipingFushuiPlayer: '' } : {}),
+    });
+  },
+
+  taipingDoufan: (player: Player) => {
+    const state = get();
+    // 每回合只能使用一次
+    const doufanUsed = player === Player.PLAYER1
+      ? state.player1DoufanUsedThisTurn
+      : state.player2DoufanUsedThisTurn;
+    if (doufanUsed) return;
+
+    const ap = player === Player.PLAYER1 ? state.player1ActionPoints : state.player2ActionPoints;
+    if (ap < 3) return;
+
+    const taipingGeneral = Object.values(state.units).find((u: any) =>
+      u.owner === player && u.type === UnitType.GENERAL && u.generalType === GeneralType.TAIPING
+    );
+    if (!taipingGeneral) return;
+
+    const rollX = Math.floor(Math.random() * 6) + 1;
+
+    // 找将军相邻空位（简单6邻居检查）
+    const gPos = (taipingGeneral as any).position || { q: 0, r: 0, s: 0 };
+    const hexDirs = [
+      { q: 1, r: -1, s: 0 }, { q: 1, r: 0, s: -1 }, { q: 0, r: 1, s: -1 },
+      { q: -1, r: 1, s: 0 }, { q: -1, r: 0, s: 1 }, { q: 0, r: -1, s: 1 },
+    ];
+    const occupied = new Set(Object.values(state.units).map((u: any) =>
+      `${u.position?.q ?? u.q},${u.position?.r ?? u.r},${u.position?.s ?? u.s}`
+    ));
+
+    const emptyNeighbors = hexDirs
+      .map(d => ({ q: gPos.q + d.q, r: gPos.r + d.r, s: gPos.s + d.s }))
+      .filter(pos => !occupied.has(`${pos.q},${pos.r},${pos.s}`));
+
+    const spawnCount = Math.min(rollX, emptyNeighbors.length);
+    const newUnits = { ...state.units };
+    for (let i = 0; i < spawnCount; i++) {
+      const pos = emptyNeighbors[i];
+      const id = `unit_${Date.now()}_lishi_${i}`;
+      newUnits[id] = {
+        id,
+        type: UnitType.HUANGJIN_LISHI, // 黄巾力士独立单位类型
+        owner: player,
+        position: pos,
+        hp: 2,
+        maxHp: 2,
+        direction: (taipingGeneral as any).direction ?? 0,
+        actionsThisTurn: 2,
+        hasMoved: true,
+        hasAttacked: true,
+      } as any;
+    }
+
+    const apUpdate = player === Player.PLAYER1
+      ? { player1ActionPoints: ap - 3, player1DoufanUsedThisTurn: true }
+      : { player2ActionPoints: ap - 3, player2DoufanUsedThisTurn: true };
+    set({ units: newUnits, ...apUpdate });
+  },
+
+  taipingTianmingRoll: (player: Player) => {
+    const state = get();
+    const bothTaiping = state.player1General === GeneralType.TAIPING && state.player2General === GeneralType.TAIPING;
+
+    const taipingGeneral = Object.values(state.units).find((u: any) =>
+      u.owner === player && u.type === UnitType.GENERAL && u.generalType === GeneralType.TAIPING
+    );
+    if (!taipingGeneral && !bothTaiping) return;
+
+    const cangtiandi = Math.floor(Math.random() * 6) + 1;
+    const huangtian = Math.floor(Math.random() * 6) + 1;
+    const oldDestiny = bothTaiping
+      ? state.player1DestinyValue
+      : (player === Player.PLAYER1 ? state.player1DestinyValue : state.player2DestinyValue);
+    const newDestiny = oldDestiny + huangtian - cangtiandi;
+
+    const destinyUpdate = bothTaiping
+      ? { player1DestinyValue: newDestiny, player2DestinyValue: newDestiny }
+      : player === Player.PLAYER1
+        ? { player1DestinyValue: newDestiny }
+        : { player2DestinyValue: newDestiny };
+
+    // 承载判断：使用黄巾力士独立类型
+    const lishiCount = Object.values(state.units).filter((u: any) =>
+      u.type === UnitType.HUANGJIN_LISHI && (bothTaiping || u.owner === player)
+    ).length;
+    const damage = lishiCount > newDestiny ? 1 : 0;
+
+    // 扣血（走共享血池路径）
+    let newUnits = { ...state.units };
+    let sharedHpUpdate: any = {};
+    if (damage > 0) {
+      const newSharedHp = state.taipingSharedHp - damage;
+      sharedHpUpdate = { taipingSharedHp: newSharedHp };
+      if (newSharedHp <= 0) {
+        // 起义：所有黄巾力士→贼，删除所有太平将军
+        Object.keys(newUnits).forEach(id => {
+          const u = newUnits[id] as any;
+          if (u.type === UnitType.HUANGJIN_LISHI) {
+            newUnits[id] = { ...u, type: UnitType.HUANGJIN_ZEI };
+          }
+          if (u.type === UnitType.GENERAL && u.generalType === GeneralType.TAIPING) {
+            delete newUnits[id];
+          }
+        });
+      } else {
+        // 更新将军HP显示
+        Object.keys(newUnits).forEach(id => {
+          const u = newUnits[id] as any;
+          if (u.type === UnitType.GENERAL && u.generalType === GeneralType.TAIPING) {
+            newUnits[id] = { ...u, hp: Math.max(0, newSharedHp) };
+          }
+        });
+      }
+    }
+
+    set({
+      units: newUnits,
+      ...destinyUpdate,
+      ...sharedHpUpdate,
+      taipingTianmingActive: true,
+      taipingTianmingPlayer: player,
+      taipingTianmingCangtiandi: cangtiandi,
+      taipingTianmingHuangtian: huangtian,
+      taipingTianmingDamage: damage,
+      taipingTianmingOldDestiny: oldDestiny,
+    });
+  },
+
+  taipingDeployInit: (player: Player) => {
+    const state = get();
+    const hasTaiping = player === Player.PLAYER1
+      ? state.player1General === GeneralType.TAIPING
+      : state.player2General === GeneralType.TAIPING;
+    if (!hasTaiping) return;
+
+    const alreadyDone = player === Player.PLAYER1
+      ? state.player1TaipingDeployInitDone
+      : state.player2TaipingDeployInitDone;
+    if (alreadyDone) return;
+
+    const bothTaiping = state.player1General === GeneralType.TAIPING && state.player2General === GeneralType.TAIPING;
+    const INIT_DESTINY = 3;
+
+    const destinyUpdate = bothTaiping
+      ? { player1DestinyValue: state.player1DestinyValue + INIT_DESTINY, player2DestinyValue: state.player1DestinyValue + INIT_DESTINY }
+      : player === Player.PLAYER1
+        ? { player1DestinyValue: state.player1DestinyValue + INIT_DESTINY }
+        : { player2DestinyValue: state.player2DestinyValue + INIT_DESTINY };
+
+    const initDoneUpdate = player === Player.PLAYER1
+      ? { player1TaipingDeployInitDone: true }
+      : { player2TaipingDeployInitDone: true };
+
+    const sharedHpUpdate = bothTaiping
+      ? { taipingSharedHp: 6, taipingSharedMaxHp: 6 }
+      : { taipingSharedHp: 3, taipingSharedMaxHp: 3 };
+
+    set({ ...destinyUpdate, ...initDoneUpdate, ...sharedHpUpdate });
+  },
+
+  // ──────────────────────────────────────────────────────────
 
   resetGame: () => {
     set(initialState);

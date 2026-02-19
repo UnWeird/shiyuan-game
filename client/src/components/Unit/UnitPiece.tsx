@@ -241,6 +241,58 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
           />
         );
 
+      case UnitType.HUANGJIN_LISHI:
+        // 黄巾力士 - 圆形，黄绿色（区分于普通步兵）
+        return (
+          <g>
+            <circle
+              cx={0}
+              cy={0}
+              r={size / 2}
+              fill="#84cc16"
+              stroke="#3f6212"
+              strokeWidth={3}
+            />
+            <text
+              x={0}
+              y={0}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fontSize={size * 0.38}
+              fill="#ffffff"
+              fontWeight="bold"
+            >
+              力
+            </text>
+          </g>
+        );
+
+      case UnitType.HUANGJIN_ZEI:
+        // 黄巾贼 - 圆形，暗红色
+        return (
+          <g>
+            <circle
+              cx={0}
+              cy={0}
+              r={size / 2}
+              fill="#dc2626"
+              stroke="#7f1d1d"
+              strokeWidth={3}
+            />
+            <text
+              x={0}
+              y={0}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fontSize={size * 0.38}
+              fill="#ffffff"
+              fontWeight="bold"
+            >
+              贼
+            </text>
+          </g>
+        );
+
       case UnitType.BALLISTA:
         // 弩车 - 倒V形三角形（有方向指示）
         const ballistaTrianglePoints = `0,${size / 2} ${size / 2},${-size / 2} ${-size / 2},${-size / 2}`;

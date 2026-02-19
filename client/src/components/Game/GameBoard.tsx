@@ -79,6 +79,27 @@ export const GameBoard: React.FC = () => {
     wushuangAttackPhase: storeWushuangAttackPhase,
     wushuangSelectedDirection: storeWushuangSelectedDirection,
     wushuangDiceRolls: storeWushuangDiceRolls,
+    // 太平将军状态
+    player1DestinyValue,
+    player2DestinyValue,
+    taipingFushuiActive,
+    taipingFushuiPlayer,
+    taipingTianmingActive,
+    taipingTianmingCangtiandi,
+    taipingTianmingHuangtian,
+    taipingTianmingDamage,
+    taipingTianmingOldDestiny,
+    taipingSharedHp,
+    taipingSharedMaxHp,
+    player1DoufanUsedThisTurn,
+    player2DoufanUsedThisTurn,
+    player1TaipingDeployInitDone,
+    player2TaipingDeployInitDone,
+    // 太平将军单机模式行动
+    taipingFushuiConvert: storeTaipingFushuiConvert,
+    taipingDoufan: storeTaipingDoufan,
+    taipingTianmingRoll: storeTaipingTianmingRoll,
+    taipingDeployInit: storeTaipingDeployInit,
   } = useGameStore();
 
   const {
@@ -944,6 +965,55 @@ export const GameBoard: React.FC = () => {
     }
   };
 
+  // 太平将军·符水粥：转化选中的残血步兵
+  const handleTaipingFushuiConvert = (unitId: string) => {
+    if (isOnlineMode) {
+      colyseusService.taipingFushuiConvert(unitId);
+    } else {
+      storeTaipingFushuiConvert(currentPlayer, unitId);
+    }
+  };
+
+  // 太平将军·豆饭
+  const handleTaipingDoufan = () => {
+    if (isOnlineMode) {
+      colyseusService.taipingDoufan();
+    } else {
+      storeTaipingDoufan(currentPlayer);
+    }
+  };
+
+  // 太平将军·结算天命（骰子）
+  const handleTaipingTianmingRoll = () => {
+    if (isOnlineMode) {
+      colyseusService.taipingTianmingRoll();
+    } else {
+      storeTaipingTianmingRoll(currentPlayer);
+    }
+  };
+
+  // 太平将军·确认结束回合（天命结算后）
+  const handleTaipingTianmingConfirm = () => {
+    if (isOnlineMode) {
+      colyseusService.taipingTianmingConfirm();
+    } else {
+      // 单机模式：taipingTianmingActive 已为 true，调用 endTurn 会清除并切换
+      endTurn();
+    }
+    setActionMode(null);
+    setHighlightedHexes([]);
+    selectUnit(null);
+  };
+
+  // 太平将军·部署阶段天命初始化
+  const handleTaipingDeployInit = () => {
+    if (isOnlineMode) {
+      colyseusService.taipingDeployInit();
+    } else {
+      storeTaipingDeployInit(currentPlayer);
+    }
+  };
+
   // 神机技能：修改骰子点数
   const handleShenjiAbility = () => {
     setShenjiAbilityActive(true);
@@ -1467,61 +1537,61 @@ export const GameBoard: React.FC = () => {
         )}
 
         {/* 顶部信息栏 */}
-        <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-4">
+        <div className="bg-white rounded-lg shadow-lg p-3 md:p-4 mb-4">
+          <div className="flex flex-wrap justify-between items-center gap-y-2 gap-x-3">
+            <div className="flex items-center gap-2 md:gap-4">
               <div>
-                <h2 className="text-2xl font-bold">
+                <h2 className={`${isMobile ? 'text-lg' : 'text-2xl'} font-bold`}>
                   {currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 的回合
                 </h2>
-                <p className="text-sm text-gray-600">
+                <p className="text-xs text-gray-600">
                   {phase === GamePhase.DEPLOY ? '部署阶段' : '行动阶段'}
                 </p>
               </div>
 
               {/* 将领显示 */}
-              <div className="flex items-center gap-3 ml-6 pl-6 border-l-2 border-gray-200">
+              <div className="flex items-center gap-2 ml-2 pl-2 md:ml-6 md:pl-6 border-l-2 border-gray-200">
                 {/* 玩家1将领 - 琥珀色/金色 */}
-                <div className="flex items-center gap-2 bg-amber-50 px-3 py-2 rounded-lg border-2 border-amber-400">
+                <div className="flex items-center gap-1 md:gap-2 bg-amber-50 px-2 py-1 md:px-3 md:py-2 rounded-lg border-2 border-amber-400">
                   <img
                     src={`/generals/${player1General}.svg`}
                     alt={player1General || '未选择'}
-                    className="w-8 h-8 rounded-full border-2 border-amber-500"
+                    className="w-6 h-6 md:w-8 md:h-8 rounded-full border-2 border-amber-500"
                     onError={(e) => {
                       e.currentTarget.style.display = 'none'
                     }}
                   />
                   <div className="text-left">
-                    <p className="text-xs text-gray-500">玩家1</p>
-                    <p className="text-sm font-bold text-amber-600">
-                      {player1General === 'wushuang' ? '无双' : player1General === 'shenji' ? '神机' : player1General === 'rende' ? '仁德' : '未知'}
+                    <p className="text-xs text-gray-500">P1</p>
+                    <p className="text-xs font-bold text-amber-600">
+                      {player1General === 'wushuang' ? '无双' : player1General === 'shenji' ? '神机' : player1General === 'rende' ? '仁德' : player1General === 'taiping' ? '太平' : '未知'}
                     </p>
                   </div>
                 </div>
 
-                <span className="text-gray-400 font-bold">VS</span>
+                <span className="text-gray-400 font-bold text-xs">VS</span>
 
                 {/* 玩家2将领 - 浅蓝色 */}
-                <div className="flex items-center gap-2 bg-blue-50 px-3 py-2 rounded-lg border-2 border-blue-400">
+                <div className="flex items-center gap-1 md:gap-2 bg-blue-50 px-2 py-1 md:px-3 md:py-2 rounded-lg border-2 border-blue-400">
                   <img
                     src={`/generals/${player2General}.svg`}
                     alt={player2General || '未选择'}
-                    className="w-8 h-8 rounded-full border-2 border-blue-500"
+                    className="w-6 h-6 md:w-8 md:h-8 rounded-full border-2 border-blue-500"
                     onError={(e) => {
                       e.currentTarget.style.display = 'none'
                     }}
                   />
                   <div className="text-left">
-                    <p className="text-xs text-gray-500">玩家2</p>
-                    <p className="text-sm font-bold text-blue-600">
-                      {player2General === 'wushuang' ? '无双' : player2General === 'shenji' ? '神机' : player2General === 'rende' ? '仁德' : '未知'}
+                    <p className="text-xs text-gray-500">P2</p>
+                    <p className="text-xs font-bold text-blue-600">
+                      {player2General === 'wushuang' ? '无双' : player2General === 'shenji' ? '神机' : player2General === 'rende' ? '仁德' : player2General === 'taiping' ? '太平' : '未知'}
                     </p>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3 md:gap-6">
               {/* 帮助按钮 */}
               <button
                 onClick={() => setRulesModalOpen(true)}
@@ -1534,8 +1604,8 @@ export const GameBoard: React.FC = () => {
 
               {/* 部署价值显示 */}
               <div className="text-center">
-                <p className="text-sm text-gray-600">部署价值</p>
-                <p className="text-2xl font-bold text-purple-600">
+                <p className="text-xs text-gray-600">部署价值</p>
+                <p className={`${isMobile ? 'text-lg' : 'text-2xl'} font-bold text-purple-600`}>
                   {(currentPlayer === Player.PLAYER1 ? player1DeployedValue : player2DeployedValue).toFixed(1)}元
                 </p>
                 <p className="text-xs text-gray-500">
@@ -1554,7 +1624,7 @@ export const GameBoard: React.FC = () => {
               </div>
 
               <div className="text-center">
-                <p className="text-sm text-gray-600">行动点</p>
+                <p className="text-xs text-gray-600">行动点</p>
                 {(() => {
                   const tempMax = currentPlayer === Player.PLAYER1 ? player1TempMaxActionPoints : player2TempMaxActionPoints;
                   const diceSum = (currentPlayer === Player.PLAYER1 ? player1DiceResults : player2DiceResults)
@@ -1563,17 +1633,17 @@ export const GameBoard: React.FC = () => {
                   if (tempMax !== null) {
                     // 有临时上限,显示为 (当前/临时上限)
                     return (
-                      <p className="text-3xl font-bold text-blue-600">
+                      <p className={`${isMobile ? 'text-xl' : 'text-3xl'} font-bold text-blue-600`}>
                         {currentActionPoints}
-                        <span className="text-lg text-gray-500">/{tempMax}</span>
+                        <span className={`${isMobile ? 'text-sm' : 'text-lg'} text-gray-500`}>/{tempMax}</span>
                       </p>
                     );
                   } else {
                     // 没有临时上限,显示为 (当前/骰子总和)
                     return (
-                      <p className="text-3xl font-bold text-blue-600">
+                      <p className={`${isMobile ? 'text-xl' : 'text-3xl'} font-bold text-blue-600`}>
                         {currentActionPoints}
-                        <span className="text-lg text-gray-500">/{diceSum}</span>
+                        <span className={`${isMobile ? 'text-sm' : 'text-lg'} text-gray-500`}>/{diceSum}</span>
                       </p>
                     );
                   }
@@ -1645,18 +1715,109 @@ export const GameBoard: React.FC = () => {
                   return null;
                 })()}
               </div>
+              {/* 太平将军天命结算结果面板 */}
+              {(() => {
+                const currentGeneral = currentPlayer === Player.PLAYER1 ? player1General : player2General;
+                const isTaipingTurn = currentGeneral === 'taiping' && isMyTurn;
+                if (!isTaipingTurn || !taipingTianmingActive) return null;
+                const currentDestiny = currentPlayer === Player.PLAYER1 ? player1DestinyValue : player2DestinyValue;
+                return (
+                  <div className="mb-3 p-3 bg-yellow-50 rounded-lg border-2 border-yellow-400">
+                    <h4 className="text-sm font-bold text-yellow-800 mb-2">🌟 天命结算结果</h4>
+                    <div className="text-xs space-y-1 text-yellow-900">
+                      <div className="flex justify-between">
+                        <span>苍天骰：</span><span className="font-bold text-blue-600">{taipingTianmingCangtiandi}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>黄天骰：</span><span className="font-bold text-yellow-600">{taipingTianmingHuangtian}</span>
+                      </div>
+                      <div className="flex justify-between border-t border-yellow-300 pt-1">
+                        <span>天命值：</span>
+                        <span className="font-bold">{taipingTianmingOldDestiny} + {taipingTianmingHuangtian} - {taipingTianmingCangtiandi} = <span className="text-purple-700">{currentDestiny}</span></span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>承载伤害：</span>
+                        <span className={`font-bold ${taipingTianmingDamage > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          {taipingTianmingDamage > 0 ? `扣${taipingTianmingDamage}血（力士过多）` : '无伤害'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="flex gap-3">
-                <button
-                  onClick={handleEndTurn}
-                  disabled={!isMyTurn}
-                  className={`flex-1 px-6 py-3 rounded-lg font-bold shadow-md transition-all ${
-                    isMyTurn
-                      ? 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 hover:shadow-lg cursor-pointer'
-                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                  }`}
-                >
-                  结束回合
-                </button>
+                {/* 部署阶段太平将军：苍天已死黄天当立初始化按钮 */}
+                {phase === GamePhase.DEPLOY && isMyTurn && (() => {
+                  const hasTaiping = currentPlayer === Player.PLAYER1
+                    ? player1General === 'taiping'
+                    : player2General === 'taiping';
+                  const initDone = currentPlayer === Player.PLAYER1
+                    ? player1TaipingDeployInitDone
+                    : player2TaipingDeployInitDone;
+                  if (!hasTaiping) return null;
+                  return (
+                    <div className="w-full mb-2">
+                      {!initDone ? (
+                        <button
+                          onClick={handleTaipingDeployInit}
+                          className="w-full px-6 py-3 rounded-lg font-bold shadow-md bg-gradient-to-r from-yellow-600 to-orange-600 text-white hover:from-yellow-700 hover:to-orange-700 hover:shadow-lg cursor-pointer transition-all"
+                        >
+                          ⚡ 结算天命值（苍天已死，黄天当立）
+                        </button>
+                      ) : (
+                        <p className="text-center text-sm text-green-700 font-bold">✅ 初始天命已结算（+3点）</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* 太平将军：结算天命按钮 or 正常结束回合 */}
+                {(() => {
+                  const currentGeneral = currentPlayer === Player.PLAYER1 ? player1General : player2General;
+                  const isTaipingTurn = currentGeneral === 'taiping' && isMyTurn && phase !== GamePhase.DEPLOY;
+                  const taipingAlive = Object.values(units).some(u =>
+                    u.owner === currentPlayer && u.type === UnitType.GENERAL && (u as any).generalType === 'taiping'
+                  );
+
+                  if (isTaipingTurn && taipingAlive && !taipingTianmingActive) {
+                    // 未结算天命：显示「结算天命」按钮
+                    return (
+                      <button
+                        onClick={handleTaipingTianmingRoll}
+                        disabled={taipingFushuiActive && taipingFushuiPlayer === currentPlayer}
+                        className="flex-1 px-6 py-3 rounded-lg font-bold shadow-md transition-all bg-gradient-to-r from-yellow-500 to-orange-500 text-white hover:from-yellow-600 hover:to-orange-600 hover:shadow-lg cursor-pointer disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                        结算天命
+                      </button>
+                    );
+                  } else if (isTaipingTurn && taipingAlive && taipingTianmingActive) {
+                    // 已结算天命：显示「结束回合」确认按钮
+                    return (
+                      <button
+                        onClick={handleTaipingTianmingConfirm}
+                        className="flex-1 px-6 py-3 rounded-lg font-bold shadow-md transition-all bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 hover:shadow-lg cursor-pointer"
+                      >
+                        结束回合
+                      </button>
+                    );
+                  } else {
+                    // 非太平将军或将军已死：正常结束回合
+                    return (
+                      <button
+                        onClick={handleEndTurn}
+                        disabled={!isMyTurn}
+                        className={`flex-1 px-6 py-3 rounded-lg font-bold shadow-md transition-all ${
+                          isMyTurn
+                            ? 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 hover:shadow-lg cursor-pointer'
+                            : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        }`}
+                      >
+                        结束回合
+                      </button>
+                    );
+                  }
+                })()}
                 {isOnlineMode && (
                   <button
                     onClick={handleSurrender}
@@ -1800,7 +1961,7 @@ export const GameBoard: React.FC = () => {
           </div>
 
           {/* 右侧操作面板 */}
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto" style={{ maxHeight: isMobile ? 'none' : '700px' }}>
             {/* 选中单位信息 */}
             {selectedUnit && (
               <div className="bg-white rounded-lg shadow-lg p-4">
@@ -2578,6 +2739,59 @@ export const GameBoard: React.FC = () => {
                     </div>
                   )}
 
+                  {/* 太平将军技能 */}
+                  {currentGeneral === 'taiping' && (
+                    <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-300">
+                      <h4 className="text-sm font-bold text-yellow-800 mb-2">太平技能</h4>
+
+                      {/* 天命值显示 */}
+                      {((): React.ReactNode => {
+                        const bothTaiping = player1General === 'taiping' && player2General === 'taiping';
+                        const destinyVal = currentPlayer === Player.PLAYER1 ? player1DestinyValue : player2DestinyValue;
+                        const lishiCount = Object.values(units).filter((u: any) =>
+                          u.type === UnitType.HUANGJIN_LISHI && (bothTaiping || u.owner === currentPlayer)
+                        ).length;
+                        const zeiCount = Object.values(units).filter((u: any) => u.type === UnitType.HUANGJIN_ZEI).length;
+                        const doufanUsed = currentPlayer === Player.PLAYER1 ? player1DoufanUsedThisTurn : player2DoufanUsedThisTurn;
+                        return (
+                          <div className="mb-3 text-xs space-y-1 text-yellow-900 bg-yellow-100 rounded p-2">
+                            {bothTaiping && (
+                              <div className="flex justify-between text-orange-700 font-bold">
+                                <span>共享血池：</span><span>{taipingSharedHp}/{taipingSharedMaxHp}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between"><span>天命值：</span><span className="font-bold text-purple-700">{destinyVal}</span></div>
+                            <div className="flex justify-between"><span>黄巾力士：</span><span className="font-bold text-amber-700">{lishiCount}</span></div>
+                            <div className="flex justify-between"><span>黄巾贼：</span><span className="font-bold text-red-700">{zeiCount}</span></div>
+                            <div className="text-xs text-gray-500">{lishiCount > destinyVal ? '⚠️ 力士过多，回合结束将扣1血' : '✅ 承载正常'}</div>
+                            {doufanUsed && <div className="text-xs text-orange-500">豆饭本回合已使用</div>}
+                          </div>
+                        );
+                      })()}
+
+                      {/* 豆饭主动技能 */}
+                      {((): React.ReactNode => {
+                        const doufanUsed = currentPlayer === Player.PLAYER1 ? player1DoufanUsedThisTurn : player2DoufanUsedThisTurn;
+                        return (
+                          <button
+                            onClick={handleTaipingDoufan}
+                            disabled={!isMyTurn || currentActionPoints < 3 || doufanUsed || (taipingFushuiActive && taipingFushuiPlayer === currentPlayer)}
+                            className="w-full px-4 py-2 bg-gradient-to-r from-yellow-500 to-amber-500 text-white rounded-lg shadow-md hover:from-yellow-600 hover:to-amber-600 hover:shadow-lg transition-all text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed mb-2"
+                          >
+                            豆饭（3点→召唤d6黄巾力士）{doufanUsed ? ' [本回合已用]' : ''}{!isMyTurn ? '(非你的回合)' : ''}
+                          </button>
+                        );
+                      })()}
+
+                      {/* 符水粥提示 */}
+                      {taipingFushuiActive && taipingFushuiPlayer === currentPlayer && (
+                        <p className="text-xs text-orange-600 font-semibold">
+                          ⚠️ 符水粥模式进行中，请先完成转化
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {/* 仁德技能 */}
                   {currentGeneral === 'rende' && (
                     <>
@@ -2643,6 +2857,60 @@ export const GameBoard: React.FC = () => {
           <BattleLog logs={battleLogs} maxEntries={8} />
         </div>
       </div>
+
+      {/* 太平将军·符水粥强制交互面板 */}
+      {taipingFushuiActive && taipingFushuiPlayer === currentPlayer && isMyTurn && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 shadow-xl max-w-sm w-full mx-4">
+            <h3 className="text-xl font-bold mb-1 text-yellow-700">☯ 符水粥</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              将残血步兵饮下符水粥，升为力士（消耗1点行动值）。<br/>
+              剩余行动点：<span className="font-bold text-blue-600">
+                {currentPlayer === Player.PLAYER1 ? player1ActionPoints : player2ActionPoints}
+              </span>
+            </p>
+
+            {/* 候选步兵列表（只显示普通步兵，黄巾力士不参与符水粥） */}
+            <div className="space-y-2 max-h-48 overflow-y-auto mb-4">
+              {Object.values(units)
+                .filter((u: any) => u.owner === currentPlayer && u.type === UnitType.INFANTRY && u.hp === 1)
+                .sort((a: any, b: any) => {
+                  // 按距离太平将军由近到远排序
+                  const general = Object.values(units).find((u: any) =>
+                    u.owner === currentPlayer && u.type === UnitType.GENERAL && u.generalType === 'taiping'
+                  ) as any;
+                  if (!general) return 0;
+                  const gPos = general.position || { q: general.q ?? 0, r: general.r ?? 0, s: general.s ?? 0 };
+                  const aPos = (a as any).position || { q: (a as any).q ?? 0, r: (a as any).r ?? 0, s: (a as any).s ?? 0 };
+                  const bPos = (b as any).position || { q: (b as any).q ?? 0, r: (b as any).r ?? 0, s: (b as any).s ?? 0 };
+                  const distA = hexDistance(gPos, aPos);
+                  const distB = hexDistance(gPos, bPos);
+                  return distA - distB;
+                })
+                .map((u: any, idx) => {
+                  const pos = u.position || { q: u.q ?? 0, r: u.r ?? 0, s: u.s ?? 0 };
+                  return (
+                    <button
+                      key={u.id}
+                      onClick={() => handleTaipingFushuiConvert(u.id)}
+                      className={`w-full text-left px-3 py-2 rounded-lg border-2 text-sm font-semibold transition-all ${
+                        idx === 0
+                          ? 'border-yellow-500 bg-yellow-50 hover:bg-yellow-100'
+                          : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
+                      }`}
+                    >
+                      步兵 ({pos.q},{pos.r},{pos.s}) {idx === 0 ? '← 推荐' : ''}
+                    </button>
+                  );
+                })}
+            </div>
+
+            <p className="text-xs text-gray-500 text-center">
+              耗尽行动点或无候选步兵时自动退出
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* 仁德击杀确认对话框 */}
       {rendeKillConfirm && (

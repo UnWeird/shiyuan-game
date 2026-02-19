@@ -25,7 +25,7 @@ const GeneralCard: React.FC<GeneralCardProps> = ({
     <div
       onClick={disabled ? undefined : onSelect}
       className={`
-        p-6 rounded-lg border-2 transition-all duration-200
+        p-3 md:p-6 rounded-lg border-2 transition-all duration-200
         ${disabled
           ? 'border-gray-200 bg-gray-50 cursor-not-allowed opacity-50'
           : isSelected
@@ -113,10 +113,10 @@ export const GeneralSelect: React.FC = () => {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex items-center justify-center p-8">
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex items-center justify-center p-4 md:p-8">
       <div className="max-w-6xl w-full">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold mb-2">选择将领</h1>
+        <div className="text-center mb-6 md:mb-8">
+          <h1 className="text-2xl md:text-4xl font-bold mb-2">选择将领</h1>
           {isOnlineMode ? (
             <div>
               <p className="text-xl text-gray-600">
@@ -125,7 +125,7 @@ export const GeneralSelect: React.FC = () => {
               {myGeneral ? (
                 waitingForOther ? (
                   <p className="text-lg text-amber-600 mt-2">
-                    ⏳ 等待对手选择...（你已选择{myGeneral === 'wushuang' ? '无双' : myGeneral === 'shenji' ? '神机' : '仁德'}）
+                    ⏳ 等待对手选择...（你已选择{myGeneral === 'wushuang' ? '无双' : myGeneral === 'shenji' ? '神机' : myGeneral === 'taiping' ? '太平' : '仁德'}）
                   </p>
                 ) : (
                   <p className="text-lg text-green-600 mt-2">
@@ -145,7 +145,7 @@ export const GeneralSelect: React.FC = () => {
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <GeneralCard
             general={GeneralType.WUSHUANG}
             name="无双 (体力上限4)"
@@ -171,6 +171,15 @@ export const GeneralSelect: React.FC = () => {
             passive="击杀时可选择避免死亡，使其成为1血中立单位。可花费行动点转化中立单位"
             onSelect={() => handleSelectGeneral(GeneralType.RENDE)}
             isSelected={myGeneral === GeneralType.RENDE}
+            disabled={isOnlineMode && !!myGeneral}
+          />
+          <GeneralCard
+            general={GeneralType.TAIPING}
+            name="太平 (体力上限3)"
+            ability="豆饭：消耗3点行动值，掷d6在将军相邻空位召唤等量黄巾力士"
+            passive="符水粥：回合开始可将残血步兵升为2血力士（消耗行动点）。夺天命：回合结束掷苍天/黄天骰更新天命值，若力士数超过天命值则承载扣1血。将军阵亡后力士变贼，贼相邻单位行动时受系统伤害"
+            onSelect={() => handleSelectGeneral(GeneralType.TAIPING)}
+            isSelected={myGeneral === GeneralType.TAIPING}
             disabled={isOnlineMode && !!myGeneral}
           />
         </div>

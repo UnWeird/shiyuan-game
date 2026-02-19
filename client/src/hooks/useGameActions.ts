@@ -1110,10 +1110,10 @@ export const useGameActions = () => {
     const playerSide = currentPlayer === Player.PLAYER1 ? 'top' : 'bottom';
     if (!isInStartZone(position, playerSide)) return false;
 
-    // 获取机关单位占用的所有格子
+    // 获取机关单位占用的所有格子（需传入 isPlayerOne 以确保朝向正确）
     const machineTypeStr = machineType === UnitType.BALLISTA ? 'ballista' :
                           machineType === UnitType.CHARIOT ? 'chariot' : 'catapult';
-    const occupiedHexes = getMachineOccupiedHexes(position, machineTypeStr);
+    const occupiedHexes = getMachineOccupiedHexes(position, machineTypeStr, currentPlayer === Player.PLAYER1);
 
     // 检查所有占用的格子是否都未被占用
     const hasCollision = occupiedHexes.some(hex =>

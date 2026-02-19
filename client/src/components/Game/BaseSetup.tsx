@@ -4,8 +4,10 @@ import { useGameStore } from '../../stores/gameStore';
 import { HexMap } from '../Map/HexMap';
 import { isInStartZone } from '../../utils/hexUtils';
 import { colyseusService } from '../../services/ColyseusService';
+import { useIsMobile } from '../../hooks/useMobile';
 
 export const BaseSetup: React.FC = () => {
+  const isMobile = useIsMobile();
   const {
     currentPlayer,
     player1Base,
@@ -84,10 +86,10 @@ export const BaseSetup: React.FC = () => {
   const waitingForOpponent = isOnlineMode && hasSubmitted && !opponentDone;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex flex-col items-center justify-center p-8">
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex flex-col items-center justify-center p-4 md:p-8">
       <div className="max-w-6xl w-full">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold mb-2">设置大本营</h1>
+        <div className="text-center mb-4 md:mb-8">
+          <h1 className="text-2xl md:text-4xl font-bold mb-2">设置大本营</h1>
           <p className="text-xl text-gray-600">
             {isOnlineMode
               ? `${myPlayerRole === 'player1' ? '玩家 1' : '玩家 2'} (你) 请在你的起始区（${myZone === 'top' ? '黄色区域' : '蓝色区域'}）选择大本营位置`
@@ -104,10 +106,10 @@ export const BaseSetup: React.FC = () => {
           )}
         </div>
 
-        <div className="bg-white rounded-lg shadow-xl p-4 mb-6" style={{ height: '600px' }}>
+        <div className="bg-white rounded-lg shadow-xl p-2 md:p-4 mb-4 md:mb-6" style={{ height: isMobile ? '350px' : '600px' }}>
           <HexMap
             radius={5}
-            hexSize={40}
+            hexSize={isMobile ? 25 : 40}
             onHexClick={handleHexClick}
             highlightedHexes={highlightedHexes}
           />

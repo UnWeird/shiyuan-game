@@ -198,8 +198,8 @@ export interface GameState {
   taipingTianmingDamage?: number;
   taipingTianmingOldDestiny?: number;
   // 双太平共享状态
-  taipingSharedHp?: number;
-  taipingSharedMaxHp?: number;
+  taipingSharedHp: number;
+  taipingSharedMaxHp: number;
   player1DoufanUsedThisTurn?: boolean;
   player2DoufanUsedThisTurn?: boolean;
   player1TaipingDeployInitDone?: boolean;

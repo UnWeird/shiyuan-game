@@ -180,23 +180,23 @@ export interface GameState {
   selectedUnitId: string | null;
 
   // 无双扇形攻击状态
-  wushuangFanAttackActive?: boolean;
-  wushuangAttackingPlayer?: string;
-  wushuangAttackPhase?: 'select-direction' | 'second-roll' | 'second-attack' | 'third-roll' | 'third-attack';
-  wushuangSelectedDirection?: number | null;
-  wushuangDiceRolls?: number[];
+  wushuangFanAttackActive: boolean;
+  wushuangAttackingPlayer: string;
+  wushuangAttackPhase: 'select-direction' | 'second-roll' | 'second-attack' | 'third-roll' | 'third-attack';
+  wushuangSelectedDirection: number | null;
+  wushuangDiceRolls: number[];
 
   // 太平将军专属状态
-  player1DestinyValue?: number;
-  player2DestinyValue?: number;
-  taipingFushuiActive?: boolean;
-  taipingFushuiPlayer?: string;
-  taipingTianmingActive?: boolean;
-  taipingTianmingPlayer?: string;
-  taipingTianmingCangtiandi?: number;
-  taipingTianmingHuangtian?: number;
-  taipingTianmingDamage?: number;
-  taipingTianmingOldDestiny?: number;
+  player1DestinyValue: number;
+  player2DestinyValue: number;
+  taipingFushuiActive: boolean;
+  taipingFushuiPlayer: string;
+  taipingTianmingActive: boolean;
+  taipingTianmingPlayer: string;
+  taipingTianmingCangtiandi: number;
+  taipingTianmingHuangtian: number;
+  taipingTianmingDamage: number;
+  taipingTianmingOldDestiny: number;
   // 双太平共享状态
   taipingSharedHp: number;
   taipingSharedMaxHp: number;

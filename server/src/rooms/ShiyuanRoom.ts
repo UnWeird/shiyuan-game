@@ -3835,8 +3835,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       // 双太平：叠加到共享天命（player1DestinyValue 作为共享值）
       this.state.player1DestinyValue += INIT_DESTINY;
       this.state.player2DestinyValue = this.state.player1DestinyValue;
-      // 初始化共享血池（若两个将军都选了太平，血池上限为6）
-      this.state.taipingSharedMaxHp = 6;
+      // 初始化共享血池（双太平血池上限为6）
       this.state.taipingSharedHp = 6;
     } else {
       if (role === "player1") {
@@ -3844,7 +3843,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       } else {
         this.state.player2DestinyValue += INIT_DESTINY;
       }
-      this.state.taipingSharedMaxHp = 3;
       this.state.taipingSharedHp = 3;
     }
 
@@ -4055,7 +4053,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     this.state.taipingTianmingCangtiandi = cangtiandi;
     this.state.taipingTianmingHuangtian = huangtian;
     this.state.taipingTianmingDamage = damage;
-    this.state.taipingTianmingOldDestiny = oldDestiny;
 
     this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}夺天命：苍天${cangtiandi}/黄天${huangtian}，天命值${oldDestiny}→${newDestiny}，黄巾力士${lishiCount}个，${damage > 0 ? "太平受到1点承载伤害" : "承载正常无伤害"}`);
 

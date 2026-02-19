@@ -119,9 +119,6 @@ export class GameStateSchema extends Schema {
   @type("boolean") player1KilledLastTurn: boolean = false;
   @type("boolean") player2KilledLastTurn: boolean = false;
 
-  // 选中的单位
-  @type("string") selectedUnitId: string = "";
-
   // 战斗日志（最近的N条消息）
   @type(["string"]) battleLog = new ArraySchema<string>();
 
@@ -146,11 +143,9 @@ export class GameStateSchema extends Schema {
   @type("number") taipingTianmingCangtiandi: number = 0; // 苍天骰结果
   @type("number") taipingTianmingHuangtian: number = 0; // 黄天骰结果
   @type("number") taipingTianmingDamage: number = 0;    // 本次承载伤害（0或1）
-  @type("number") taipingTianmingOldDestiny: number = 0; // 结算前的天命值（用于UI展示变化）
 
   // 双太平共享血池
   @type("number") taipingSharedHp: number = 3;
-  @type("number") taipingSharedMaxHp: number = 3;
 
   // 豆饭每回合限制
   @type("boolean") player1DoufanUsedThisTurn: boolean = false;

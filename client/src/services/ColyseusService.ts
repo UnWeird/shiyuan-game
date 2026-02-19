@@ -392,8 +392,8 @@ class ColyseusService {
       player1DeployedValue: state.player1DeployedValue || 0,
       player2DeployedValue: state.player2DeployedValue || 0,
 
-      // 保留客户端的选中状态，除非服务器明确设置了selectedUnitId
-      selectedUnitId: state.selectedUnitId || currentSelectedUnitId,
+      // 保留客户端的选中状态（selectedUnitId 不从服务器同步）
+      selectedUnitId: currentSelectedUnitId,
 
       // 扇形攻击状态
       wushuangFanAttackActive: state.wushuangFanAttackActive || false,
@@ -412,10 +412,19 @@ class ColyseusService {
       taipingTianmingCangtiandi: state.taipingTianmingCangtiandi || 0,
       taipingTianmingHuangtian: state.taipingTianmingHuangtian || 0,
       taipingTianmingDamage: state.taipingTianmingDamage || 0,
-      taipingTianmingOldDestiny: state.taipingTianmingOldDestiny || 0,
+      // taipingTianmingOldDestiny：由 currentDestiny - huangtian + cangtiandi 派生
+      taipingTianmingOldDestiny: (() => {
+        const huangtian = state.taipingTianmingHuangtian || 0;
+        const cangtiandi = state.taipingTianmingCangtiandi || 0;
+        const destinyAfterRoll = state.taipingTianmingPlayer === 'player2'
+          ? (state.player2DestinyValue || 0)
+          : (state.player1DestinyValue || 0);
+        return destinyAfterRoll - huangtian + cangtiandi;
+      })(),
       // 双太平共享状态
       taipingSharedHp: state.taipingSharedHp ?? 3,
-      taipingSharedMaxHp: state.taipingSharedMaxHp ?? 3,
+      // taipingSharedMaxHp：由将领配置派生（双太平=6，单太平=3）
+      taipingSharedMaxHp: (state.player1General === 'taiping' && state.player2General === 'taiping') ? 6 : 3,
       player1DoufanUsedThisTurn: state.player1DoufanUsedThisTurn || false,
       player2DoufanUsedThisTurn: state.player2DoufanUsedThisTurn || false,
       player1TaipingDeployInitDone: state.player1TaipingDeployInitDone || false,

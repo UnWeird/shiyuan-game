@@ -200,10 +200,10 @@ export interface GameState {
   // 双太平共享状态
   taipingSharedHp: number;
   taipingSharedMaxHp: number;
-  player1DoufanUsedThisTurn?: boolean;
-  player2DoufanUsedThisTurn?: boolean;
-  player1TaipingDeployInitDone?: boolean;
-  player2TaipingDeployInitDone?: boolean;
+  player1DoufanUsedThisTurn: boolean;
+  player2DoufanUsedThisTurn: boolean;
+  player1TaipingDeployInitDone: boolean;
+  player2TaipingDeployInitDone: boolean;
 
   // 历史记录 (用于回放和撤销)
   history: GameState[];

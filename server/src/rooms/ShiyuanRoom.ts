@@ -16,6 +16,7 @@ import {
   knockbackInfantryChain,
   getCatapultSplashTargets,
   getDistanceToBaseline,
+  hexLineDraw,
 } from '../../../shared/utils/hexUtils';
 import { HexCoord } from '../../../shared/types';
 
@@ -1040,6 +1041,24 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     return false;
   }
 
+  /** 同 isHexOccupiedByMachine，但排除指定 id 的单位（用于战车崩毁时自身尚未删除的情况） */
+  private isHexOccupiedByMachineExcluding(hex: { q: number; r: number; s: number }, excludeId: string): boolean {
+    for (const unit of this.state.units.values()) {
+      if (unit.id === excludeId) continue;
+      if (unit.type === 'ballista' || unit.type === 'chariot') {
+        const machineType = unit.type === 'ballista' ? 'ballista' : 'chariot';
+        const occupiedHexes = getMachineOccupiedHexes(
+          { q: unit.q, r: unit.r, s: unit.s },
+          machineType
+        );
+        if (occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   /**
    * 计算单位的合法移动位置
    * 对于骑兵，返回带有步数信息的结果
@@ -1123,6 +1142,24 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         });
 
         return !hasCollision && hexDistance(unitPos, hex) <= range;
+      });
+    }
+
+    // 投石车特殊移动逻辑：每回合最多行动2次（含移动、蓄力、攻击），用 actionsThisTurn 计数
+    if (unit.type === 'catapult') {
+      if (unit.actionsThisTurn >= 2) return [];
+
+      const catapultPossibleMoves = hexRange(unitPos, 1);
+      return catapultPossibleMoves.filter(hex => {
+        if (hexEquals(hex, unitPos)) return false;
+        let occupied = false;
+        this.state.units.forEach(u => {
+          if (u.id !== unit.id && hexEquals({ q: u.q, r: u.r, s: u.s }, hex)) {
+            occupied = true;
+          }
+        });
+        if (this.isHexOccupiedByMachine(hex)) occupied = true;
+        return !occupied && isInMapRange(hex, 5);
       });
     }
 
@@ -1290,15 +1327,15 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     this.state.units.set(infantry1.id, infantry1);
 
-    // 第二个步兵：寻找相邻空位
+    // 第二个步兵：寻找相邻空位（排除战车自身，因为战车还未从 units 中删除）
     const neighbors = hexNeighbors(chariotPos);
     const emptyPos = neighbors.find((pos: { q: number; r: number; s: number }) => {
-      // 检查是否有单位占用
+      // 检查是否有单位占用（排除战车本身）
       const occupied = Array.from(this.state.units.values()).some(u =>
-        u.q === pos.q && u.r === pos.r && u.s === pos.s
+        u.id !== chariot.id && u.q === pos.q && u.r === pos.r && u.s === pos.s
       );
-      // 检查是否被机关单位占据
-      const occupiedByMachine = this.isHexOccupiedByMachine(pos);
+      // 检查是否被机关单位占据（排除战车自身的体积格子）
+      const occupiedByMachine = this.isHexOccupiedByMachineExcluding(pos, chariot.id);
       return !occupied && !occupiedByMachine && isInMapRange(pos, 5);
     });
 
@@ -1398,8 +1435,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
     }
 
-    // 机关单位（弩车、战车、投石车）需要标记已行动
-    if (unit.type === 'ballista' || unit.type === 'chariot' || unit.type === 'catapult') {
+    // 机关单位（弩车、战车）移动后标记已行动（投石车用 actionsThisTurn 计数，不走此分支）
+    if (unit.type === 'ballista' || unit.type === 'chariot') {
       unit.hasActedThisTurn = true;
     }
 
@@ -1692,6 +1729,18 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
+    // 检查非弓箭手单位是否已攻击（每回合只能攻击1次）
+    if (attacker.type !== 'archer' && attacker.hasAttacked) {
+      client.send("error", { message: "该单位本回合已攻击过" });
+      return;
+    }
+
+    // 检查投石车行动次数上限（2次）
+    if (attacker.type === 'catapult' && attacker.actionsThisTurn >= 2) {
+      client.send("error", { message: "投石车本回合已达行动次数上限" });
+      return;
+    }
+
     // === 攻击范围校验 ===
     const attackerPos = { q: attacker.q, r: attacker.r, s: attacker.s };
     const targetPos   = { q: target.q,   r: target.r,   s: target.s   };
@@ -1732,8 +1781,25 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
     }
 
+    // 弓箭手攻击路径经过己方单位时，行动点额外+1
+    let archerPathCost = 0;
+    if (attacker.type === 'archer') {
+      const pathHexes = hexLineDraw(attackerPos, targetPos);
+      // pathHexes 包含起点和终点，检查中间格子（排除首尾）
+      const intermediateHexes = pathHexes.slice(1, -1);
+      const hasFriendlyBlock = intermediateHexes.some(hex =>
+        Array.from(this.state.units.values()).some(u =>
+          u.owner === attacker.owner && u.q === hex.q && u.r === hex.r && u.s === hex.s
+        )
+      );
+      if (hasFriendlyBlock) {
+        archerPathCost = 1;
+        this.addBattleLog(`弓箭手射击路径被友军阻挡，行动点+1`);
+      }
+    }
+
     // 计算行动点消耗：攻击将领消耗2点，其他单位消耗1点
-    const actionCost = target.type === "general" ? 2 : 1;
+    const actionCost = (target.type === "general" ? 2 : 1) + archerPathCost;
 
     // 检查行动点是否足够
     if (role === "player1") {
@@ -1846,81 +1912,23 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     if (!depthDefenseTriggered) {
       damage = 1;
 
-      // 判断是否为近战攻击（考虑机关单位的占据范围）
-      let isMelee = false;
-
-      if (attacker.type === 'archer') {
-        // 弓箭手始终是远程攻击
-        isMelee = false;
-      } else {
-        // 获取攻击者占据的所有格子
-        let attackerOccupiedHexes: HexCoord[] = [{ q: attacker.q, r: attacker.r, s: attacker.s }];
-
-        if (attacker.type === 'ballista' || attacker.type === 'chariot' || attacker.type === 'catapult') {
-          const machineType = attacker.type === 'ballista' ? 'ballista'
-                            : attacker.type === 'catapult' ? 'catapult'
-                            : 'chariot';
-          const isAttackerPlayerOne = attacker.owner === 'player1';
-          attackerOccupiedHexes = getMachineOccupiedHexes(
-            { q: attacker.q, r: attacker.r, s: attacker.s },
-            machineType,
-            isAttackerPlayerOne
-          );
-        }
-
-        // 获取目标占据的所有格子
-        let targetOccupiedHexes: HexCoord[] = [{ q: target.q, r: target.r, s: target.s }];
-
-        if (target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult') {
-          const machineType = target.type === 'ballista' ? 'ballista'
-                            : target.type === 'catapult' ? 'catapult'
-                            : 'chariot';
-          const isTargetPlayerOne = target.owner === 'player1';
-          targetOccupiedHexes = getMachineOccupiedHexes(
-            { q: target.q, r: target.r, s: target.s },
-            machineType,
-            isTargetPlayerOne
-          );
-        }
-
-        // 检查攻击者的任意占据格子是否与目标的任意占据格子相邻
-        isMelee = attackerOccupiedHexes.some(attackerHex =>
-          targetOccupiedHexes.some(targetHex =>
-            hexDistance(attackerHex, targetHex) === 1
-          )
-        );
-      }
-
-      // 近战攻击机关单位：伤害+1
-      if (isMelee && (target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult')) {
-        damage += 1;
-        this.addBattleLog(`近战攻击机关单位：伤害+1`);
-      }
-
-      // 骑兵移动距离影响伤害
+      // 骑兵移动距离影响伤害（冲锋+1）
       if (attacker.type === 'cavalry' && attacker.moveDistance === 2) {
-        // 检查目标是否是步兵，且相邻己方步兵≥3（步兵抗击机制）
-        if (target.type === 'infantry') {
-          // 统计目标步兵周围的己方步兵数量
-          const targetPos = { q: target.q, r: target.r, s: target.s };
-          const neighbors = hexNeighbors(targetPos);
-          const adjacentAllies = neighbors.filter(neighborPos => {
-            const neighborUnit = Array.from(this.state.units.values()).find(u =>
-              u.q === neighborPos.q && u.r === neighborPos.r && u.s === neighborPos.s
-            );
-            return neighborUnit &&
-                   neighborUnit.owner === target.owner &&
-                   neighborUnit.type === 'infantry';
-          }).length;
+        // 任意目标：若相邻己方步兵≥2，则骑兵冲锋+1无效
+        const targetNeighborPos = { q: target.q, r: target.r, s: target.s };
+        const targetNeighbors = hexNeighbors(targetNeighborPos);
+        const adjacentFriendlyInfantry = targetNeighbors.filter(neighborPos => {
+          const neighborUnit = Array.from(this.state.units.values()).find(u =>
+            u.q === neighborPos.q && u.r === neighborPos.r && u.s === neighborPos.s
+          );
+          return neighborUnit &&
+                 neighborUnit.owner === target.owner &&
+                 neighborUnit.type === 'infantry';
+        }).length;
 
-          if (adjacentAllies >= 3) {
-            this.addBattleLog(`步兵抗击：相邻己方步兵≥3，骑兵冲锋伤害+1无效`);
-          } else {
-            damage += 1;
-            this.addBattleLog(`骑兵冲锋：伤害+1`);
-          }
+        if (adjacentFriendlyInfantry >= 2) {
+          this.addBattleLog(`步兵护卫：相邻己方步兵≥2，骑兵冲锋伤害+1无效`);
         } else {
-          // 非步兵目标，正常获得冲锋伤害加成
           damage += 1;
           this.addBattleLog(`骑兵冲锋：伤害+1`);
         }
@@ -1930,6 +1938,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
     attacker.hasAttacked = true;
     attacker.actionsThisTurn = (attacker.actionsThisTurn || 0) + 1; // 增加行动次数
+
+    // 骑兵攻击后清除冲锋距离（防止本回合重复获得加成）
+    if (attacker.type === 'cavalry') {
+      attacker.moveDistance = 0;
+    }
 
     this.addBattleLog(`${role}的${attacker.type}攻击了${target.owner}的${target.type}，造成${damage}点伤害（消耗${actionCost}点行动值）`);
 
@@ -2217,8 +2230,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       s: firstTarget.s + ds
     };
 
-    // 检查击退位置是否有效
-    const isKnockbackValid = isInMapRange(knockbackPos, 6);
+    // 检查击退位置是否有效（地图半径为5）
+    const isKnockbackValid = isInMapRange(knockbackPos, 5);
 
     // 检查击退位置是否被占用
     const isKnockbackBlocked = isKnockbackValid && Array.from(this.state.units.values()).some(u => {
@@ -2493,9 +2506,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
-    // 验证是否已行动
-    if (catapult.hasActedThisTurn) {
-      client.send("error", { message: "投石车本回合已行动" });
+    // 验证行动次数（每回合最多2次）
+    if ((catapult.actionsThisTurn || 0) >= 2) {
+      client.send("error", { message: "投石车本回合已达行动次数上限（2次）" });
       return;
     }
 
@@ -2715,10 +2728,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           unit.bonusActionLimit = 0;
         }
 
-        // 重置机关单位的已行动状态
-        if (unit.type === "ballista" || unit.type === "chariot" || unit.type === "catapult") {
-          unit.hasActedThisTurn = false;
-        }
+        // 重置所有单位的已行动状态（含散架步兵等非机关单位）
+        unit.hasActedThisTurn = false;
 
         // 清除定身效果（回合结束时清除）
         if (unit.cannotMoveNextTurn || unit.cannotRotateNextTurn) {

@@ -19,6 +19,8 @@ var UnitType;
     UnitType["CHARIOT"] = "chariot";
     UnitType["CATAPULT"] = "catapult";
     UnitType["NEUTRAL_MARKER"] = "neutral_marker";
+    UnitType["HUANGJIN_LISHI"] = "huangjin_lishi";
+    UnitType["HUANGJIN_ZEI"] = "huangjin_zei";
 })(UnitType || (exports.UnitType = UnitType = {}));
 // 方向 (六边形有6个方向，对应6条边)
 // 对于 flat-top 布局的六边形
@@ -39,6 +41,7 @@ var GeneralType;
     GeneralType["WUSHUANG"] = "wushuang";
     GeneralType["SHENJI"] = "shenji";
     GeneralType["RENDE"] = "rende";
+    GeneralType["TAIPING"] = "taiping";
 })(GeneralType || (exports.GeneralType = GeneralType = {}));
 // 行动类型
 var ActionType;

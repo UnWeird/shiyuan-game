@@ -55,6 +55,8 @@ class UnitSchema extends schema_1.Schema {
         this.movementRestrictionSourceS = 0; // 限制来源S坐标
         this.cannotMoveNextTurn = false; // 弩车贯穿限制
         this.cannotRotateNextTurn = false; // 弩车贯穿限制
+        // 太平将军专属标记
+        this.statusTag = ""; // "" 普通 | "lishi" 力士 | "zei" 贼
     }
 }
 exports.UnitSchema = UnitSchema;
@@ -186,6 +188,10 @@ __decorate([
     (0, schema_1.type)("boolean"),
     __metadata("design:type", Boolean)
 ], UnitSchema.prototype, "cannotRotateNextTurn", void 0);
+__decorate([
+    (0, schema_1.type)("string"),
+    __metadata("design:type", String)
+], UnitSchema.prototype, "statusTag", void 0);
 /**
  * 游戏状态 Schema
  * 这是整个游戏的核心状态，会自动同步到所有客户端
@@ -246,8 +252,6 @@ class GameStateSchema extends schema_1.Schema {
         this.player2KilledThisTurn = false;
         this.player1KilledLastTurn = false;
         this.player2KilledLastTurn = false;
-        // 选中的单位
-        this.selectedUnitId = "";
         // 战斗日志（最近的N条消息）
         this.battleLog = new schema_1.ArraySchema();
         // 无双扇形攻击状态（多阶段技能）
@@ -256,6 +260,26 @@ class GameStateSchema extends schema_1.Schema {
         this.wushuangAttackPhase = ""; // 'select-direction' | 'second-roll' | 'second-attack' | 'third-roll' | 'third-attack'
         this.wushuangSelectedDirection = -1; // -1 表示未选择
         this.wushuangDiceRolls = new schema_1.ArraySchema(); // 扇形攻击的掷骰记录
+        // 太平将军专属状态
+        this.player1DestinyValue = 0; // 天命值
+        this.player2DestinyValue = 0;
+        // 太平 - 符水粥交互模式
+        this.taipingFushuiActive = false;
+        this.taipingFushuiPlayer = ""; // 正在进行符水粥的玩家
+        // 太平 - 天命结算待确认状态
+        this.taipingTianmingActive = false;
+        this.taipingTianmingPlayer = "";
+        this.taipingTianmingCangtiandi = 0; // 苍天骰结果
+        this.taipingTianmingHuangtian = 0; // 黄天骰结果
+        this.taipingTianmingDamage = 0; // 本次承载伤害（0或1）
+        // 双太平共享血池
+        this.taipingSharedHp = 3;
+        // 豆饭每回合限制
+        this.player1DoufanUsedThisTurn = false;
+        this.player2DoufanUsedThisTurn = false;
+        // 部署阶段天命初始化标记
+        this.player1TaipingDeployInitDone = false;
+        this.player2TaipingDeployInitDone = false;
     }
 }
 exports.GameStateSchema = GameStateSchema;
@@ -436,10 +460,6 @@ __decorate([
     __metadata("design:type", Boolean)
 ], GameStateSchema.prototype, "player2KilledLastTurn", void 0);
 __decorate([
-    (0, schema_1.type)("string"),
-    __metadata("design:type", String)
-], GameStateSchema.prototype, "selectedUnitId", void 0);
-__decorate([
     (0, schema_1.type)(["string"]),
     __metadata("design:type", Object)
 ], GameStateSchema.prototype, "battleLog", void 0);
@@ -463,3 +483,59 @@ __decorate([
     (0, schema_1.type)(["number"]),
     __metadata("design:type", Object)
 ], GameStateSchema.prototype, "wushuangDiceRolls", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "player1DestinyValue", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "player2DestinyValue", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], GameStateSchema.prototype, "taipingFushuiActive", void 0);
+__decorate([
+    (0, schema_1.type)("string"),
+    __metadata("design:type", String)
+], GameStateSchema.prototype, "taipingFushuiPlayer", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], GameStateSchema.prototype, "taipingTianmingActive", void 0);
+__decorate([
+    (0, schema_1.type)("string"),
+    __metadata("design:type", String)
+], GameStateSchema.prototype, "taipingTianmingPlayer", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "taipingTianmingCangtiandi", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "taipingTianmingHuangtian", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "taipingTianmingDamage", void 0);
+__decorate([
+    (0, schema_1.type)("number"),
+    __metadata("design:type", Number)
+], GameStateSchema.prototype, "taipingSharedHp", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], GameStateSchema.prototype, "player1DoufanUsedThisTurn", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], GameStateSchema.prototype, "player2DoufanUsedThisTurn", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], GameStateSchema.prototype, "player1TaipingDeployInitDone", void 0);
+__decorate([
+    (0, schema_1.type)("boolean"),
+    __metadata("design:type", Boolean)
+], GameStateSchema.prototype, "player2TaipingDeployInitDone", void 0);

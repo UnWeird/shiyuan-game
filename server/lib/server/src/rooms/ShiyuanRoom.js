@@ -16,6 +16,27 @@ class ShiyuanRoom extends core_1.Room {
         // 玩家角色映射
         this.playerRoles = new Map();
         this.spectators = new Set(); // 观战者集合
+        // 断线追踪：存储已断线但尚在重连窗口内的 sessionId
+        this.disconnectedSessions = new Set();
+        // 已被接管：存储已被新玩家接管的原 sessionId（用于 onReconnection 中转为观战者）
+        this.takenOverSessions = new Set();
+    }
+    /** 统计当前活跃玩家数（排除断线中和已被接管的） */
+    getActivePlayerCount() {
+        return Array.from(this.playerRoles.entries()).filter(([sid, role]) => role !== 'spectator' &&
+            !this.disconnectedSessions.has(sid) &&
+            !this.takenOverSessions.has(sid)).length;
+    }
+    /** 找第一个可接管的断线槽位 */
+    getFirstDisconnectedSlot() {
+        for (const [sid, role] of this.playerRoles.entries()) {
+            if (this.disconnectedSessions.has(sid) &&
+                !this.takenOverSessions.has(sid) &&
+                (role === 'player1' || role === 'player2')) {
+                return { sessionId: sid, role };
+            }
+        }
+        return null;
     }
     onCreate(options) {
         this.setState(new GameState_1.GameStateSchema());
@@ -32,9 +53,38 @@ class ShiyuanRoom extends core_1.Room {
     }
     onJoin(client, options) {
         const isSpectator = options.spectator === true;
-        // 计算当前玩家数量（不包括观战者）
-        const playerCount = Array.from(this.playerRoles.values()).filter(role => role !== 'spectator').length;
-        if (isSpectator || playerCount >= 2) {
+        // 优先检查是否有断线槽位可以接管（非观战者才可接管）
+        if (!isSpectator) {
+            const disconnectedSlot = this.getFirstDisconnectedSlot();
+            if (disconnectedSlot) {
+                const { sessionId: oldSessionId, role: disconnectedRole } = disconnectedSlot;
+                // 标记原 session 为已被接管
+                this.takenOverSessions.add(oldSessionId);
+                this.disconnectedSessions.delete(oldSessionId);
+                // 新玩家接管该角色
+                this.playerRoles.set(client.sessionId, disconnectedRole);
+                const actionPoints = disconnectedRole === 'player1'
+                    ? this.state.player1ActionPoints
+                    : this.state.player2ActionPoints;
+                client.send("role", {
+                    role: disconnectedRole,
+                    message: `你已接管 ${disconnectedRole} 的位置，游戏继续`,
+                    takenOver: true,
+                    gamePhase: this.state.phase,
+                    actionPoints,
+                    currentPlayer: this.state.currentPlayer,
+                });
+                this.broadcast("playerTookOver", {
+                    role: disconnectedRole,
+                    message: `新玩家接管了 ${disconnectedRole} 的位置`
+                }, { except: client });
+                console.log(`🔄 新玩家 ${client.sessionId} 接管了 ${disconnectedRole}（原 ${oldSessionId}）`);
+                return;
+            }
+        }
+        // 没有断线槽位，按活跃玩家数正常分配
+        const activePlayerCount = this.getActivePlayerCount();
+        if (isSpectator || activePlayerCount >= 2) {
             // 作为观战者加入
             this.playerRoles.set(client.sessionId, 'spectator');
             this.spectators.add(client.sessionId);
@@ -46,13 +96,13 @@ class ShiyuanRoom extends core_1.Room {
                 message: "有观战者加入"
             }, { except: client });
         }
-        else if (playerCount === 0) {
+        else if (activePlayerCount === 0) {
             // 第一个玩家
             this.playerRoles.set(client.sessionId, 'player1');
             client.send("role", { role: "player1", message: "你是玩家1" });
             console.log(`👤 玩家1加入: ${client.sessionId}`);
         }
-        else if (playerCount === 1) {
+        else if (activePlayerCount === 1) {
             // 第二个玩家
             this.playerRoles.set(client.sessionId, 'player2');
             client.send("role", { role: "player2", message: "你是玩家2" });
@@ -71,30 +121,49 @@ class ShiyuanRoom extends core_1.Room {
             });
         }
     }
-    onLeave(client, consented) {
+    async onLeave(client, consented) {
         const role = this.playerRoles.get(client.sessionId);
         console.log(`👋 ${role} 离开房间 (consented: ${consented})`);
-        // 如果不是主动离开（consented=false），允许60秒内重连
-        if (!consented) {
-            console.log(`⏳ ${role} 可能会重连，允许60秒内重连`);
-            // 允许重连（60秒内）
+        // 非主动断线的玩家（非观战者）：允许60秒内重连
+        if (!consented && (role === 'player1' || role === 'player2')) {
+            console.log(`⏳ ${role} 断线，等待60秒重连...`);
+            // 标记为断线状态（保留 playerRoles 记录供 onReconnection 使用）
+            this.disconnectedSessions.add(client.sessionId);
+            // 通知另一位玩家
+            this.broadcast("playerDisconnected", {
+                role,
+                message: `${role} 断线了，等待重连（60秒内）`
+            });
             try {
-                this.allowReconnection(client, 60);
+                // 必须 await，否则重连 token 不会被正确挂起
+                await this.allowReconnection(client, 60);
+                // 执行到这里说明原玩家已重连（onReconnection 已处理角色恢复）
+                this.disconnectedSessions.delete(client.sessionId);
+                this.takenOverSessions.delete(client.sessionId);
             }
-            catch (error) {
-                console.error('❌ 设置重连失败:', error);
+            catch {
+                // 60秒超时，清理残留记录
+                console.log(`⌛ ${role} 重连超时，释放槽位`);
+                this.playerRoles.delete(client.sessionId);
+                this.disconnectedSessions.delete(client.sessionId);
+                this.takenOverSessions.delete(client.sessionId);
+                this.broadcast("playerSlotOpen", {
+                    role,
+                    message: `${role} 的位置已空出，等待新玩家加入`
+                });
             }
             return;
         }
-        // 主动离开，删除角色信息
+        // 主动离开，或观战者断线
         this.playerRoles.delete(client.sessionId);
-        // 如果是观战者离开
+        this.disconnectedSessions.delete(client.sessionId);
+        this.takenOverSessions.delete(client.sessionId);
         if (role === 'spectator') {
             this.spectators.delete(client.sessionId);
             console.log(`👁️  观战者离开 (剩余: ${this.spectators.size})`);
             return;
         }
-        // 如果游戏进行中玩家离开，通知另一方
+        // 游戏进行中主动离开，通知另一方
         if (this.state.phase !== "general_select" && this.state.phase !== "end") {
             this.broadcast("playerLeft", {
                 role,
@@ -104,26 +173,47 @@ class ShiyuanRoom extends core_1.Room {
     }
     async onReconnection(client, previousSessionId) {
         console.log(`🔄 玩家重连: ${client.sessionId} (之前的 sessionId: ${previousSessionId})`);
-        // 查找之前的角色
         const role = this.playerRoles.get(previousSessionId);
+        // 如果该槽位已被新玩家接管，降级为观战者
+        if (this.takenOverSessions.has(previousSessionId)) {
+            this.playerRoles.delete(previousSessionId);
+            this.takenOverSessions.delete(previousSessionId);
+            this.disconnectedSessions.delete(previousSessionId);
+            this.playerRoles.set(client.sessionId, 'spectator');
+            this.spectators.add(client.sessionId);
+            client.send("role", {
+                role: 'spectator',
+                message: `你的位置已被新玩家接管，现在以观战者身份加入`
+            });
+            console.log(`ℹ️  ${role} 的槽位已被接管，${client.sessionId} 降级为观战者`);
+            return;
+        }
         if (role) {
-            // 更新 sessionId（新的 sessionId，但角色不变）
+            // 正常重连：更新 sessionId，角色不变
             this.playerRoles.delete(previousSessionId);
             this.playerRoles.set(client.sessionId, role);
-            // 如果是观战者
+            this.disconnectedSessions.delete(previousSessionId);
             if (role === 'spectator') {
                 this.spectators.delete(previousSessionId);
                 this.spectators.add(client.sessionId);
             }
-            // 通知客户端恢复角色
+            const actionPoints = role === 'player1'
+                ? this.state.player1ActionPoints
+                : role === 'player2'
+                    ? this.state.player2ActionPoints
+                    : 0;
             client.send("role", {
                 role,
-                message: `重连成功！你是${role === 'spectator' ? '观战者' : role}`
+                message: `重连成功！你是 ${role === 'spectator' ? '观战者' : role}`,
+                reconnected: true,
+                gamePhase: this.state.phase,
+                actionPoints,
+                currentPlayer: this.state.currentPlayer,
             });
-            console.log(`✅ ${role} 重连成功`);
-            // 通知其他玩家
-            this.broadcast("info", {
-                message: `${role} 重新连接`
+            console.log(`✅ ${role} 重连成功: ${previousSessionId} → ${client.sessionId}`);
+            this.broadcast("playerReconnected", {
+                role,
+                message: `${role} 重新连接了`
             }, { except: client });
         }
         else {
@@ -229,6 +319,22 @@ class ShiyuanRoom extends core_1.Room {
         });
         this.onMessage("surrender", (client) => {
             this.handleSurrender(client);
+        });
+        // === 太平将军技能 ===
+        this.onMessage("taipingFushuiConvert", (client, data) => {
+            this.handleTaipingFushuiConvert(client, data);
+        });
+        this.onMessage("taipingDoufan", (client, data) => {
+            this.handleTaipingDoufan(client);
+        });
+        this.onMessage("taipingDeployInit", (client, data) => {
+            this.handleTaipingDeployInit(client);
+        });
+        this.onMessage("taipingTianmingRoll", (client, data) => {
+            this.handleTaipingTianmingRoll(client);
+        });
+        this.onMessage("taipingTianmingConfirm", (client, data) => {
+            this.handleTaipingTianmingConfirm(client);
         });
     }
     /**
@@ -418,7 +524,7 @@ class ShiyuanRoom extends core_1.Room {
             return;
         }
         // 验证库存：检查是否还有该类型的单位可以部署（基于已消耗库存而非场上数量）
-        if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer") {
+        if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer" || unitType === "general") {
             // 获取该玩家该类型单位的已消耗库存和配置上限
             let consumedCount = 0;
             let maxCount = 0;
@@ -435,6 +541,11 @@ class ShiyuanRoom extends core_1.Room {
                     consumedCount = this.state.player1ConsumedArcher;
                     maxCount = this.state.player1Archer;
                 }
+                else if (unitType === "general") {
+                    // 将军消耗1个步兵库存
+                    consumedCount = this.state.player1ConsumedInfantry;
+                    maxCount = this.state.player1Infantry;
+                }
             }
             else {
                 if (unitType === "infantry") {
@@ -449,10 +560,16 @@ class ShiyuanRoom extends core_1.Room {
                     consumedCount = this.state.player2ConsumedArcher;
                     maxCount = this.state.player2Archer;
                 }
+                else if (unitType === "general") {
+                    // 将军消耗1个步兵库存
+                    consumedCount = this.state.player2ConsumedInfantry;
+                    maxCount = this.state.player2Infantry;
+                }
             }
             // 检查是否超过库存：剩余 = 配置上限 - 已消耗
             if (consumedCount >= maxCount) {
-                client.send("error", { message: `${unitType}单位库存已耗尽，无法部署` });
+                const unitName = unitType === "general" ? "步兵（部署将军需要）" : unitType;
+                client.send("error", { message: `${unitName}单位库存已耗尽，无法部署` });
                 return;
             }
         }
@@ -492,14 +609,19 @@ class ShiyuanRoom extends core_1.Room {
                 unit.maxHp = 4;
                 unit.hp = 4;
             }
+            else if (generalType === "rende") {
+                unit.maxHp = 4;
+                unit.hp = 4;
+            }
             else {
+                // shenji / taiping
                 unit.maxHp = 3;
                 unit.hp = 3;
             }
         }
         // 添加到地图
         this.state.units.set(unit.id, unit);
-        // 增加已消耗库存（只对三个基础兵种）
+        // 增加已消耗库存（三个基础兵种，将军不占库存）
         if (unitType === "infantry" || unitType === "cavalry" || unitType === "archer") {
             if (role === "player1") {
                 if (unitType === "infantry") {
@@ -566,6 +688,17 @@ class ShiyuanRoom extends core_1.Room {
         const role = this.getPlayerRole(client);
         if (!role || role !== this.state.currentPlayer)
             return;
+        // 太平将军部署阶段必须先点「结算天命值」
+        const hasTaiping = role === "player1"
+            ? this.state.player1General === "taiping"
+            : this.state.player2General === "taiping";
+        const initDone = role === "player1"
+            ? this.state.player1TaipingDeployInitDone
+            : this.state.player2TaipingDeployInitDone;
+        if (hasTaiping && !initDone) {
+            client.send("error", { message: "请先点击「结算天命值」完成初始天命结算，再结束部署" });
+            return;
+        }
         // 切换到另一个玩家部署
         if (this.state.currentPlayer === "player1") {
             // 玩家1完成部署，轮到玩家2
@@ -692,6 +825,25 @@ class ShiyuanRoom extends core_1.Room {
             this.state.player2ActionPoints = actionPoints;
         }
         this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}投骰：${diceCount}颗骰子(基础${baseDice}+部署${Math.floor(deployedValue / 2)})，点数${results.join(',')}，共${actionPoints}点行动值`);
+        // 重置豆饭每回合限制
+        if (role === "player1") {
+            this.state.player1DoufanUsedThisTurn = false;
+        }
+        else {
+            this.state.player2DoufanUsedThisTurn = false;
+        }
+        // 太平将军：回合开始触发符水粥模式
+        // 只检查普通步兵（type=infantry），黄巾力士不参与符水粥
+        const taipingGeneral = Array.from(this.state.units.values()).find(u => u.owner === role && u.type === "general" && u.generalType === "taiping");
+        if (taipingGeneral) {
+            const fushuiCandidates = Array.from(this.state.units.values()).filter(u => u.owner === role && u.type === "infantry" && u.hp === 1);
+            const currentAP = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
+            if (fushuiCandidates.length > 0 && currentAP > 0) {
+                this.state.taipingFushuiActive = true;
+                this.state.taipingFushuiPlayer = role;
+                this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的太平将军触发符水粥（${fushuiCandidates.length}个候选步兵）`);
+            }
+        }
     }
     /**
      * 处理重投骰子
@@ -734,6 +886,21 @@ class ShiyuanRoom extends core_1.Room {
                 const machineType = unit.type === 'ballista' ? 'ballista' : 'chariot';
                 const occupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)({ q: unit.q, r: unit.r, s: unit.s }, machineType);
                 // 检查这个hex是否在机关单位占据的格子中
+                if (occupiedHexes.some(occupiedHex => (0, hexUtils_1.hexEquals)(occupiedHex, hex))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    /** 同 isHexOccupiedByMachine，但排除指定 id 的单位（用于战车崩毁时自身尚未删除的情况） */
+    isHexOccupiedByMachineExcluding(hex, excludeId) {
+        for (const unit of this.state.units.values()) {
+            if (unit.id === excludeId)
+                continue;
+            if (unit.type === 'ballista' || unit.type === 'chariot') {
+                const machineType = unit.type === 'ballista' ? 'ballista' : 'chariot';
+                const occupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)({ q: unit.q, r: unit.r, s: unit.s }, machineType);
                 if (occupiedHexes.some(occupiedHex => (0, hexUtils_1.hexEquals)(occupiedHex, hex))) {
                     return true;
                 }
@@ -793,7 +960,7 @@ class ShiyuanRoom extends core_1.Room {
                 return [];
             const range = 1;
             const possibleMoves = (0, hexUtils_1.hexRange)(unitPos, range);
-            // 过滤移动位置：需要检查弩车占用的所有5格都没有障碍物
+            // 过滤移动位置：需要检查弩车占用的所有3格都没有障碍物
             return possibleMoves.filter(hex => {
                 if ((0, hexUtils_1.hexEquals)(hex, unitPos))
                     return false;
@@ -810,6 +977,25 @@ class ShiyuanRoom extends core_1.Room {
                     return isOccupied;
                 });
                 return !hasCollision && (0, hexUtils_1.hexDistance)(unitPos, hex) <= range;
+            });
+        }
+        // 投石车特殊移动逻辑：每回合最多行动2次（含移动、蓄力、攻击），用 actionsThisTurn 计数
+        if (unit.type === 'catapult') {
+            if (unit.actionsThisTurn >= 2)
+                return [];
+            const catapultPossibleMoves = (0, hexUtils_1.hexRange)(unitPos, 1);
+            return catapultPossibleMoves.filter(hex => {
+                if ((0, hexUtils_1.hexEquals)(hex, unitPos))
+                    return false;
+                let occupied = false;
+                this.state.units.forEach(u => {
+                    if (u.id !== unit.id && (0, hexUtils_1.hexEquals)({ q: u.q, r: u.r, s: u.s }, hex)) {
+                        occupied = true;
+                    }
+                });
+                if (this.isHexOccupiedByMachine(hex))
+                    occupied = true;
+                return !occupied && (0, hexUtils_1.isInMapRange)(hex, 5);
             });
         }
         // 普通单位移动逻辑
@@ -950,13 +1136,13 @@ class ShiyuanRoom extends core_1.Room {
         infantry1.hasActedThisTurn = true; // 本回合不能再行动
         infantry1.actionsThisTurn = 1;
         this.state.units.set(infantry1.id, infantry1);
-        // 第二个步兵：寻找相邻空位
+        // 第二个步兵：寻找相邻空位（排除战车自身，因为战车还未从 units 中删除）
         const neighbors = (0, hexUtils_1.hexNeighbors)(chariotPos);
         const emptyPos = neighbors.find((pos) => {
-            // 检查是否有单位占用
-            const occupied = Array.from(this.state.units.values()).some(u => u.q === pos.q && u.r === pos.r && u.s === pos.s);
-            // 检查是否被机关单位占据
-            const occupiedByMachine = this.isHexOccupiedByMachine(pos);
+            // 检查是否有单位占用（排除战车本身）
+            const occupied = Array.from(this.state.units.values()).some(u => u.id !== chariot.id && u.q === pos.q && u.r === pos.r && u.s === pos.s);
+            // 检查是否被机关单位占据（排除战车自身的体积格子）
+            const occupiedByMachine = this.isHexOccupiedByMachineExcluding(pos, chariot.id);
             return !occupied && !occupiedByMachine && (0, hexUtils_1.isInMapRange)(pos, 5);
         });
         if (emptyPos) {
@@ -990,7 +1176,7 @@ class ShiyuanRoom extends core_1.Room {
             return;
         }
         const unit = this.state.units.get(data.unitId);
-        if (!unit || unit.owner !== role) {
+        if (!unit || !this.canCommandUnit(unit, role)) {
             client.send("error", { message: "这不是你的单位" });
             return;
         }
@@ -1045,8 +1231,8 @@ class ShiyuanRoom extends core_1.Room {
                 this.addBattleLog(`骑兵移动3格，本回合无法攻击`);
             }
         }
-        // 机关单位（弩车、战车、投石车）需要标记已行动
-        if (unit.type === 'ballista' || unit.type === 'chariot' || unit.type === 'catapult') {
+        // 机关单位（弩车、战车）移动后标记已行动（投石车用 actionsThisTurn 计数，不走此分支）
+        if (unit.type === 'ballista' || unit.type === 'chariot') {
             unit.hasActedThisTurn = true;
         }
         this.addBattleLog(`${role}移动${unit.type}到(${data.toQ},${data.toR},${data.toS})`);
@@ -1157,12 +1343,19 @@ class ShiyuanRoom extends core_1.Room {
         console.log(`[DEBUG] 移动结束 - currentPlayer: ${this.state.currentPlayer}, role: ${role}`);
         // 检查胜利条件：是否触碰到敌方大本营
         this.checkVictoryCondition(unit);
+        // 太平将军·作乱：移动结束后检查相邻贼数量并造成系统伤害
+        if (this.state.phase !== "end") {
+            this.applyZuoluan(unit, role);
+        }
     }
     /**
      * 检查胜利条件和战车触底
      */
     checkVictoryCondition(unit) {
         console.log(`[DEBUG checkVictoryCondition] 检查单位: type=${unit.type}, owner=${unit.owner}, pos=(${unit.q},${unit.r},${unit.s})`);
+        // 黄巾力士/黄巾贼不触发胜利条件
+        if (unit.type === "huangjin_lishi" || unit.type === "huangjin_zei")
+            return;
         // 获取敌方大本营位置
         const enemyBaseQ = unit.owner === "player1" ? this.state.player2BaseQ : this.state.player1BaseQ;
         const enemyBaseR = unit.owner === "player1" ? this.state.player2BaseR : this.state.player1BaseR;
@@ -1282,7 +1475,7 @@ class ShiyuanRoom extends core_1.Room {
             client.send("error", { message: "单位不存在" });
             return;
         }
-        if (attacker.owner !== role) {
+        if (!this.canCommandUnit(attacker, role)) {
             client.send("error", { message: "这不是你的单位" });
             return;
         }
@@ -1291,8 +1484,65 @@ class ShiyuanRoom extends core_1.Room {
             client.send("error", { message: "该单位本回合已达行动次数上限" });
             return;
         }
+        // 检查非弓箭手单位是否已攻击（每回合只能攻击1次）
+        if (attacker.type !== 'archer' && attacker.hasAttacked) {
+            client.send("error", { message: "该单位本回合已攻击过" });
+            return;
+        }
+        // 检查投石车行动次数上限（2次）
+        if (attacker.type === 'catapult' && attacker.actionsThisTurn >= 2) {
+            client.send("error", { message: "投石车本回合已达行动次数上限" });
+            return;
+        }
+        // === 攻击范围校验 ===
+        const attackerPos = { q: attacker.q, r: attacker.r, s: attacker.s };
+        const targetPos = { q: target.q, r: target.r, s: target.s };
+        // 计算攻击者和目标各自的体积格子
+        const attackerHexes = (attacker.type === 'ballista' || attacker.type === 'chariot' || attacker.type === 'catapult')
+            ? (0, hexUtils_1.getMachineOccupiedHexes)(attackerPos, attacker.type, attacker.owner === 'player1')
+            : [attackerPos];
+        const targetHexes = (target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult')
+            ? (0, hexUtils_1.getMachineOccupiedHexes)(targetPos, target.type, target.owner === 'player1')
+            : [targetPos];
+        // 体积最小距离
+        let minBodyDist = Infinity;
+        for (const a of attackerHexes) {
+            for (const t of targetHexes) {
+                const d = (0, hexUtils_1.hexDistance)(a, t);
+                if (d < minBodyDist)
+                    minBodyDist = d;
+            }
+        }
+        // 近战单位：必须与目标体积相邻（距离1）
+        if (attacker.type === 'infantry' || attacker.type === 'cavalry' || attacker.type === 'general') {
+            if (minBodyDist > 1) {
+                client.send("error", { message: "目标不在攻击范围内" });
+                return;
+            }
+        }
+        // 弓箭手：射程 = 3 + 距己方基线距离
+        if (attacker.type === 'archer') {
+            const playerSide = attacker.owner === 'player1' ? 'top' : 'bottom';
+            const maxRange = 3 + (0, hexUtils_1.getDistanceToBaseline)(attackerPos, playerSide);
+            if (minBodyDist > maxRange) {
+                client.send("error", { message: "目标超出射程" });
+                return;
+            }
+        }
+        // 弓箭手攻击路径经过己方单位时，行动点额外+1
+        let archerPathCost = 0;
+        if (attacker.type === 'archer') {
+            const pathHexes = (0, hexUtils_1.hexLineDraw)(attackerPos, targetPos);
+            // pathHexes 包含起点和终点，检查中间格子（排除首尾）
+            const intermediateHexes = pathHexes.slice(1, -1);
+            const hasFriendlyBlock = intermediateHexes.some(hex => Array.from(this.state.units.values()).some(u => u.owner === attacker.owner && u.q === hex.q && u.r === hex.r && u.s === hex.s));
+            if (hasFriendlyBlock) {
+                archerPathCost = 1;
+                this.addBattleLog(`弓箭手射击路径被友军阻挡，行动点+1`);
+            }
+        }
         // 计算行动点消耗：攻击将领消耗2点，其他单位消耗1点
-        const actionCost = target.type === "general" ? 2 : 1;
+        const actionCost = (target.type === "general" ? 2 : 1) + archerPathCost;
         // 检查行动点是否足够
         if (role === "player1") {
             if (this.state.player1ActionPoints < actionCost) {
@@ -1308,7 +1558,6 @@ class ShiyuanRoom extends core_1.Room {
             }
             this.state.player2ActionPoints -= actionCost;
         }
-        // TODO: 验证攻击范围、计算伤害
         // === 步兵纵深抗击和击退传导机制（仅对弓箭手攻击有效）===
         let depthDefenseTriggered = false;
         if (target.type === 'infantry' && attacker.type === 'archer') {
@@ -1384,62 +1633,21 @@ class ShiyuanRoom extends core_1.Room {
         let damage = 0;
         if (!depthDefenseTriggered) {
             damage = 1;
-            // 判断是否为近战攻击（考虑机关单位的占据范围）
-            let isMelee = false;
-            if (attacker.type === 'archer') {
-                // 弓箭手始终是远程攻击
-                isMelee = false;
-            }
-            else {
-                // 获取攻击者占据的所有格子
-                let attackerOccupiedHexes = [{ q: attacker.q, r: attacker.r, s: attacker.s }];
-                if (attacker.type === 'ballista' || attacker.type === 'chariot' || attacker.type === 'catapult') {
-                    const machineType = attacker.type === 'ballista' ? 'ballista'
-                        : attacker.type === 'catapult' ? 'catapult'
-                            : 'chariot';
-                    const isAttackerPlayerOne = attacker.owner === 'player1';
-                    attackerOccupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)({ q: attacker.q, r: attacker.r, s: attacker.s }, machineType, isAttackerPlayerOne);
-                }
-                // 获取目标占据的所有格子
-                let targetOccupiedHexes = [{ q: target.q, r: target.r, s: target.s }];
-                if (target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult') {
-                    const machineType = target.type === 'ballista' ? 'ballista'
-                        : target.type === 'catapult' ? 'catapult'
-                            : 'chariot';
-                    const isTargetPlayerOne = target.owner === 'player1';
-                    targetOccupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)({ q: target.q, r: target.r, s: target.s }, machineType, isTargetPlayerOne);
-                }
-                // 检查攻击者的任意占据格子是否与目标的任意占据格子相邻
-                isMelee = attackerOccupiedHexes.some(attackerHex => targetOccupiedHexes.some(targetHex => (0, hexUtils_1.hexDistance)(attackerHex, targetHex) === 1));
-            }
-            // 近战攻击机关单位：伤害+1
-            if (isMelee && (target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult')) {
-                damage += 1;
-                this.addBattleLog(`近战攻击机关单位：伤害+1`);
-            }
-            // 骑兵移动距离影响伤害
+            // 骑兵移动距离影响伤害（冲锋+1）
             if (attacker.type === 'cavalry' && attacker.moveDistance === 2) {
-                // 检查目标是否是步兵，且相邻己方步兵≥3（步兵抗击机制）
-                if (target.type === 'infantry') {
-                    // 统计目标步兵周围的己方步兵数量
-                    const targetPos = { q: target.q, r: target.r, s: target.s };
-                    const neighbors = (0, hexUtils_1.hexNeighbors)(targetPos);
-                    const adjacentAllies = neighbors.filter(neighborPos => {
-                        const neighborUnit = Array.from(this.state.units.values()).find(u => u.q === neighborPos.q && u.r === neighborPos.r && u.s === neighborPos.s);
-                        return neighborUnit &&
-                            neighborUnit.owner === target.owner &&
-                            neighborUnit.type === 'infantry';
-                    }).length;
-                    if (adjacentAllies >= 3) {
-                        this.addBattleLog(`步兵抗击：相邻己方步兵≥3，骑兵冲锋伤害+1无效`);
-                    }
-                    else {
-                        damage += 1;
-                        this.addBattleLog(`骑兵冲锋：伤害+1`);
-                    }
+                // 任意目标：若相邻己方步兵≥2，则骑兵冲锋+1无效
+                const targetNeighborPos = { q: target.q, r: target.r, s: target.s };
+                const targetNeighbors = (0, hexUtils_1.hexNeighbors)(targetNeighborPos);
+                const adjacentFriendlyInfantry = targetNeighbors.filter(neighborPos => {
+                    const neighborUnit = Array.from(this.state.units.values()).find(u => u.q === neighborPos.q && u.r === neighborPos.r && u.s === neighborPos.s);
+                    return neighborUnit &&
+                        neighborUnit.owner === target.owner &&
+                        neighborUnit.type === 'infantry';
+                }).length;
+                if (adjacentFriendlyInfantry >= 2) {
+                    this.addBattleLog(`步兵护卫：相邻己方步兵≥2，骑兵冲锋伤害+1无效`);
                 }
                 else {
-                    // 非步兵目标，正常获得冲锋伤害加成
                     damage += 1;
                     this.addBattleLog(`骑兵冲锋：伤害+1`);
                 }
@@ -1448,6 +1656,10 @@ class ShiyuanRoom extends core_1.Room {
         }
         attacker.hasAttacked = true;
         attacker.actionsThisTurn = (attacker.actionsThisTurn || 0) + 1; // 增加行动次数
+        // 骑兵攻击后清除冲锋距离（防止本回合重复获得加成）
+        if (attacker.type === 'cavalry') {
+            attacker.moveDistance = 0;
+        }
         this.addBattleLog(`${role}的${attacker.type}攻击了${target.owner}的${target.type}，造成${damage}点伤害（消耗${actionCost}点行动值）`);
         // === 投石车溅射伤害 ===
         if (attacker.type === 'catapult') {
@@ -1562,31 +1774,44 @@ class ShiyuanRoom extends core_1.Room {
                     this.addBattleLog(`击杀中立标记，${enemyRole === "player1" ? "玩家1" : "玩家2"}的转化费用重置为1点`);
                 }
             }
-            // 首次击杀奖励：立即获得额外骰子和行动点
-            if (role === "player1" && !this.state.player1KilledThisTurn) {
-                this.state.player1KilledThisTurn = true;
-                this.state.player1KillDice++;
-                // 立即投掷额外的骰子并增加行动点
-                const extraRoll = Math.floor(Math.random() * 6) + 1;
-                this.state.player1Dice++;
-                this.state.player1DiceResults.push(extraRoll);
-                this.state.player1ActionPoints += extraRoll;
-                this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
+            // 击杀黄巾贼：双方均无奖励（不返还AP，不触发首次击杀）
+            if (target.type === "huangjin_zei") {
+                this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}击杀黄巾贼，无击杀奖励`);
             }
-            else if (role === "player2" && !this.state.player2KilledThisTurn) {
-                this.state.player2KilledThisTurn = true;
-                this.state.player2KillDice++;
-                // 立即投掷额外的骰子并增加行动点
-                const extraRoll = Math.floor(Math.random() * 6) + 1;
-                this.state.player2Dice++;
-                this.state.player2DiceResults.push(extraRoll);
-                this.state.player2ActionPoints += extraRoll;
-                this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
+            else {
+                // 首次击杀奖励：立即获得额外骰子和行动点（仅对非贼单位）
+                if (role === "player1" && !this.state.player1KilledThisTurn) {
+                    this.state.player1KilledThisTurn = true;
+                    this.state.player1KillDice++;
+                    const extraRoll = Math.floor(Math.random() * 6) + 1;
+                    this.state.player1Dice++;
+                    this.state.player1DiceResults.push(extraRoll);
+                    this.state.player1ActionPoints += extraRoll;
+                    this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
+                }
+                else if (role === "player2" && !this.state.player2KilledThisTurn) {
+                    this.state.player2KilledThisTurn = true;
+                    this.state.player2KillDice++;
+                    const extraRoll = Math.floor(Math.random() * 6) + 1;
+                    this.state.player2Dice++;
+                    this.state.player2DiceResults.push(extraRoll);
+                    this.state.player2ActionPoints += extraRoll;
+                    this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
+                }
             }
             // 检查是否击杀了将军（失去基础骰子，下回合生效）
             if (target.type === "general") {
                 this.addBattleLog(`${target.owner === "player1" ? "玩家1" : "玩家2"}的将军阵亡！下回合失去基础骰子`);
+                // 太平将军阵亡：触发起义（力士→贼）
+                if (target.generalType === "taiping") {
+                    this.applyQiyiForDeath(target.owner);
+                }
             }
+        }
+        // 太平将军·作乱：攻击行动结束后，检查攻击方是否受相邻贼伤害
+        // 注意：target 可能已被删除，但 attacker 仍在场
+        if (this.state.phase !== "end" && this.state.units.has(data.attackerId)) {
+            this.applyZuoluan(attacker, role);
         }
     }
     /**
@@ -1685,8 +1910,8 @@ class ShiyuanRoom extends core_1.Room {
             r: firstTarget.r + dr,
             s: firstTarget.s + ds
         };
-        // 检查击退位置是否有效
-        const isKnockbackValid = (0, hexUtils_1.isInMapRange)(knockbackPos, 6);
+        // 检查击退位置是否有效（地图半径为5）
+        const isKnockbackValid = (0, hexUtils_1.isInMapRange)(knockbackPos, 5);
         // 检查击退位置是否被占用
         const isKnockbackBlocked = isKnockbackValid && Array.from(this.state.units.values()).some(u => {
             if (u.id === firstTarget.id)
@@ -1938,9 +2163,9 @@ class ShiyuanRoom extends core_1.Room {
             client.send("error", { message: "这不是你的投石车" });
             return;
         }
-        // 验证是否已行动
-        if (catapult.hasActedThisTurn) {
-            client.send("error", { message: "投石车本回合已行动" });
+        // 验证行动次数（每回合最多2次）
+        if ((catapult.actionsThisTurn || 0) >= 2) {
+            client.send("error", { message: "投石车本回合已达行动次数上限（2次）" });
             return;
         }
         // 验证蓄力层数（最多2层）
@@ -2005,7 +2230,7 @@ class ShiyuanRoom extends core_1.Room {
         if (!role || role !== this.state.currentPlayer)
             return;
         const unit = this.state.units.get(data.unitId);
-        if (!unit || unit.owner !== role)
+        if (!unit || !this.canCommandUnit(unit, role))
             return;
         // 检查是否被定身（无法旋转）
         if (unit.cannotRotateNextTurn) {
@@ -2041,6 +2266,10 @@ class ShiyuanRoom extends core_1.Room {
         unit.hasRotated = true; // 标记已转向
         unit.actionsThisTurn = (unit.actionsThisTurn || 0) + 1; // 增加行动次数
         this.addBattleLog(`${role}旋转${unit.type}朝向（消耗1点行动值）`);
+        // 太平将军·作乱：转向行动结束后检查相邻贼
+        if (this.state.phase !== "end") {
+            this.applyZuoluan(unit, role);
+        }
     }
     /**
      * 处理结束回合
@@ -2096,6 +2325,18 @@ class ShiyuanRoom extends core_1.Room {
                 return;
             }
         }
+        // 太平将军：若有存活的太平将军，结束回合前必须先进行天命结算
+        // 若天命结算尚未完成（taipingTianmingActive 未激活），拦截 endTurn 请求
+        const taipingGeneralForTianming = Array.from(this.state.units.values()).find(u => u.owner === role && u.type === "general" && u.generalType === "taiping");
+        if (taipingGeneralForTianming && !this.state.taipingTianmingActive) {
+            client.send("error", { message: "请先点击「结算天命」完成天命结算，再结束回合" });
+            return;
+        }
+        // 若天命结算已完成，清除结算状态后继续正常的回合结束流程
+        if (this.state.taipingTianmingActive && this.state.taipingTianmingPlayer === role) {
+            this.state.taipingTianmingActive = false;
+            this.state.taipingTianmingPlayer = "";
+        }
         // 行动阶段：正常的回合结束逻辑
         // 重置本回合标记
         this.state.units.forEach((unit) => {
@@ -2111,10 +2352,8 @@ class ShiyuanRoom extends core_1.Room {
                     unit.hasFanAttacked = false;
                     unit.bonusActionLimit = 0;
                 }
-                // 重置机关单位的已行动状态
-                if (unit.type === "ballista" || unit.type === "chariot" || unit.type === "catapult") {
-                    unit.hasActedThisTurn = false;
-                }
+                // 重置所有单位的已行动状态（含散架步兵等非机关单位）
+                unit.hasActedThisTurn = false;
                 // 清除定身效果（回合结束时清除）
                 if (unit.cannotMoveNextTurn || unit.cannotRotateNextTurn) {
                     console.log(`[定身] 清除定身效果 - 单位ID: ${unit.id}, 之前状态: cannotMove=${unit.cannotMoveNextTurn}, cannotRotate=${unit.cannotRotateNextTurn}`);
@@ -2178,7 +2417,8 @@ class ShiyuanRoom extends core_1.Room {
         const names = {
             wushuang: "无双",
             shenji: "神机",
-            rende: "仁德"
+            rende: "仁德",
+            taiping: "太平",
         };
         return names[type] || type;
     }
@@ -2595,7 +2835,8 @@ class ShiyuanRoom extends core_1.Room {
         }
         // 检查位置是否在地图范围内且所有占用格子都没有被占用
         const MAP_RADIUS = 5;
-        const occupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)(data.position, data.machineType);
+        const isPlayerOne = role === 'player1';
+        const occupiedHexes = (0, hexUtils_1.getMachineOccupiedHexes)(data.position, data.machineType, isPlayerOne);
         // 检查所有占用格子是否在地图范围内
         const allInRange = occupiedHexes.every(hex => (0, hexUtils_1.isInMapRange)(hex, MAP_RADIUS));
         if (!allInRange) {
@@ -3020,6 +3261,380 @@ class ShiyuanRoom extends core_1.Room {
             this.state.units.set(neutral.id, neutral);
             this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}将${target.type}转为中立标记（消耗1点）`);
             client.send("info", { message: "已转为中立标记" });
+        }
+    }
+    /**
+     * 判断当前玩家是否可以指挥某单位
+     * 双太平模式：双方均可指挥黄巾力士
+     */
+    canCommandUnit(unit, role) {
+        if (unit.owner === role)
+            return true;
+        const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
+        if (bothTaiping && unit.type === "huangjin_lishi")
+            return true;
+        return false;
+    }
+    // ========================================
+    // 太平将军技能处理器
+    // ========================================
+    /**
+     * 部署阶段天命初始化：「苍天已死，黄天当立」，获得3点初始天命值
+     * 双太平时各自结算一次（总计+6），共享天命值
+     */
+    handleTaipingDeployInit(client) {
+        const role = this.getPlayerRole(client);
+        if (!role || role !== this.state.currentPlayer) {
+            client.send("error", { message: "不是你的回合" });
+            return;
+        }
+        if (this.state.phase !== "deploy") {
+            client.send("error", { message: "只能在部署阶段结算初始天命" });
+            return;
+        }
+        const hasTaiping = role === "player1"
+            ? this.state.player1General === "taiping"
+            : this.state.player2General === "taiping";
+        if (!hasTaiping) {
+            client.send("error", { message: "你没有太平将军" });
+            return;
+        }
+        const alreadyDone = role === "player1"
+            ? this.state.player1TaipingDeployInitDone
+            : this.state.player2TaipingDeployInitDone;
+        if (alreadyDone) {
+            client.send("error", { message: "初始天命已结算" });
+            return;
+        }
+        // 双太平共享天命值，单太平各自独立
+        const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
+        const INIT_DESTINY = 3;
+        if (bothTaiping) {
+            // 双太平：叠加到共享天命（player1DestinyValue 作为共享值）
+            this.state.player1DestinyValue += INIT_DESTINY;
+            this.state.player2DestinyValue = this.state.player1DestinyValue;
+            // 初始化共享血池（双太平血池上限为6）
+            this.state.taipingSharedHp = 6;
+        }
+        else {
+            if (role === "player1") {
+                this.state.player1DestinyValue += INIT_DESTINY;
+            }
+            else {
+                this.state.player2DestinyValue += INIT_DESTINY;
+            }
+            this.state.taipingSharedHp = 3;
+        }
+        // 标记已完成初始化
+        if (role === "player1") {
+            this.state.player1TaipingDeployInitDone = true;
+        }
+        else {
+            this.state.player2TaipingDeployInitDone = true;
+        }
+        this.addBattleLog(`⚡ 苍天已死，黄天当立！${role === "player1" ? "玩家1" : "玩家2"}获得${INIT_DESTINY}点初始天命（当前天命值：${role === "player1" ? this.state.player1DestinyValue : this.state.player2DestinyValue}）`);
+    }
+    /**
+     * 符水粥：转化一个残血步兵为力士（消耗1点行动点）
+     */
+    handleTaipingFushuiConvert(client, data) {
+        const role = this.getPlayerRole(client);
+        if (!role || role !== this.state.currentPlayer) {
+            client.send("error", { message: "不是你的回合" });
+            return;
+        }
+        if (!this.state.taipingFushuiActive || this.state.taipingFushuiPlayer !== role) {
+            client.send("error", { message: "当前不在符水粥模式" });
+            return;
+        }
+        const ap = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
+        if (ap < 1) {
+            client.send("error", { message: "行动点不足" });
+            return;
+        }
+        const unit = this.state.units.get(data.unitId);
+        if (!unit || unit.owner !== role || unit.type !== "infantry" || unit.hp !== 1) {
+            client.send("error", { message: "无效目标：必须是己方1血普通步兵" });
+            return;
+        }
+        // 执行转化：步兵升格为黄巾力士（独立单位类型，hp回满）
+        unit.type = "huangjin_lishi";
+        unit.hp = 2;
+        unit.maxHp = 2;
+        if (role === "player1") {
+            this.state.player1ActionPoints -= 1;
+        }
+        else {
+            this.state.player2ActionPoints -= 1;
+        }
+        this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的步兵饮下符水粥，成为黄巾力士！`);
+        // 检查是否退出符水粥模式
+        const newAP = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
+        const remaining = Array.from(this.state.units.values()).filter(u => u.owner === role && u.type === "infantry" && u.hp === 1);
+        if (newAP <= 0 || remaining.length === 0) {
+            this.state.taipingFushuiActive = false;
+            this.state.taipingFushuiPlayer = "";
+            this.addBattleLog(`符水粥结束，${role === "player1" ? "玩家1" : "玩家2"}可继续行动`);
+        }
+    }
+    /**
+     * 豆饭：消耗3点行动点，掷d6召唤等量力士于将军相邻空位
+     */
+    handleTaipingDoufan(client) {
+        const role = this.getPlayerRole(client);
+        if (!role || role !== this.state.currentPlayer) {
+            client.send("error", { message: "不是你的回合" });
+            return;
+        }
+        // 符水粥模式中不能使用豆饭
+        if (this.state.taipingFushuiActive && this.state.taipingFushuiPlayer === role) {
+            client.send("error", { message: "请先完成符水粥转化" });
+            return;
+        }
+        // 每回合只能使用一次豆饭
+        const doufanUsed = role === "player1"
+            ? this.state.player1DoufanUsedThisTurn
+            : this.state.player2DoufanUsedThisTurn;
+        if (doufanUsed) {
+            client.send("error", { message: "豆饭本回合已使用过" });
+            return;
+        }
+        const taipingGeneral = Array.from(this.state.units.values()).find(u => u.owner === role && u.type === "general" && u.generalType === "taiping");
+        if (!taipingGeneral) {
+            client.send("error", { message: "太平将军不在场" });
+            return;
+        }
+        const ap = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
+        if (ap < 3) {
+            client.send("error", { message: "行动点不足（需要3点）" });
+            return;
+        }
+        // 消耗3点行动点，标记本回合已用
+        if (role === "player1") {
+            this.state.player1ActionPoints -= 3;
+            this.state.player1DoufanUsedThisTurn = true;
+        }
+        else {
+            this.state.player2ActionPoints -= 3;
+            this.state.player2DoufanUsedThisTurn = true;
+        }
+        // 掷d6决定召唤数量
+        const rollX = Math.floor(Math.random() * 6) + 1;
+        // 找将军相邻的空位
+        const generalPos = { q: taipingGeneral.q, r: taipingGeneral.r, s: taipingGeneral.s };
+        const neighbors = (0, hexUtils_1.hexNeighbors)(generalPos);
+        const emptyNeighbors = neighbors.filter((pos) => {
+            const occupied = Array.from(this.state.units.values()).some(u => u.q === pos.q && u.r === pos.r && u.s === pos.s);
+            return !occupied && !this.isHexOccupiedByMachine(pos) && (0, hexUtils_1.isInMapRange)(pos, 5);
+        });
+        const spawnCount = Math.min(rollX, emptyNeighbors.length);
+        for (let i = 0; i < spawnCount; i++) {
+            const pos = emptyNeighbors[i];
+            const lishi = new GameState_1.UnitSchema();
+            lishi.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_lishi${i}`;
+            lishi.type = "huangjin_lishi"; // 黄巾力士独立单位类型
+            lishi.owner = role;
+            lishi.q = pos.q;
+            lishi.r = pos.r;
+            lishi.s = pos.s;
+            lishi.direction = taipingGeneral.direction;
+            lishi.hp = 2;
+            lishi.maxHp = 2;
+            lishi.hasActedThisTurn = true; // 本回合不可行动
+            lishi.hasMoved = true;
+            lishi.hasAttacked = true;
+            lishi.actionsThisTurn = 2;
+            this.state.units.set(lishi.id, lishi);
+        }
+        this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}使用豆饭：掷出${rollX}，召唤${spawnCount}个黄巾力士（共${emptyNeighbors.length}个空位）`);
+    }
+    /**
+     * 夺天命：结算天命骰（天命值更新+承载判断），进入待确认状态
+     */
+    handleTaipingTianmingRoll(client) {
+        const role = this.getPlayerRole(client);
+        if (!role || role !== this.state.currentPlayer) {
+            client.send("error", { message: "不是你的回合" });
+            return;
+        }
+        if (this.state.taipingFushuiActive && this.state.taipingFushuiPlayer === role) {
+            client.send("error", { message: "请先完成符水粥转化" });
+            return;
+        }
+        const taipingGeneral = Array.from(this.state.units.values()).find(u => u.owner === role && u.type === "general" && u.generalType === "taiping");
+        if (!taipingGeneral) {
+            client.send("error", { message: "太平将军不在场" });
+            return;
+        }
+        if (this.state.taipingTianmingActive && this.state.taipingTianmingPlayer === role) {
+            client.send("error", { message: "天命已结算，请点击结束回合" });
+            return;
+        }
+        // 掷苍天/黄天骰
+        const cangtiandi = Math.floor(Math.random() * 6) + 1;
+        const huangtian = Math.floor(Math.random() * 6) + 1;
+        // 双太平共享天命值，单太平各自独立
+        const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
+        const oldDestiny = bothTaiping
+            ? this.state.player1DestinyValue // 双太平用player1DestinyValue作共享值
+            : (role === "player1" ? this.state.player1DestinyValue : this.state.player2DestinyValue);
+        const newDestiny = oldDestiny + huangtian - cangtiandi;
+        if (bothTaiping) {
+            // 双太平：同步更新双方的天命值（UI展示一致）
+            this.state.player1DestinyValue = newDestiny;
+            this.state.player2DestinyValue = newDestiny;
+        }
+        else if (role === "player1") {
+            this.state.player1DestinyValue = newDestiny;
+        }
+        else {
+            this.state.player2DestinyValue = newDestiny;
+        }
+        // 承载判断：黄巾力士总数 > 天命值 → 太平扣1血
+        // 双太平：统计全场所有黄巾力士；单太平：统计己方黄巾力士
+        const lishiCount = Array.from(this.state.units.values()).filter(u => u.type === "huangjin_lishi" && (bothTaiping || u.owner === role)).length;
+        const damage = lishiCount > newDestiny ? 1 : 0;
+        // 保存结算结果供UI展示
+        this.state.taipingTianmingActive = true;
+        this.state.taipingTianmingPlayer = role;
+        this.state.taipingTianmingCangtiandi = cangtiandi;
+        this.state.taipingTianmingHuangtian = huangtian;
+        this.state.taipingTianmingDamage = damage;
+        this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}夺天命：苍天${cangtiandi}/黄天${huangtian}，天命值${oldDestiny}→${newDestiny}，黄巾力士${lishiCount}个，${damage > 0 ? "太平受到1点承载伤害" : "承载正常无伤害"}`);
+        // 立即扣血（若有伤害），走共享血池路径
+        if (damage > 0) {
+            const died = this.applyDamageToTaiping(damage, role);
+            if (died) {
+                this.addBattleLog(`太平将军因承载过重倒下！触发起义！`);
+            }
+        }
+    }
+    /**
+     * 天命结算确认：实际结束回合（清理天命状态并执行 endTurn 逻辑）
+     * 客户端看完天命结果后点击「结束回合」触发此消息
+     */
+    handleTaipingTianmingConfirm(client) {
+        // 直接复用 handleEndTurn，届时 taipingTianmingActive=true 会被清理
+        this.handleEndTurn(client);
+    }
+    /**
+     * 起义触发时机：将所有黄巾力士转为黄巾贼
+     * 单太平：转化该玩家方所有黄巾力士
+     * 双太平：转化场上所有黄巾力士（全员叛变）
+     */
+    applyQiyi(role) {
+        const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
+        let count = 0;
+        this.state.units.forEach((unit) => {
+            if (unit.type === "huangjin_lishi") {
+                if (bothTaiping || unit.owner === role) {
+                    unit.type = "huangjin_zei";
+                    count++;
+                }
+            }
+        });
+        this.addBattleLog(`${bothTaiping ? "双太平" : (role === "player1" ? "玩家1" : "玩家2")}起义！${count}个黄巾力士变为黄巾贼！`);
+    }
+    /**
+     * 将军死亡时的起义触发（处理双太平共享血池）
+     * 双太平：只有共享血池归零时才触发起义，并删除双将
+     * 单太平：正常触发起义
+     */
+    applyQiyiForDeath(role) {
+        const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
+        if (bothTaiping) {
+            // 双太平：扣共享血池，只有归零才触发起义
+            this.state.taipingSharedHp = 0;
+            this.applyQiyi(role);
+            // 删除双方将军
+            const toDelete = [];
+            this.state.units.forEach((u, id) => {
+                if (u.type === "general" && u.generalType === "taiping")
+                    toDelete.push(id);
+            });
+            toDelete.forEach(id => this.state.units.delete(id));
+            this.addBattleLog("双太平将军共同阵亡！");
+        }
+        else {
+            // 单太平：正常起义，将军已在调用方删除
+            this.applyQiyi(role);
+        }
+    }
+    /**
+     * 对太平将军造成伤害（统一处理单/双太平血池）
+     * 返回true表示将军阵亡
+     */
+    applyDamageToTaiping(damage, role) {
+        const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
+        if (bothTaiping) {
+            this.state.taipingSharedHp -= damage;
+            // 同步所有太平将军单位的hp显示
+            this.state.units.forEach((u) => {
+                if (u.type === "general" && u.generalType === "taiping") {
+                    u.hp = Math.max(0, this.state.taipingSharedHp);
+                }
+            });
+            if (this.state.taipingSharedHp <= 0) {
+                this.applyQiyi(role);
+                const toDelete = [];
+                this.state.units.forEach((u, id) => {
+                    if (u.type === "general" && u.generalType === "taiping")
+                        toDelete.push(id);
+                });
+                toDelete.forEach(id => this.state.units.delete(id));
+                this.addBattleLog("双太平将军共享血池耗尽，共同阵亡！");
+                return true;
+            }
+            return false;
+        }
+        else {
+            const taipingGeneral = Array.from(this.state.units.values()).find(u => u.owner === role && u.type === "general" && u.generalType === "taiping");
+            if (!taipingGeneral)
+                return false;
+            taipingGeneral.hp -= damage;
+            this.state.taipingSharedHp = taipingGeneral.hp;
+            if (taipingGeneral.hp <= 0) {
+                this.applyQiyi(role);
+                this.state.units.delete(taipingGeneral.id);
+                return true;
+            }
+            return false;
+        }
+    }
+    /**
+     * 作乱：单位完成一次行动后，检查相邻贼数量，造成等量系统伤害
+     * 只对当前回合行动方的行动单位触发
+     */
+    applyZuoluan(unit, role) {
+        // 确认单位仍在场且属于当前行动方
+        if (!this.state.units.has(unit.id))
+            return;
+        // 黄巾力士/贼自身也可能受作乱影响，不限制owner
+        if (unit.owner !== role && unit.type !== "huangjin_lishi" && unit.type !== "huangjin_zei")
+            return;
+        const unitPos = { q: unit.q, r: unit.r, s: unit.s };
+        const neighbors = (0, hexUtils_1.hexNeighbors)(unitPos);
+        // 统计相邻的黄巾贼单位数量（不分敌我）
+        let zeiCount = 0;
+        neighbors.forEach((pos) => {
+            this.state.units.forEach((u) => {
+                if (u.type === "huangjin_zei" && u.q === pos.q && u.r === pos.r && u.s === pos.s) {
+                    zeiCount++;
+                }
+            });
+        });
+        if (zeiCount === 0)
+            return;
+        this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的${unit.type}受到${zeiCount}点作乱伤害（相邻${zeiCount}个黄巾贼）`);
+        // 太平将军受到作乱伤害时走共享血池路径
+        if (unit.type === "general" && unit.generalType === "taiping") {
+            this.applyDamageToTaiping(zeiCount, role);
+            return;
+        }
+        unit.hp -= zeiCount;
+        if (unit.hp <= 0) {
+            this.state.units.delete(unit.id);
+            this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的${unit.type}因作乱伤害阵亡`);
         }
     }
     /**

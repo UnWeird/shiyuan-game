@@ -13,7 +13,7 @@ import { colyseusService } from '../../services/ColyseusService';
 import { toast, askConfirm, useUIStore } from '../../stores/uiStore';
 import { IMPERIAL, UNIT_NAME } from '../../theme/boardTheme';
 import { pendingAction, usePendingStore } from '../../game/pendingAction';
-import { getServerAttackHexes, getServerAttackTargets, getServerMoves } from '../../game/validActions';
+import { getServerAttackHexes, getServerAttackTargets, getServerLethalTargets, getServerMoves } from '../../game/validActions';
 import { playSfx } from '../../audio/sfx';
 
 interface BattleLogEntry {
@@ -141,6 +141,12 @@ export const GameBoard: React.FC = () => {
   const [rerollMode, setRerollMode] = useState(false);
   const [pendingRendeSkill, setPendingRendeSkill] = useState<'convert' | 'neutral' | null>(null);
 
+  /* 两个纯客户端的反馈动画。
+   * animations.css 里 @keyframes dice-roll 与 turn-flash 一直写好却没有任何组件引用 ——
+   * 骰子是直接蹦出最终点数，回合切换也没有任何提示。两者都不需要服务端配合。 */
+  const [diceRolling, setDiceRolling] = useState(false);
+  const [turnFlash, setTurnFlash] = useState(false);
+
   // 移动端检测
   // 窄屏布局：只看视口宽度，不看设备类型
   const isNarrow = useIsNarrowScreen();
@@ -191,6 +197,28 @@ export const GameBoard: React.FC = () => {
       window.removeEventListener('rendeKillConfirm', handleRendeKillConfirm);
     };
   }, [isOnlineMode]);
+
+  /**
+   * 骰子投出 → 转一圈。
+   *
+   * 用骰子结果的"内容"做依赖而不是长度：重掷（神机改点数 / rerollMode）时
+   * 颗数不变但点数变了，也应该转一圈。
+   */
+  const diceSignature = (currentPlayer === Player.PLAYER1 ? player1DiceResults : player2DiceResults)
+    .join(',');
+  useEffect(() => {
+    if (!diceSignature) return;
+    setDiceRolling(true);
+    const t = setTimeout(() => setDiceRolling(false), 600);
+    return () => clearTimeout(t);
+  }, [diceSignature]);
+
+  /** 回合切换 → HUD 闪一下，告诉玩家"该换人了" */
+  useEffect(() => {
+    setTurnFlash(true);
+    const t = setTimeout(() => setTurnFlash(false), 500);
+    return () => clearTimeout(t);
+  }, [currentPlayer]);
 
   // 处理待激活的仁德技能（在选中仁德后自动激活）
   useEffect(() => {
@@ -359,12 +387,25 @@ export const GameBoard: React.FC = () => {
   // 选中单位
   const handleUnitClick = (unitId: string) => {
     const unit = units[unitId];
-    // 在线模式下只能选择自己的单位
-    if (isOnlineMode && myPlayerRole) {
-      const myPlayer = myPlayerRole === 'player1' ? Player.PLAYER1 : Player.PLAYER2;
-      if (unit.owner !== myPlayer) return;
-    } else {
-      if (unit.owner !== currentPlayer) return;
+    const myPlayer = isOnlineMode && myPlayerRole
+      ? (myPlayerRole === 'player1' ? Player.PLAYER1 : Player.PLAYER2)
+      : currentPlayer;
+    const isMine = unit.owner === myPlayer;
+
+    /**
+     * 点敌方棋子时转发成「点它所在的格子」。
+     *
+     * 棋子的圆盘正好盖住格心，而攻击/转化这类操作的落点判定在格子层
+     * （棋子层在格子热区之上）。原来点敌人直接 return，玩家必须瞄准格子
+     * **边缘**那一圈才点得到 —— 实测要偏移约 0.38 个格高才命中。
+     * 现在落点交给 handleHexClick，它内部已有完整的合法性判断。
+     */
+    if (!isMine) {
+      const targetingModes = ['attack', 'rende-convert', 'rende-neutral', 'rotate'];
+      if (actionMode && targetingModes.includes(actionMode)) {
+        handleHexClick(unit.position);
+      }
+      return;
     }
 
     playSfx('select');
@@ -1463,7 +1504,7 @@ export const GameBoard: React.FC = () => {
         )}
 
         {/* 顶部信息栏 */}
-        <div className="rounded-lg px-3 py-2 md:px-4 flex-none" style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.95) 0%, rgba(13,5,0,0.98) 100%)', border: '1px solid rgba(201,162,39,0.25)', boxShadow: '0 0 20px rgba(201,162,39,0.08)' }}>
+        <div className={`rounded-lg px-3 py-2 md:px-4 flex-none${turnFlash ? ' turn-transition' : ''}`} style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.95) 0%, rgba(13,5,0,0.98) 100%)', border: '1px solid rgba(201,162,39,0.25)', boxShadow: '0 0 20px rgba(201,162,39,0.08)' }}>
           {/* 单行 HUD：每个子项都是一行高的盒子 + items-center，
             * 这样"所有元素共享一条中心线"由布局本身保证，而不是靠手调。
             * 旧实现里各块是 2–4 行的堆叠，七个元素落在五条不同的中心线上
@@ -1615,6 +1656,8 @@ export const GameBoard: React.FC = () => {
                             key={`base-${index}`}
                             onClick={() => handleDiceClick(index, currentPlayer)}
                             className={`inline-flex items-center justify-center w-8 h-8 border-2 rounded-md text-sm font-bold shadow-sm transition-all ${
+                              diceRolling ? 'dice-rolling' : ''
+                            } ${
                               shenjiAbilityActive || rerollMode ? 'cursor-pointer hover:scale-110' : ''
                             } ${
                               selectedDiceIndex === index ? 'border-bronze scale-110' : rerollMode ? 'border-imperial-gold' : 'border-imperial-jade'
@@ -1632,6 +1675,8 @@ export const GameBoard: React.FC = () => {
                               key={`kill-${index}`}
                               onClick={() => handleDiceClick(actualIndex, currentPlayer)}
                               className={`inline-flex items-center justify-center w-8 h-8 border-2 rounded-md text-sm font-bold shadow-sm transition-all ${
+                                diceRolling ? 'dice-rolling' : ''
+                              } ${
                                 shenjiAbilityActive || rerollMode ? 'cursor-pointer hover:scale-110' : ''
                               } ${
                                 selectedDiceIndex === actualIndex ? 'border-bronze scale-110' : rerollMode ? 'border-imperial-gold' : 'border-imperial-gold'
@@ -1806,6 +1851,15 @@ export const GameBoard: React.FC = () => {
                     ? highlightedHexes.filter(h =>
                         Object.values(units).some(u =>
                           u.owner !== currentPlayer && hexEquals(u.position, h)))
+                    : []
+                }
+                /* 实心矛尖 = 这一下能杀。lethal 由服务端用与实际结算同一份
+                 * Rules.predictDamage 算出来，客户端不自己判血量。 */
+                lethalHexes={
+                  actionMode === 'attack' && selectedUnit
+                    ? getServerLethalTargets(selectedUnit.id)
+                        .map(id => units[id]?.position)
+                        .filter((p): p is HexCoord => !!p)
                     : []
                 }
               >

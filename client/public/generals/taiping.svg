@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 140">
+  <!--
+    太平将军的头像。补这个文件是因为 GameBoard 的 HUD 用
+    `/generals/${general}.svg` 取图，而目录里只有 rende / shenji / wushuang 三个 ——
+    玩家选「太平」时这张图 404，靠 onError 隐藏掉，头像位置是空的。
+
+    配色避开另外三位：无双朱红 #dc2626、神机靛蓝 #2563eb、仁德翠绿 #16a34a，
+    太平取黄巾的土黄 #ca8a04。结构与其余三张保持一致：
+    六边形底座 → 内层装饰 → 圆形标识 → 字 → 底部标签 → 光效。
+  -->
+
+  <!-- 六边形底座 -->
+  <path d="M 60,10 L 95,30 L 95,70 L 60,90 L 25,70 L 25,30 Z"
+        fill="#ca8a04"
+        stroke="#854d0e"
+        stroke-width="3"/>
+
+  <!-- 内层装饰 -->
+  <path d="M 60,18 L 87,33 L 87,63 L 60,78 L 33,63 L 33,33 Z"
+        fill="#eab308"
+        stroke="#ca8a04"
+        stroke-width="2"
+        opacity="0.8"/>
+
+  <!-- 将军标识圆形 -->
+  <circle cx="60" cy="50" r="22"
+          fill="#fefce8"
+          stroke="#ca8a04"
+          stroke-width="2"/>
+
+  <!-- "太" 字 -->
+  <g transform="translate(60, 50)" fill="none" stroke="#854d0e"
+     stroke-width="3" stroke-linecap="round">
+    <!-- 上横 -->
+    <path d="M -10,-7 L 10,-7"/>
+    <!-- 中竖撇 -->
+    <path d="M 0,-7 L -9,10"/>
+    <!-- 右撇 -->
+    <path d="M 1,-1 L 10,10"/>
+    <!-- 左点 -->
+    <path d="M -5,1 L -1,6"/>
+  </g>
+
+  <!-- 底部文字标签 -->
+  <rect x="20" y="100" width="80" height="30" rx="5" fill="#ca8a04"/>
+  <text x="60" y="120" font-family="sans-serif" font-size="16" font-weight="bold"
+        fill="white" text-anchor="middle">
+    太平
+  </text>
+
+  <!-- 装饰性光效 -->
+  <ellipse cx="60" cy="50" rx="26" ry="26" fill="none"
+           stroke="#fde047" stroke-width="1.5" opacity="0.4"/>
+</svg>

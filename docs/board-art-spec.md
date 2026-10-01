@@ -403,7 +403,7 @@ dice-selected   dice-clickable   panel-card   loading-spinner
 
 | 问题 | 位置 |
 |---|---|
-| **`taiping.svg` 缺失** → 玩家选「太平」时 HUD 将领头像 404 破图 | `client/public/generals/` 只有 rende / shenji / wushuang；`GameBoard.tsx:1642,1663` 用 `/generals/${general}.svg` |
+| ~~**`taiping.svg` 缺失**~~ → 已补 | 原来 `client/public/generals/` 只有 rende / shenji / wushuang，玩家选「太平」时头像 404（靠 onError 隐藏，位置是空的）。新图沿用另外三张的结构，取黄巾的土黄 `#ca8a04`，避开朱红/靛蓝/翠绿 |
 | **棋盘尺寸被锁死，宽屏下不变大** | 真正的来源是 `GameBoard.tsx:1436` 的 `max-w-7xl`（1280px）+ `GameBoard.tsx:1954` 的硬编码 `height: '700px'`。实测 1440 与 1920 两种视口下棋盘尺寸**完全相同**。详见布局方案 |
 | **`client/src/App.css` 是死文件** | 全项目没有任何地方 `import './App.css'`，其中的 `#root { max-width: 1280px }` 从未生效（实测 `#root` 的 computed `max-width` 为 `none`）。应直接删除该文件，避免误导 |
 | **「类型/生命/行动」是纯黑字写在近黑面板上** | `GameBoard.tsx:1937-1940` 三个 `<p>` 没有任何颜色类，继承浏览器默认 `rgb(0,0,0)`，实测对比度 **1.04:1**（AA 要求 4.5:1），等于不可见。同时 `{selectedUnit.type}` 直接把枚举值 `archer` / `general` 显示给玩家 |
@@ -452,8 +452,18 @@ P0 完整可独立上线，不需要等服务端。
 4. **大本营用了 2 个 `<text>`（帥 / 將）**，所以"盘面零文字"这条在 P0 还没完全达成；
    §3 的 `banner` 牙旗记号属 P1。
 
-5. **§8.2 的 13 个死 CSS 类没动**（它们不在 P0 范围）。其中
-   `damage-number` / `shake-on-hit` / `dice-rolling` / `turn-transition` 建议接上而不是删。
+5. **§8.2 的死 CSS 类**已在 P1 处理：
+   - 删掉确认无用的 `panel-card` / `loading-spinner` / `dice-selected` / `dice-clickable` /
+     `deploy-zone-active` / `deploy-zone-gold` 及其仅被它们使用的 keyframes
+   - **接上**了 `dice-rolling`（投骰子转一圈，依赖骰子点数的内容而非颗数，
+     这样神机改点数 / 重掷也会转）与 `turn-transition`（回合切换闪光）
+   - `turn-flash` 的 keyframes 原来动画的是 `background-color`，而 HUD 的背景是内联
+     `linear-gradient`（近乎不透明的 background-image）会把它整个盖住 ——
+     也就是说当年即使接上了也看不见。改成动画 `filter: brightness()`，
+     它不和 background / box-shadow 抢，内联样式也压不住
+   - `damage-number` / `heal-number` / `shake-on-hit` 仍未接：它们需要知道
+     「哪个单位在什么时候掉了多少血」，而战报只有文本。要么服务端补一个带坐标的
+     伤害事件，要么客户端 diff 单位 hp —— 属于独立一期
 
 6. **记号库 `theme/glyphs.tsx` 未建**（P1）。P0 的朝向尖是棋子自身的一部分，不走记号库。
 
@@ -497,16 +507,52 @@ export const MOVE_FLAG_NO_ATTACK = 2;   // 本回合不能攻击
 一处措辞要诚实：`damageUp` 是**"有机会 +1"** —— 目标相邻己方步兵 ≥2 时「步兵护卫」
 会抵消这个加成（`handleAttack` 里的分支）。图例已照此措辞。
 
+### §6.2「可击杀」实心矛尖：已完成（含伤害预测重构）
+
+`depthDefenseTriggered` 那 91 行里，**判定是纯的，副作用才是脏的**。
+按这条缝把它拆开，抽出四个纯查询到 `shared/rules/queries.ts`：
+
+| 函数 | 作用 |
+|---|---|
+| `findRearInfantrySupport(a, t, units)` | 纵深抗击的支援队列（要求**连续**，遇空格即停） |
+| `isDepthDefended(a, t, units)` | 上面那个队列是否非空 |
+| `adjacentFriendlyInfantryCount(t, units)` | ≥2 时「步兵护卫」抵消骑兵冲锋加成 |
+| `predictDamage(a, t, units)` | 基础 1 + 冲锋加成 − 纵深抗击，三者合成 |
+| `isLethal(a, t, units)` | `predictDamage >= target.hp` |
+
+`handleAttack` 现在也走这几个函数 —— 击退仍然用 `findRearInfantrySupport` 返回的队列，
+预测只用「队列非空」这个布尔值。**一份实现，两个用途**，不存在第二份伤害计算。
+
+服务端把 `lethal`（`attacks` 的子集）加进 validActions，客户端据此把矛尖画成实心。
+`validActionsFingerprint` 本来就含 `u.hp`，所以掉血会自动触发重算。
+
+配 **21 个单元测试**（`server/src/__tests__/damagePrediction.test.ts`），
+锁住几个最容易写错的点：加成只在**恰好** 2 格时触发、战车不算、
+护卫必须是**己方步兵**且 ≥2、纵深抗击要求连续且仅「弓箭手打步兵」。
+
+实机验证（hotseat 实打）：
+
+| 验证点 | 结果 |
+|---|---|
+| 冷白段 = 本回合不可攻击 | 战报「骑兵移动3格，本回合无法攻击」 |
+| 琥珀段 = 伤害 +1 | 战报「骑兵冲锋：伤害+1」→ 造成 2 点 |
+| 攻击范围朱色 | 实测 `#E2564B`，不再是移动的青色 |
+| **实心**矛尖 | 「步兵被击杀」，场上单位 8→7 |
+| **空心**矛尖 | 造成 1 点，目标剩 1 血（棋子体力弧同步变 1 段） |
+
+### 顺手修掉的一个操作障碍
+
+攻击的落点判定在格子层，而棋子的圆盘正好盖住格心 —— 原来点敌方棋子
+`handleUnitClick` 直接 `return`，玩家必须瞄准格子**边缘**那一圈才点得到
+（实测要偏离格心约 0.38 个格高）。现在攻击/转化这类定向模式下，
+点敌方棋子会转发给 `handleHexClick`，合法性判断仍在它内部。
+
 **仍被服务端字段阻塞（见 §7）：**
 
-| 项 | 缺什么 | 为什么这次没做 |
+| 项 | 缺什么 | 为什么还没做 |
 |---|---|---|
-| §6.2「可击杀」实心矛尖 | `lethal` | 需要把伤害预测抽成纯函数，而 `depthDefenseTriggered` 那段 **91 行带副作用**（击退、设移动限制、写战报），拆它等于重构活的攻击路径 |
-| §6.3 敌方威胁斜纹 | `threatHexes` | 需要新写一个「各兵种攻击可达范围」函数。`getAttackRangeHexes` 只覆盖机关；给近战/弓手补范围是在**新增规则推导**，写错会让威胁提示骗玩家 |
-| ②步兵方阵的脊线与盾 | `inFormation` | 同上，纵深抗击的触发条件和那 91 行耦合 |
-
-这三项都应当作为**独立一期**做，并配测试；而且 `shared/rules/queries.ts`
-与 `ShiyuanRoom.ts` 当时正被另一个会话改动，不宜同时动。
+| §6.3 敌方威胁斜纹 | `threatHexes` | 需要新写一个「各兵种攻击可达范围」函数。`getAttackRangeHexes` 只覆盖机关；给近战/弓手补范围是在**新增规则推导**，写错会让威胁提示骗玩家 —— 比没有更糟 |
+| ②步兵方阵的脊线与盾 | `inFormation` | 判定可以复用 `findRearInfantrySupport`，但「画给谁看」要先定：方阵是防守方的属性，而 validActions 只算行动方 |
 
 §6.2 无双扇形**不需要服务端字段** —— 扇形方向由玩家在客户端选，
 `getFanShapedHexes` 已在 `shared/utils/hexUtils.ts`，客户端本来就导入了。

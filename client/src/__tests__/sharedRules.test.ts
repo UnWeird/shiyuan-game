@@ -23,6 +23,9 @@ import {
 
 const mk = (over: Partial<UnitLike> & Pick<UnitLike, 'id' | 'type' | 'owner' | 'q' | 'r'>): UnitLike => ({
   s: -over.q - over.r,
+  // hp / moveDistance 是伤害预测（predictDamage / isLethal）要用的字段
+  hp: 2,
+  moveDistance: 0,
   direction: 0,
   actionsThisTurn: 0,
   hasMoved: false,

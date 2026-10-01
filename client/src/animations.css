@@ -80,71 +80,7 @@ button:disabled {
   animation: ring-pulse 2s ease-in-out infinite;
 }
 
-/* ========== 骰子动画 ========== */
-
-/* 骰子投掷旋转动画 */
-@keyframes dice-roll {
-  0% {
-    transform: rotate(0deg) scale(1);
-  }
-  25% {
-    transform: rotate(90deg) scale(1.2);
-  }
-  50% {
-    transform: rotate(180deg) scale(1);
-  }
-  75% {
-    transform: rotate(270deg) scale(1.2);
-  }
-  100% {
-    transform: rotate(360deg) scale(1);
-  }
-}
-
-.dice-rolling {
-  animation: dice-roll 0.6s ease-in-out;
-}
-
-/* 骰子选中效果 — 金边高亮 */
-.dice-selected {
-  transform: scale(1.15);
-  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.7), 0 0 12px rgba(201, 162, 39, 0.3);
-  transition: all 0.2s ease;
-}
-
-.dice-clickable {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  cursor: pointer;
-}
-
-.dice-clickable:hover {
-  transform: scale(1.1);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-}
-
 /* ========== 面板卡片动画 ========== */
-
-/* 信息面板淡入 */
-@keyframes fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.panel-card {
-  animation: fade-in 0.3s ease-out;
-  transition: box-shadow 0.3s ease;
-}
-
-.panel-card:hover {
-  box-shadow: 0 0 20px rgba(201, 162, 39, 0.12);
-}
-
 /* ========== 页面入场动画 ========== */
 
 @keyframes page-enter {
@@ -184,13 +120,30 @@ button:disabled {
 /* ========== 回合切换动画 ========== */
 
 /* 回合切换闪烁 — 琥珀/帝王金 */
+/* 骰子投掷：点「掷骰子」后转一圈再落定。
+ * 这条 keyframes 原来写好了但**从没被任何组件引用**，骰子是直接出现最终点数的。
+ * 现在由 GameBoard 在骰子结果变化时挂 600ms 的 .dice-rolling。 */
+@keyframes dice-roll {
+  0%   { transform: rotate(0deg)   scale(1);   }
+  25%  { transform: rotate(90deg)  scale(1.18); }
+  50%  { transform: rotate(180deg) scale(1);   }
+  75%  { transform: rotate(270deg) scale(1.18); }
+  100% { transform: rotate(360deg) scale(1);   }
+}
+
+.dice-rolling {
+  animation: dice-roll 0.6s ease-in-out;
+}
+
+/* 回合切换闪光。同样是写好没接线 —— 现在由 GameBoard 监听 currentPlayer 变化挂上。
+ *
+ * 原来动画的是 background-color，但 HUD 的背景是内联 style 里的 linear-gradient
+ * （近乎不透明的 background-image），会把 background-color 整个盖住 —— 也就是说
+ * 即使当年接上了也看不见。改成动画 filter：它不和 background / box-shadow 抢，
+ * 内联样式也压不住。 */
 @keyframes turn-flash {
-  0%, 100% {
-    background-color: transparent;
-  }
-  50% {
-    background-color: rgba(201, 162, 39, 0.15);
-  }
+  0%, 100% { filter: brightness(1); }
+  45%      { filter: brightness(1.45) saturate(1.15); }
 }
 
 .turn-transition {
@@ -264,18 +217,6 @@ button:disabled {
 }
 
 /* ========== 加载动画 ========== */
-
-/* 旋转加载 */
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.loading-spinner {
-  animation: spin 1s linear infinite;
-}
-
 /* 脉动加载 */
 @keyframes loading-pulse {
   0%, 100% {
@@ -288,22 +229,6 @@ button:disabled {
 
 .loading-pulse {
   animation: loading-pulse 1.5s ease-in-out infinite;
-}
-
-/* ========== 部署区域动画 ========== */
-
-/* 部署区域高亮 */
-@keyframes deploy-zone-glow {
-  0%, 100% {
-    box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
-  }
-  50% {
-    box-shadow: 0 0 20px rgba(34, 197, 94, 0.6);
-  }
-}
-
-.deploy-zone-active {
-  animation: deploy-zone-glow 2s ease-in-out infinite;
 }
 
 /* ========== 技能特效 ========== */
@@ -392,17 +317,6 @@ button:disabled {
 .gold-breathe {
   animation: gold-breathe 2s ease-in-out infinite;
 }
-
-/* 部署区域光晕 — 金绿色（起始区） */
-@keyframes deploy-zone-glow-gold {
-  0%, 100% { box-shadow: 0 0 8px rgba(201, 162, 39, 0.2);  }
-  50%       { box-shadow: 0 0 18px rgba(201, 162, 39, 0.45); }
-}
-
-.deploy-zone-gold {
-  animation: deploy-zone-glow-gold 2s ease-in-out infinite;
-}
-
 /* ========== 游戏内提示（替代原生 alert） ========== */
 
 /* 从右侧滑入并轻微回弹 */

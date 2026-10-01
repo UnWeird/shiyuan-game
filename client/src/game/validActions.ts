@@ -29,6 +29,13 @@ export interface ValidActionsPayload {
   moves: Record<string, Array<[number, number, number, number?]>>;
   attacks: Record<string, string[]>;
   /**
+   * attacks 的子集：这一下能直接击杀的目标。
+   * 伤害由服务端的 Rules.predictDamage 算（与实际结算同一份实现），
+   * 客户端不自己判血量 —— 否则会出现「画了实心矛尖却没杀掉」。
+   * 旧版服务端不发这个字段，所以可能是 undefined。
+   */
+  lethal?: Record<string, string[]>;
+  /**
    * 机关的「范围型」攻击覆盖格（弩车垂直贯穿、投石车沿朝向射击）。
    * 这类攻击不是选一个目标，而是覆盖一条线，所以和 attacks 分开表达。
    */
@@ -51,6 +58,8 @@ interface ValidActionsState {
   moves: Record<string, MoveHex[]>;
   /** unitId -> 可攻击目标 unitId */
   attacks: Record<string, string[]>;
+  /** unitId -> 其中能被一击杀死的目标 unitId */
+  lethal: Record<string, string[]>;
   /** unitId -> 范围型攻击覆盖格 */
   attackHexes: Record<string, HexCoord[]>;
 
@@ -62,6 +71,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
   forPlayer: null,
   moves: {},
   attacks: {},
+  lethal: {},
   attackHexes: {},
 
   apply: (payload) => {
@@ -77,10 +87,16 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
     for (const [unitId, list] of Object.entries(payload.attackHexes ?? {})) {
       attackHexes[unitId] = list.map(([q, r]) => ({ q, r, s: -q - r }));
     }
-    set({ forPlayer: payload.forPlayer, moves, attacks: payload.attacks ?? {}, attackHexes });
+    set({
+      forPlayer: payload.forPlayer,
+      moves,
+      attacks: payload.attacks ?? {},
+      lethal: payload.lethal ?? {},
+      attackHexes,
+    });
   },
 
-  clear: () => set({ forPlayer: null, moves: {}, attacks: {}, attackHexes: {} }),
+  clear: () => set({ forPlayer: null, moves: {}, attacks: {}, lethal: {}, attackHexes: {} }),
 }));
 
 /** 供 React 之外使用（ColyseusService 是单例） */
@@ -97,6 +113,11 @@ export function getServerMoves(unitId: string): MoveHex[] {
 /** 读取某个单位可攻击的目标 id */
 export function getServerAttackTargets(unitId: string): string[] {
   return useValidActionsStore.getState().attacks[unitId] ?? [];
+}
+
+/** 读取某个单位能一击击杀的目标 id（attacks 的子集） */
+export function getServerLethalTargets(unitId: string): string[] {
+  return useValidActionsStore.getState().lethal[unitId] ?? [];
 }
 
 /** 读取某个单位的范围型攻击覆盖格（弩车贯穿线、投石车射击线） */

@@ -1206,6 +1206,15 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     const forPlayer = this.state.currentPlayer as 'player1' | 'player2';
     const moves: Record<string, Array<[number, number, number, number]>> = {};
     const attacks: Record<string, string[]> = {};
+    /**
+     * attacks 的子集：这一下打下去能直接击杀的目标。
+     * 客户端据此把矛尖画成实心（空心 = 打得到，实心 = 这一下能杀），
+     * 玩家不用自己算血量。
+     *
+     * 伤害数值走 Rules.predictDamage —— 和 handleAttack 落伤害时**同一份实现**，
+     * 否则会出现「画了实心矛尖却没杀掉」。
+     */
+    const lethal: Record<string, string[]> = {};
     const attackHexes: Record<string, Array<[number, number]>> = {};
 
     this.state.units.forEach((unit, id) => {
@@ -1229,7 +1238,18 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
 
       const a = this.getAttackableTargets(unit);
-      if (a.length > 0) attacks[id] = a;
+      if (a.length > 0) {
+        attacks[id] = a;
+        const deadly = a.filter(targetId => {
+          const t = this.state.units.get(targetId);
+          return !!t && Rules.isLethal(
+            unit as unknown as Rules.UnitLike,
+            t as unknown as Rules.UnitLike,
+            this.unitList
+          );
+        });
+        if (deadly.length > 0) lethal[id] = deadly;
+      }
 
       // 机关的「范围型」攻击高亮：不是打某个目标，而是覆盖一条线
       const hexes = this.getAttackRangeHexes(unit);
@@ -1238,7 +1258,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
     });
 
-    return { forPlayer, phase: this.state.phase, moves, attacks, attackHexes };
+    return { forPlayer, phase: this.state.phase, moves, attacks, lethal, attackHexes };
   }
 
   /** 机关的范围型攻击覆盖格。规则实现见 shared/rules/queries.ts */
@@ -1776,33 +1796,18 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // === 步兵纵深抗击和击退传导机制（仅对弓箭手攻击有效）===
+    //
+    // 「背后有没有连续的己方步兵」这段判定已经抽到 shared/rules/queries.ts，
+    // 因为 buildValidActions 要用同一份计算来判断「这一下能不能杀」（lethal）。
+    // 这里只留副作用：击退传导、设移动限制、写战报。
     let depthDefenseTriggered = false;
     if (target.type === 'infantry' && attacker.type === 'archer') {
-      const target_cell = { q: target.q, r: target.r, s: target.s };
       const source_cell = { q: attacker.q, r: attacker.r, s: attacker.s };
-
-      // 查找反方向轴线上**连续**的己方步兵
-      const axisLine = getAxisLineFromTarget(target_cell, source_cell, 5);
-      const rearInfantries: Array<{ unit: UnitSchema; distance: number }> = [];
-
-      // 逐格检查，必须连续
-      for (const hex of axisLine) {
-        const unit = Array.from(this.state.units.values()).find(u =>
-          u.owner === target.owner && u.type === 'infantry' &&
-          u.q === hex.q && u.r === hex.r && u.s === hex.s
-        );
-
-        if (unit) {
-          // 找到己方步兵，加入列表
-          rearInfantries.push({
-            unit,
-            distance: hexDistance(hex, source_cell)
-          });
-        } else {
-          // 遇到空格子或非己方步兵，停止检查
-          break;
-        }
-      }
+      const rearInfantries = Rules.findRearInfantrySupport(
+        attacker as unknown as Rules.UnitLike,
+        target as unknown as Rules.UnitLike,
+        this.unitList
+      ) as unknown as Array<{ unit: UnitSchema; distance: number }>;
 
       if (rearInfantries.length > 0) {
         depthDefenseTriggered = true;
@@ -1866,33 +1871,26 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
     }
 
-    // === 计算伤害（如果触发纵深抗击则免伤） ===
-    let damage = 0;
-    if (!depthDefenseTriggered) {
-      damage = 1;
-
-      // 骑兵移动距离影响伤害（冲锋+1）
-      if (attacker.type === 'cavalry' && attacker.moveDistance === 2) {
-        // 任意目标：若相邻己方步兵≥2，则骑兵冲锋+1无效
-        const targetNeighborPos = { q: target.q, r: target.r, s: target.s };
-        const targetNeighbors = hexNeighbors(targetNeighborPos);
-        const adjacentFriendlyInfantry = targetNeighbors.filter(neighborPos => {
-          const neighborUnit = Array.from(this.state.units.values()).find(u =>
-            u.q === neighborPos.q && u.r === neighborPos.r && u.s === neighborPos.s
-          );
-          return neighborUnit &&
-                 neighborUnit.owner === target.owner &&
-                 neighborUnit.type === 'infantry';
-        }).length;
-
-        if (adjacentFriendlyInfantry >= 2) {
-          this.addBattleLog(`步兵护卫：相邻己方步兵≥2，骑兵冲锋伤害+1无效`);
-        } else {
-          damage += 1;
-          this.addBattleLog(`骑兵冲锋：伤害+1`);
-        }
-      }
-
+    // === 计算伤害 ===
+    //
+    // 数值由 Rules.predictDamage 算（纵深抗击免伤、骑兵冲锋 +1、步兵护卫抵消加成）。
+    // 和 buildValidActions 的 lethal 判断共用同一份实现 ——
+    // 否则客户端画出来的「这一下能杀」会和实际结算对不上。
+    // 这里只负责落值和写战报。
+    const damage = Rules.predictDamage(
+      attacker as unknown as Rules.UnitLike,
+      target as unknown as Rules.UnitLike,
+      this.unitList
+    );
+    if (attacker.type === 'cavalry' && attacker.moveDistance === 2) {
+      const guarded = Rules.adjacentFriendlyInfantryCount(
+        target as unknown as Rules.UnitLike, this.unitList
+      ) >= 2;
+      this.addBattleLog(guarded
+        ? `步兵护卫：相邻己方步兵≥2，骑兵冲锋伤害+1无效`
+        : `骑兵冲锋：伤害+1`);
+    }
+    if (damage > 0) {
       target.hp -= damage;
     }
     attacker.hasAttacked = true;

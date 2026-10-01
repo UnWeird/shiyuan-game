@@ -39,8 +39,13 @@ interface HexMapProps {
    * 原来两者都走同一套填充，攻击范围显示成"可移动"的青色，是实打实的误导。
    */
   highlightKind?: 'move' | 'attack';
-  /** 范围内有敌军的格子，挂一个矛尖记号 */
+  /** 范围内有敌军的格子，挂一个空心矛尖（打得到） */
   threatHexes?: HexCoord[];
+  /**
+   * 其中能一击击杀的格子，矛尖改实心。
+   * 由服务端的 lethal 字段推出，不在客户端判血量。
+   */
+  lethalHexes?: HexCoord[];
   /** 棋子与其它随对局变化的叠加层，由 GameBoard 提供 */
   children?: React.ReactNode;
 }
@@ -52,6 +57,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
   highlightedHexes = [],
   highlightKind = 'move',
   threatHexes = [],
+  lethalHexes = [],
   children,
 }) => {
   const { player1Base, player2Base, selectedUnitId, units } = useGameStore();
@@ -76,6 +82,9 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
    *   冷白 本回合不可攻击（代价，所以是失色的一档）
    * 距离本身不画 —— 玩家看格子就能数。
    */
+  const isLethalHex = (h: HexCoord) =>
+    lethalHexes.some(l => l.q === h.q && l.r === h.r);
+
   const tileColor = (h: { damageUp?: boolean; noAttack?: boolean }) =>
     highlightKind === 'attack' ? INFO.threat
       : h.noAttack ? INFO.muted
@@ -163,7 +172,8 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
           const c = hexToPixel(h, hexSize);
           return (
             <g key={`bl-${h.q},${h.r}`} transform={`translate(${c.x + hexSize * 0.58}, ${c.y - hexSize * 0.52})`}>
-              <Blade u={hexSize * 0.4} />
+              {/* 空心 = 打得到，实心 = 这一下能杀。同一个字根，一个修饰 */}
+              <Blade u={hexSize * 0.4} solid={isLethalHex(h)} />
             </g>
           );
         })}

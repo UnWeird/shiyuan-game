@@ -1,6 +1,7 @@
 import { Direction } from '../types';
 import type { HexCoord } from '../types';
 import {
+  getAxisLineFromTarget,
   getDistanceToBaseline,
   getMachineOccupiedHexes,
   getShootingPath,
@@ -58,6 +59,10 @@ export interface UnitLike {
   q: number;
   r: number;
   s: number;
+  /** 当前体力。伤害预测要用它判断这一下是否致命 */
+  hp: number;
+  /** 骑兵本回合移动了几格（只有骑兵会被记录），影响冲锋伤害加成 */
+  moveDistance: number;
   direction: number;
   actionsThisTurn: number;
   hasMoved: boolean;
@@ -313,6 +318,105 @@ units: readonly UnitLike[]
  * 列出某个单位当前可以攻击的所有目标 id。
  * 与对应的 handle* 共用同一个谓词，所以不会和校验结果不一致。
  */
+/* ══════════════════ 伤害预测 ══════════════════
+ *
+ * 这三个函数是**纯查询**，从 handleAttack 里抽出来的，目的是让
+ * 「客户端画的致命提示」和「服务端实际结算的伤害」用同一份计算。
+ *
+ * 抽的时候只搬了判定，没搬副作用：纵深抗击触发后的击退、设置移动限制、
+ * 写战报仍然留在 handleAttack —— 它需要 findRearInfantrySupport 返回的列表，
+ * 而预测只需要「列表非空」这个布尔值。一份实现，两个用途。
+ */
+
+/**
+ * 纵深抗击的支援队列：被弓箭手攻击的步兵，其**背离攻击者方向**的轴线上
+ * 连续排列的己方步兵。
+ *
+ * 「连续」很关键：一旦遇到空格或非己方步兵就停，不能跳过缺口。
+ * 返回值按距攻击者的距离升序，调用方取最远的那个做击退。
+ */
+export function findRearInfantrySupport(
+  attacker: UnitLike,
+  target: UnitLike,
+  units: readonly UnitLike[]
+): Array<{ unit: UnitLike; distance: number }> {
+  if (target.type !== 'infantry' || attacker.type !== 'archer') return [];
+
+  const targetCell = { q: target.q, r: target.r, s: target.s };
+  const sourceCell = { q: attacker.q, r: attacker.r, s: attacker.s };
+  const out: Array<{ unit: UnitLike; distance: number }> = [];
+
+  for (const hex of getAxisLineFromTarget(targetCell, sourceCell, MAP_RADIUS)) {
+    const unit = units.find(u =>
+      u.owner === target.owner && u.type === 'infantry' &&
+      u.q === hex.q && u.r === hex.r && u.s === hex.s
+    );
+    if (!unit) break; // 不连续就停
+    out.push({ unit, distance: hexDistance(hex, sourceCell) });
+  }
+  return out;
+}
+
+/** 目标是否触发纵深抗击（免掉这次伤害） */
+export function isDepthDefended(
+  attacker: UnitLike,
+  target: UnitLike,
+  units: readonly UnitLike[]
+): boolean {
+  return findRearInfantrySupport(attacker, target, units).length > 0;
+}
+
+/**
+ * 目标相邻的己方步兵数量。
+ * ≥2 时「步兵护卫」生效，抵消骑兵的冲锋伤害加成。
+ */
+export function adjacentFriendlyInfantryCount(
+  target: UnitLike,
+  units: readonly UnitLike[]
+): number {
+  const pos = { q: target.q, r: target.r, s: target.s };
+  return hexNeighbors(pos).filter(n =>
+    units.some(u =>
+      u.owner === target.owner && u.type === 'infantry' &&
+      u.q === n.q && u.r === n.r && u.s === n.s
+    )
+  ).length;
+}
+
+/**
+ * 预测一次普通攻击造成的伤害。
+ *
+ *   基础 1
+ *   骑兵本回合移动满 2 格 → +1，但目标相邻己方步兵 ≥2 时该加成被抵消
+ *   触发纵深抗击 → 0
+ *
+ * 注意这只覆盖 handleAttack 的普通攻击路径；弩车贯穿、投石车溅射、
+ * 无双扇形各有自己的结算，不走这里。
+ */
+export function predictDamage(
+  attacker: UnitLike,
+  target: UnitLike,
+  units: readonly UnitLike[]
+): number {
+  if (isDepthDefended(attacker, target, units)) return 0;
+
+  let damage = 1;
+  if (attacker.type === 'cavalry' && attacker.moveDistance === 2) {
+    if (adjacentFriendlyInfantryCount(target, units) < 2) damage += 1;
+  }
+  return damage;
+}
+
+/** 这一下能否击杀 —— 客户端据此把矛尖画成实心 */
+export function isLethal(
+  attacker: UnitLike,
+  target: UnitLike,
+  units: readonly UnitLike[]
+): boolean {
+  const dmg = predictDamage(attacker, target, units);
+  return dmg > 0 && target.hp <= dmg;
+}
+
 export function getAttackableTargets(unit: UnitLike, units: readonly UnitLike[]): string[] {
   const out: string[] = [];
   units.forEach(other => {

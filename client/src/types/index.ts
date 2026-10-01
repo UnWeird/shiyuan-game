@@ -1,51 +1,22 @@
-// 六边形坐标系统 (Cube Coordinates)
-export interface HexCoord {
-  q: number; // x 轴
-  r: number; // y 轴
-  s: number; // z 轴 (q + r + s = 0)
-}
+/**
+ * 客户端类型定义
+ *
+ * 基础类型（坐标、枚举、配置）统一从 shared/types.ts 再导出，
+ * 不再在这里重复声明 —— 枚举在 TypeScript 里是名义类型，
+ * 同一个枚举声明两遍会得到互不兼容的两个类型，
+ * 客户端就没法把自己的 Direction 传给 shared 里的六边形工具函数。
+ *
+ * Unit / General / MachineUnit / GameState 保留在本地：
+ * 客户端这几个接口已经和 shared 版本分歧（多了 statusTag、
+ * movementRestrictionSourceQ/R/S、太平将军状态、已消耗库存等字段），
+ * 合并它们是另一件事，不在这次去重范围内。
+ */
+export type { HexCoord, MapConfig, BudgetConfig } from '../../../shared/types';
+export { Player, UnitType, Direction, GeneralType, ActionType, GamePhase } from '../../../shared/types';
 
-// 玩家
-export enum Player {
-  PLAYER1 = 'player1',
-  PLAYER2 = 'player2',
-  NEUTRAL = 'neutral',
-}
-
-// 单位类型
-export enum UnitType {
-  INFANTRY = 'infantry',      // 步兵 (一角)
-  CAVALRY = 'cavalry',         // 骑兵 (一角+一角)
-  ARCHER = 'archer',           // 弓箭手 (五角)
-  GENERAL = 'general',         // 将军 (一元)
-  BALLISTA = 'ballista',       // 弩车 (神机机关)
-  CHARIOT = 'chariot',         // 战车 (神机机关)
-  CATAPULT = 'catapult',       // 投石车 (神机机关)
-  NEUTRAL_MARKER = 'neutral_marker', // 中立单位标记 (仁德专属)
-  HUANGJIN_LISHI = 'huangjin_lishi', // 黄巾力士 (太平将军专属)
-  HUANGJIN_ZEI = 'huangjin_zei',    // 黄巾贼 (太平将军起义后)
-}
-
-// 方向 (六边形有6个方向，对应6条边)
-// 对于 flat-top 布局的六边形
-export enum Direction {
-  EAST = 0,         // 东 (正东)
-  NORTH_EAST = 1,   // 东北
-  NORTH_WEST = 2,   // 西北
-  WEST = 3,         // 西 (正西)
-  SOUTH_WEST = 4,   // 西南
-  SOUTH_EAST = 5,   // 东南
-  NORTH = 6,        // 北 (正北，用于弩车等特殊单位)
-  SOUTH = 7,        // 南 (正南，用于弩车等特殊单位)
-}
-
-// 将领类型
-export enum GeneralType {
-  WUSHUANG = 'wushuang',   // 无双
-  SHENJI = 'shenji',       // 神机
-  RENDE = 'rende',         // 仁德
-  TAIPING = 'taiping',     // 太平
-}
+// 下面这些类型需要引用基础类型，导入一份本地别名
+import type { HexCoord } from '../../../shared/types';
+import { UnitType, Player, Direction, GeneralType, GamePhase } from '../../../shared/types';
 
 // 单位状态
 export interface Unit {
@@ -89,26 +60,6 @@ export interface MachineUnit extends Unit {
   pierceCount?: number;           // 弩车：贯穿单位数（包含友方）
   hasActedThisTurn?: boolean;     // 机关单位：本回合是否已行动（移动或攻击）
   chargeLevel?: number;           // 投石车：蓄力层数（0/1/2）
-}
-
-// 行动类型
-export enum ActionType {
-  DEPLOY = 'deploy',
-  MOVE = 'move',
-  ATTACK = 'attack',
-  ROTATE = 'rotate',
-  ABILITY = 'ability',      // 使用技能
-}
-
-// 游戏阶段
-export enum GamePhase {
-  SETUP = 'setup',                    // 设置阶段 (选将、配兵、设置大本营)
-  GENERAL_SELECT = 'general_select',  // 选择将领
-  ARMY_BUILD = 'army_build',          // 配置部队
-  BASE_SETUP = 'base_setup',          // 设置大本营
-  DEPLOY = 'deploy',                  // 部署阶段
-  ACTION = 'action',                  // 行动阶段
-  END = 'end',                        // 游戏结束
 }
 
 // 游戏状态
@@ -205,21 +156,10 @@ export interface GameState {
   player1TaipingDeployInitDone: boolean;
   player2TaipingDeployInitDone: boolean;
 
+  // 服务端权威战报（仅在线模式有值；单机模式用 GameBoard 本地日志）
+  serverBattleLog: string[];
+
   // 历史记录 (用于回放和撤销)
   history: GameState[];
 }
 
-// 地图配置
-export interface MapConfig {
-  radius: number;           // 六边形边长 (默认6)
-  hexSize: number;          // 每个六边形的显示大小 (像素)
-}
-
-// 预算配置
-export interface BudgetConfig {
-  infantryCost: number;     // 步兵成本 (0.1元，即一角)
-  cavalryCost: number;      // 骑兵成本 (0.2元，即两角)
-  archerCost: number;       // 弓箭手成本 (0.5元，即五角)
-  generalCost: number;      // 将军成本 (1元)
-  totalBudget: number;      // 总预算 (4元)
-}

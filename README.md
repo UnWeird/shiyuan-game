@@ -44,9 +44,14 @@ npm install
 \`\`\`
 
 ### 启动开发服务器
-\`\`\`bash
-npm run dev
-\`\`\`
+
+**服务端和客户端都要起** —— 包括「同机对弈」：规则只有服务端一份实现，
+客户端不再自带规则引擎，所以同机轮流也是一个服务端房间（`hotseat` 模式）。
+
+```bash
+npm run dev --prefix server   # 或 npm run dev:tools --prefix server 带上局面存读工具
+npm run dev --prefix client
+```
 
 ### 构建生产版本
 \`\`\`bash
@@ -113,6 +118,104 @@ client/
 - 组件化设计，易于扩展
 - 六边形工具函数独立封装
 - 游戏逻辑通过 Hooks 复用
+
+### 测试
+
+```bash
+npm test --prefix client   # 68 个
+npm test --prefix server   # 26 个
+```
+
+两端都有测试（client 68 个 + server 26 个）：
+
+- `client`：`shared/utils/hexUtils.ts` 的六边形与规则数学、以及「指令待确认」的落定判定
+- `server`：规则谓词 `checkAttackLegality` / `getAttackableTargets` / `getValidMoves`
+  —— 直接 `new ShiyuanRoom()` 不起 transport 即可调用，测的是生产代码本身
+
+客户端那 51 个覆盖 `shared/utils/hexUtils.ts`—— 这是全项目 bug 最集中的地方
+（见 commit `8cd8a2a`），而且全是纯函数，不需要 React 也不需要网络。
+
+测试写法上刻意以**不变量和规则**为主，而不是把当前输出抄成期望值，
+否则只会把现有 bug 固化成测试。写完做过变异测试验证有效性：
+累计手工注入 50 个 bug（距离公式去掉除以 2、扇形左臂从 60° 改成 120°、
+弩车占格方向前后颠倒、击退不检查越界、步兵传导只处理第一个……），全部被测试捕获。
+
+`shared/` 的测试挂在 `client/src/__tests__/` 下（`shared/` 没有自己的 `package.json`，
+不值得为它单独建一套 `node_modules`）；服务端规则的测试在 `server/src/__tests__/`，
+并在 `server/tsconfig.json` 的 `exclude` 里排除，不会进 `lib/` 产物。
+
+两端 Vitest 都固定在 `^2`：3.x 起要求 Vite 6+，而本项目用的是 Vite 5。
+
+### 规则只有一份实现
+
+客户端不再有自己的规则引擎。以前 `client/src/hooks/useGameActions.ts`（2024 行）
+和服务端各实现了一遍规则，两边会漂移 —— 典型症状是界面高亮了一个格子、
+点下去却被服务端拒绝（例如无双将军用掉技能解除行动限制后，客户端算不出可移动格）。
+
+现在：
+
+- **合法移动 / 可攻击目标由服务端计算后推送**（`validActions` 消息）。
+  不能放进 `GameStateSchema`，因为它已满 64 字段，只能走消息。
+  服务端在 `onBeforePatch` 里用状态指纹判断要不要重算，避免 20 次/秒白算。
+- **规则查询层在 `shared/rules/queries.ts`**：`getValidMoves` /
+  `checkAttackLegality` / `checkBallistaMeleeLegality` / `getAttackableTargets` 等
+  都是纯函数，只读状态、不改状态、不发消息。唯一依赖是「场上有哪些单位」，
+  所以参数只要一个单位数组，不需要把整个 GameState 抽象出来。
+  服务端 `ShiyuanRoom` 只是薄委托，客户端也能直接 import（不需要 Colyseus）。
+- **高亮和校验共用同一份实现**，结构上不可能不一致。
+- 机关的「范围型」攻击（弩车垂直贯穿、投石车沿朝向射击）通过 `attackHexes` 一起下发
+  —— 这类攻击覆盖一条线而不是选某个目标，所以和 `attacks` 分开表达。
+- **同机对弈是服务端的 hotseat 房间**：一个客户端控制双方，
+  `getPlayerRole()` 返回 `currentPlayer`。代价是单机也需要服务端在跑。
+
+### 局面存档 / 读档（开发工具）
+
+用来跳过「为了验一个中局 bug，开两个浏览器窗口从选将开始打十分钟」。
+
+启动带开发工具的服务端：
+
+```bash
+npm run dev:tools --prefix server
+```
+
+然后在页面里按 **Ctrl+Shift+D**（或点左下角 `DEV`）打开面板：
+
+- **存档** — 给当前局面起个名字存下来。联网模式存的是服务端权威状态，单机模式存的是本地 store。
+- **载入** — 一键回到那个局面。联网模式下会同时补发 `gameStart`，所以一个人也能直接进棋盘调试，不需要第二个玩家。
+- **↓** — 导出成 `.json`，可以提交进仓库当 bug 复现用例，以后写自动化测试能直接拿来当 fixture。
+
+注意：
+
+- 联网存读需要服务端带 `SHIYUAN_DEV_TOOLS=1`。这个开关会让任何客户端都能改写对局状态，**不要在正式服打开**。
+- 整个 `client/src/dev/` 和 `window.__game` / `__ui` / `__svc` 只在 `import.meta.env.DEV` 下存在，生产构建会被完整 tree-shake。
+- 载入不会重置组件内部的临时 UI 状态（比如正处于扇形攻击选方向中），必要时刷新页面后再载入。
+
+注意：客户端目前**不自己算**高亮，仍然用服务端推下来的结果。原因是客户端同步到的单位
+缺 4 个判定要用的字段（`hasActedThisTurn` / `generalType` / `bonusActionLimit` /
+`unlimitedActions`）—— 这也正是当年客户端那份实现必然漂移的根源：
+它根本看不到 `unlimitedActions`，所以无论怎么写都实现不了那条规则。
+
+要让单机完全不依赖服务端，还需要两步：把这 4 个字段同步下去，
+以及把结算逻辑（移动/攻击的实际效果、击退连锁、击杀、掷骰）也抽出来 —— 后者仍在
+`ShiyuanRoom` 里，和 Colyseus Schema、`client.send` 深度耦合，是独立的一次重构。
+
+### 机关单位的射程校验
+
+补一句历史：投石车、战车原来落在 `checkAttackLegality` 里「没有任何射程判定」的分支，
+弩车近战更是扣完行动点就直接扣血 —— **范围规则只存在于客户端的高亮计算里**。
+也就是说绕过界面直接发消息，投石车可以隔着整张图打对角。现在：
+
+- 投石车只能打当前朝向直线上的目标（射程 5）
+- 弩车走 `checkBallistaMeleeLegality`（体积相邻 + 敌我 + 本回合未行动）
+- 战车没有攻击动作，弩车不走普通攻击路径，两者都会被明确拒绝
+
+机关占多格，三者的落点现在都要求**整个车身在棋盘内**（以前只有战车这么查，
+弩车/投石车各有 60 个落点会让车身伸出棋盘一格）。
+
+### Colyseus Schema 字段上限
+
+`GameStateSchema` 目前正好 **64 个字段，已达上限**（见 commit `dc72383`）。再加 `@type` 字段会直接报错。
+需要新增同步状态时：复用现有字段、改用 `broadcast()` 消息，或把相关字段收进一个嵌套 Schema。
 
 ## License
 

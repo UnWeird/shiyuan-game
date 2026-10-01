@@ -16,9 +16,18 @@ import {
   knockbackInfantryChain,
   getCatapultSplashTargets,
   getDistanceToBaseline,
+  getShootingPath,
   hexLineDraw,
 } from '../../../shared/utils/hexUtils';
 import { HexCoord } from '../../../shared/types';
+import { captureState, restoreState, StateSnapshot } from '../dev/stateSnapshot';
+import * as Rules from '../../../shared/rules/queries';
+
+/**
+ * 开发工具开关。默认关闭；设 SHIYUAN_DEV_TOOLS=1 才启用存档/读档消息。
+ * 打开后任何客户端都能改写对局状态，绝不能在正式服开启。
+ */
+const DEV_TOOLS = process.env.SHIYUAN_DEV_TOOLS === '1';
 
 /**
  * 十元（Shiyuan）游戏房间
@@ -35,6 +44,27 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   private disconnectedSessions = new Set<string>();
   // 已被接管：存储已被新玩家接管的原 sessionId（用于 onReconnection 中转为观战者）
   private takenOverSessions = new Set<string>();
+
+  /** 上次下发合法动作时的状态指纹，用于避免每个 patch tick 都重算 */
+  private lastValidActionsFingerprint = '';
+
+  /**
+   * 规则查询层要的单位快照。
+   *
+   * UnitSchema 的字段是 UnitLike 的超集，所以可以直接当数组传过去，
+   * 不需要逐字段映射。
+   */
+  private get unitList(): Rules.UnitLike[] {
+    return Array.from(this.state.units.values()) as unknown as Rules.UnitLike[];
+  }
+
+  /**
+   * 同机轮流（hotseat）模式：一个客户端控制双方，用于「单机对弈」。
+   *
+   * 这样做是为了让全项目只有一份规则实现 —— 以前单机模式在客户端另有一套
+   * 2000 行的规则引擎，和服务端这份会漂移。
+   */
+  private isHotseat = false;
 
   /** 统计当前活跃玩家数（排除断线中和已被接管的） */
   private getActivePlayerCount(): number {
@@ -63,7 +93,14 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   onCreate(options: any) {
     this.setState(new GameStateSchema());
 
-    console.log("🎮 十元游戏房间创建成功！Room ID:", this.roomId);
+    this.isHotseat = options?.hotseat === true;
+    if (this.isHotseat) {
+      // 同机轮流只需要一个客户端，不接第二人也不接观战
+      this.maxClients = 1;
+      console.log("🎮 十元房间创建成功（同机轮流）！Room ID:", this.roomId);
+    } else {
+      console.log("🎮 十元游戏房间创建成功！Room ID:", this.roomId);
+    }
 
     // 注册消息处理器
     this.registerMessageHandlers();
@@ -78,6 +115,26 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   }
 
   onJoin(client: Client, options: any) {
+    // 同机轮流：唯一的客户端同时代表双方，不等第二人，直接开局
+    if (this.isHotseat) {
+      this.playerRoles.set(client.sessionId, 'player1'); // 占位；实际角色由 getPlayerRole 动态返回
+      client.send("role", {
+        role: this.state.currentPlayer,
+        message: "同机轮流：你操作双方",
+        hotseat: true,
+      });
+      this.broadcast("gameStart", { message: "同机轮流开始！请为玩家一选择将领" });
+      this.setMetadata({
+        gameName: "十元（同机轮流）",
+        players: 1,
+        maxPlayers: 1,
+        status: "playing",
+        spectators: 0,
+      });
+      console.log(`🪑 同机轮流入座: ${client.sessionId}`);
+      return;
+    }
+
     const isSpectator = options.spectator === true;
 
     // 优先检查是否有断线槽位可以接管（非观战者才可接管）
@@ -426,12 +483,67 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     this.onMessage("taipingTianmingConfirm", (client, data) => {
       this.handleTaipingTianmingConfirm(client);
     });
+
+    // === 开发工具：存档 / 读档（仅 SHIYUAN_DEV_TOOLS=1 时注册） ===
+    if (DEV_TOOLS) {
+      this.onMessage("__devSaveState", (client, data: { label?: string }) => {
+        const snapshot = captureState(this.state, data?.label);
+        client.send("__devSnapshot", snapshot);
+        console.log(`[DEV] ${client.sessionId} 导出局面快照 (${this.state.units.size} 单位)`);
+      });
+
+      this.onMessage("__devLoadState", (client, data: { snapshot: StateSnapshot }) => {
+        const result = restoreState(this.state, data?.snapshot);
+        console.log(`[DEV] ${client.sessionId} 载入局面:`, result.message);
+        if (result.unknownFields.length > 0) {
+          console.warn('[DEV] 快照含当前 schema 不认识的字段:', result.unknownFields);
+        }
+        if (result.ok) {
+          this.addBattleLog(`[开发] ${result.message}`);
+          this.broadcast("info", { message: result.message });
+          this.broadcast("phaseChange", { phase: this.state.phase });
+          // 载入的是一个已开局的局面时补发 gameStart：
+          // 客户端大厅是等这条消息才进棋盘的，否则一个人调试会一直卡在「恭候对手」。
+          if (this.state.phase !== "general_select") {
+            this.broadcast("gameStart", { message: "[开发] 载入局面" });
+          }
+        } else {
+          client.send("error", { message: `载入失败：${result.message}` });
+        }
+      });
+
+      console.log('[DEV] 开发工具已启用：__devSaveState / __devLoadState');
+    }
   }
 
   /**
    * 获取客户端的玩家角色
    */
+  /**
+   * 同机轮流专用：设置阶段（选将/配兵/大本营）里一方做完后把行动方交给另一方。
+   *
+   * 联网模式下双方是「同时各自操作自己那一侧」，`currentPlayer` 在这三个阶段不需要变；
+   * 同机轮流只有一个客户端，而它的角色由 `getPlayerRole` 按 `currentPlayer` 返回，
+   * 所以必须显式交接，否则第二次操作会被判成「已经选择过了」而卡住。
+   *
+   * @param phaseAdvanced 本次操作是否已让阶段推进（双方都做完了）
+   */
+  private hotseatAfterSetupAction(phaseAdvanced: boolean) {
+    if (!this.isHotseat) return;
+    this.state.currentPlayer = phaseAdvanced
+      ? "player1"                                            // 进入下一阶段，从玩家一开始
+      : (this.state.currentPlayer === "player1" ? "player2" : "player1");
+  }
+
   private getPlayerRole(client: Client): 'player1' | 'player2' | null {
+    // 同机轮流：这个客户端永远就是当前行动方，
+    // 因此所有 `role !== currentPlayer` 的回合校验自然成立，无需逐个改。
+    if (this.isHotseat) {
+      return this.playerRoles.has(client.sessionId)
+        ? (this.state.currentPlayer as 'player1' | 'player2')
+        : null;
+    }
+
     const role = this.playerRoles.get(client.sessionId);
     // 观战者返回 null，只有玩家可以操作
     return (role === 'player1' || role === 'player2') ? role : null;
@@ -440,8 +552,43 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   /**
    * 添加战斗日志
    */
+  /**
+   * 内部标识符 → 中文显示名。
+   *
+   * 战报现在是直接显示给玩家的（以前只存在服务端、客户端另画一份自己猜的），
+   * 所以不该出现 `player1移动infantry到(1,1,-2)` 这种字样。
+   *
+   * 在 addBattleLog 这一个出口统一翻译，而不是去改 144 处模板字符串 ——
+   * 标识符是一个固定小集合，边界替换一次就全覆盖了。
+   * `\b` 把下划线算作单词字符，所以 `\bneutral\b` 不会误伤 `neutral_marker`。
+   */
+  private static readonly LOG_TERMS: Array<[RegExp, string]> = [
+    [/\bneutral_marker\b/g, '中立标记'],
+    [/\bhuangjin_lishi\b/g, '黄巾力士'],
+    [/\bhuangjin_zei\b/g, '黄巾贼'],
+    [/\bplayer1\b/g, '玩家1'],
+    [/\bplayer2\b/g, '玩家2'],
+    [/\bneutral\b/g, '中立'],
+    [/\binfantry\b/g, '步兵'],
+    [/\bcavalry\b/g, '骑兵'],
+    [/\barcher\b/g, '弓箭手'],
+    [/\bgeneral\b/g, '将军'],
+    [/\bballista\b/g, '弩车'],
+    [/\bchariot\b/g, '战车'],
+    [/\bcatapult\b/g, '投石车'],
+  ];
+
+  /** 把战报文本里的内部标识符换成中文 */
+  private humanizeLog(message: string): string {
+    let out = message;
+    for (const [re, zh] of ShiyuanRoom.LOG_TERMS) {
+      out = out.replace(re, zh);
+    }
+    return out;
+  }
+
   private addBattleLog(message: string) {
-    this.state.battleLog.push(message);
+    this.state.battleLog.push(this.humanizeLog(message));
     // 只保留最近20条日志
     if (this.state.battleLog.length > 20) {
       this.state.battleLog.shift();
@@ -483,11 +630,13 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 检查是否都选完了
-    if (this.state.player1General && this.state.player2General) {
+    const bothPicked = !!(this.state.player1General && this.state.player2General);
+    if (bothPicked) {
       this.state.phase = "army_build";
       this.addBattleLog("进入配兵阶段");
       this.broadcast("phaseChange", { phase: "army_build" });
     }
+    this.hotseatAfterSetupAction(bothPicked);
   }
 
   /**
@@ -533,11 +682,13 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     const player1Done = this.state.player1Infantry > 0 || this.state.player1Cavalry > 0 || this.state.player1Archer > 0;
     const player2Done = this.state.player2Infantry > 0 || this.state.player2Cavalry > 0 || this.state.player2Archer > 0;
 
-    if (player1Done && player2Done) {
+    const bothDone = player1Done && player2Done;
+    if (bothDone) {
       this.state.phase = "base_setup";
       this.addBattleLog("进入大本营设置阶段");
       this.broadcast("phaseChange", { phase: "base_setup" });
     }
+    this.hotseatAfterSetupAction(bothDone);
   }
 
   /**
@@ -578,11 +729,13 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     const player1Done = this.state.player1BaseQ !== 0 || this.state.player1BaseR !== 0;
     const player2Done = this.state.player2BaseQ !== 0 || this.state.player2BaseR !== 0;
 
-    if (player1Done && player2Done) {
+    const bothDone = player1Done && player2Done;
+    if (bothDone) {
       this.state.phase = "deploy";
       this.addBattleLog("进入部署阶段 - 玩家1先部署");
       this.broadcast("phaseChange", { phase: "deploy" });
     }
+    this.hotseatAfterSetupAction(bothDone);
   }
 
   /**
@@ -935,6 +1088,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}骰子数为0，游戏结束！`);
       this.addBattleLog(`${winner === "player1" ? "玩家1" : "玩家2"}获胜！`);
       this.broadcast("phaseChange", { phase: "end" });
+      // 这条结局原先只发 phaseChange，客户端结算画面拿不到胜方，补上 gameEnd
+      this.broadcast("gameEnd", {
+        winner,
+        message: `${role === "player1" ? "玩家1" : "玩家2"}骰子数为0`,
+      });
       return;
     }
 
@@ -1018,278 +1176,137 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
   }
 
-  /**
-   * 检查一个格子是否被机关单位占据
-   * 机关单位（弩车、战车）占据多个格子，任何一个格子都不能被其他单位通过或占用
-   */
+  /** 该格是否被机关车身占用。规则实现见 shared/rules/queries.ts */
   private isHexOccupiedByMachine(hex: { q: number; r: number; s: number }): boolean {
-    // 遍历所有单位，检查是否有机关单位占据了这个格子
-    for (const unit of this.state.units.values()) {
-      if (unit.type === 'ballista' || unit.type === 'chariot') {
-        const machineType = unit.type === 'ballista' ? 'ballista' : 'chariot';
-        const occupiedHexes = getMachineOccupiedHexes(
-          { q: unit.q, r: unit.r, s: unit.s },
-          machineType
-        );
-
-        // 检查这个hex是否在机关单位占据的格子中
-        if (occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex))) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return Rules.isHexOccupiedByMachine(hex, this.unitList);
   }
 
-  /** 同 isHexOccupiedByMachine，但排除指定 id 的单位（用于战车崩毁时自身尚未删除的情况） */
+  /** 同上但排除指定单位。规则实现见 shared/rules/queries.ts */
   private isHexOccupiedByMachineExcluding(hex: { q: number; r: number; s: number }, excludeId: string): boolean {
-    for (const unit of this.state.units.values()) {
-      if (unit.id === excludeId) continue;
-      if (unit.type === 'ballista' || unit.type === 'chariot') {
-        const machineType = unit.type === 'ballista' ? 'ballista' : 'chariot';
-        const occupiedHexes = getMachineOccupiedHexes(
-          { q: unit.q, r: unit.r, s: unit.s },
-          machineType
-        );
-        if (occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex))) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return Rules.isHexOccupiedByMachineExcluding(hex, excludeId, this.unitList);
   }
 
   /**
-   * 计算单位的合法移动位置
-   * 对于骑兵，返回带有步数信息的结果
+   * 汇总当前行动方每个单位的合法移动与可攻击目标，供客户端直接用来画高亮。
+   *
+   * 不能放进 GameStateSchema —— 它已经正好 64 个字段，是 Colyseus 的上限，
+   * 所以只能作为消息下发。
+   *
+   * 移动格子编码成 [q, r, steps, flags] 四元组：s 可由 -q-r 推出，省掉一半体积。
+   *
+   * flags 是位掩码，告诉客户端「落在这一格会有什么后果」：
+   *   1  MOVE_FLAG_DAMAGE_UP  伤害 +1
+   *   2  MOVE_FLAG_NO_ATTACK  本回合不能攻击
+   *
+   * 为什么由服务端给而不是客户端按 steps 自己推：这两条后果是**规则**
+   * （见 handleMove 的骑兵分支与 handleAttack 的伤害计算），数值住在服务端。
+   * 客户端写一份 `steps===2 → 伤害+1` 看着没问题，但服务端改数值时两边立刻漂移。
    */
-  private getValidMoves(unit: UnitSchema): { q: number; r: number; s: number; steps?: number }[] {
-    const MAP_RADIUS = 5;
+  private buildValidActions() {
+    const forPlayer = this.state.currentPlayer as 'player1' | 'player2';
+    const moves: Record<string, Array<[number, number, number, number]>> = {};
+    const attacks: Record<string, string[]> = {};
+    const attackHexes: Record<string, Array<[number, number]>> = {};
 
-    // 计算行动次数上限（基础2次 + 额外行动次数）
-    const bonusActions = (unit.type === 'general' && unit.bonusActionLimit) ? unit.bonusActionLimit : 0;
-    const actionLimit = 2 + bonusActions;
+    this.state.units.forEach((unit, id) => {
+      if (!this.canCommandUnit(unit, forPlayer)) return;
 
-    // 检查是否已达到行动次数上限
-    if (unit.actionsThisTurn >= actionLimit) {
-      return [];
-    }
-
-    // 检查是否有无限行动标志（无双技能）
-    const hasUnlimitedActions = unit.type === 'general' && unit.unlimitedActions;
-
-    // 如果没有无限行动且没有额外行动次数，按照原来的规则：移动过就不能再移动
-    if (!hasUnlimitedActions && bonusActions === 0 && unit.hasMoved) {
-      return [];
-    }
-
-    const unitPos = { q: unit.q, r: unit.r, s: unit.s };
-
-    // 战车特殊移动逻辑
-    if (unit.type === 'chariot') {
-      // 检查是否已行动
-      if (unit.hasActedThisTurn) return [];
-
-      // 根据玩家方向确定移动方向
-      const dir1 = unit.owner === 'player1' ? 2 : 5; // NORTH_WEST : SOUTH_WEST
-      const dir2 = unit.owner === 'player1' ? 1 : 4; // NORTH_EAST : SOUTH_EAST
-
-      // 战车有3种移动终点：
-      // 1. 正前方（先dir1后dir2）
-      const mid_forward = hexNeighbor(unitPos, dir1);
-      const end_forward = hexNeighbor(mid_forward, dir2);
-
-      // 2. 左侧（两次dir1）
-      const mid_left = hexNeighbor(unitPos, dir1);
-      const end_left = hexNeighbor(mid_left, dir1);
-
-      // 3. 右侧（两次dir2）
-      const mid_right = hexNeighbor(unitPos, dir2);
-      const end_right = hexNeighbor(mid_right, dir2);
-
-      // 战车可以碾压敌人，检查每个终点的所有占用格子是否都在地图范围内
-      const endpoints = [end_forward, end_left, end_right];
-      return endpoints.filter(hex => {
-        const occupiedHexes = getMachineOccupiedHexes(hex, 'chariot');
-        return occupiedHexes.every(occupiedHex => isInMapRange(occupiedHex, MAP_RADIUS));
-      });
-    }
-
-    // 弩车特殊移动逻辑：不能碾压，需要检查所有占用格子
-    if (unit.type === 'ballista') {
-      // 检查是否已行动
-      if (unit.hasActedThisTurn) return [];
-
-      const range = 1;
-      const possibleMoves = hexRange(unitPos, range);
-
-      // 过滤移动位置：需要检查弩车占用的所有3格都没有障碍物
-      return possibleMoves.filter(hex => {
-        if (hexEquals(hex, unitPos)) return false;
-
-        // 检查目标位置及其占用的所有格子
-        const targetOccupiedHexes = getMachineOccupiedHexes(hex, 'ballista');
-
-        // 检查是否有任何格子被占用
-        const hasCollision = targetOccupiedHexes.some(occupiedHex => {
-          let isOccupied = false;
-          this.state.units.forEach(u => {
-            if (u.id !== unit.id && hexEquals({ q: u.q, r: u.r, s: u.s }, occupiedHex)) {
-              isOccupied = true;
-            }
-          });
-          return isOccupied;
+      const m = this.getValidMoves(unit);
+      if (m.length > 0) {
+        moves[id] = m.map(h => {
+          const steps = h.steps ?? 1;
+          // 只有骑兵有「移动距离影响后续动作」这条规则：
+          // handleMove 只对 type==='cavalry' 记 moveDistance，
+          // handleAttack 的冲锋加成也只判 cavalry。战车虽然「如骑兵般移动」，
+          // 但服务端并不给它记 moveDistance，所以这里不能一视同仁。
+          let flags = 0;
+          if (unit.type === 'cavalry') {
+            if (steps === 2) flags |= Rules.MOVE_FLAG_DAMAGE_UP;
+            if (steps === 3) flags |= Rules.MOVE_FLAG_NO_ATTACK;
+          }
+          return [h.q, h.r, steps, flags] as [number, number, number, number];
         });
-
-        return !hasCollision && hexDistance(unitPos, hex) <= range;
-      });
-    }
-
-    // 投石车特殊移动逻辑：每回合最多行动2次（含移动、蓄力、攻击），用 actionsThisTurn 计数
-    if (unit.type === 'catapult') {
-      if (unit.actionsThisTurn >= 2) return [];
-
-      const catapultPossibleMoves = hexRange(unitPos, 1);
-      return catapultPossibleMoves.filter(hex => {
-        if (hexEquals(hex, unitPos)) return false;
-        let occupied = false;
-        this.state.units.forEach(u => {
-          if (u.id !== unit.id && hexEquals({ q: u.q, r: u.r, s: u.s }, hex)) {
-            occupied = true;
-          }
-        });
-        if (this.isHexOccupiedByMachine(hex)) occupied = true;
-        return !occupied && isInMapRange(hex, 5);
-      });
-    }
-
-    // 普通单位移动逻辑
-    const range = unit.type === 'cavalry' ? 3 : 1; // 骑兵最多移动3格
-
-    // 仁德将军本身移动范围+1（不适用于其他单位）
-    let finalRange = range;
-    if (unit.type === 'general' && unit.generalType === 'rende') {
-      finalRange = range + 1;
-    }
-
-    // 对于骑兵，使用BFS计算所有可达的格子（考虑路径阻挡）
-    if (unit.type === 'cavalry') {
-      const reachable = new Map<string, number>(); // key: "q,r,s", value: 到达该格子的最短步数
-      const queue: Array<{ pos: HexCoord, steps: number }> = [];
-      const visited = new Set<string>();
-
-      // 起点
-      queue.push({ pos: unitPos, steps: 0 });
-      visited.add(`${unitPos.q},${unitPos.r},${unitPos.s}`);
-
-      while (queue.length > 0) {
-        const current = queue.shift()!;
-
-        // 如果已经达到移动上限，不再展开
-        if (current.steps >= range) continue;
-
-        // 获取所有相邻格子
-        const neighbors = hexNeighbors(current.pos);
-
-        for (const neighbor of neighbors) {
-          const neighborKey = `${neighbor.q},${neighbor.r},${neighbor.s}`;
-
-          // 如果已访问过，跳过
-          if (visited.has(neighborKey)) continue;
-
-          // 检查是否在地图范围内
-          if (!isInMapRange(neighbor, MAP_RADIUS)) continue;
-
-          // 检查是否被占用
-          let occupied = false;
-          for (const u of this.state.units.values()) {
-            if (hexEquals({ q: u.q, r: u.r, s: u.s }, neighbor) && u.id !== unit.id) {
-              occupied = true;
-              break;
-            }
-          }
-
-          // 检查是否被机关单位占据
-          if (this.isHexOccupiedByMachine(neighbor)) {
-            occupied = true;
-          }
-
-          // 如果被占用，这条路径不通，但继续尝试其他路径
-          if (occupied) {
-            visited.add(neighborKey); // 标记为已访问，避免重复检查
-            continue;
-          }
-
-          // 标记为已访问并加入队列
-          visited.add(neighborKey);
-          const nextSteps = current.steps + 1;
-          queue.push({ pos: neighbor, steps: nextSteps });
-
-          // 记录到达该格子的最短步数
-          if (!reachable.has(neighborKey)) {
-            reachable.set(neighborKey, nextSteps);
-          }
-        }
       }
 
-      // 将结果转换为数组格式
-      const result: { q: number; r: number; s: number; steps: number }[] = [];
-      for (const [key, steps] of reachable.entries()) {
-        const [q, r, s] = key.split(',').map(Number);
-        result.push({ q, r, s, steps });
+      const a = this.getAttackableTargets(unit);
+      if (a.length > 0) attacks[id] = a;
+
+      // 机关的「范围型」攻击高亮：不是打某个目标，而是覆盖一条线
+      const hexes = this.getAttackRangeHexes(unit);
+      if (hexes.length > 0) {
+        attackHexes[id] = hexes.map(h => [h.q, h.r] as [number, number]);
       }
-
-      return result;
-    }
-
-    // 非骑兵单位的移动逻辑
-    const possibleMoves = hexRange(unitPos, finalRange);
-
-    // 过滤掉已被占用的位置和不在地图范围内的位置
-    return possibleMoves.filter(hex => {
-      if (hexEquals(hex, unitPos)) return false;
-
-      // 检查是否有其他单位占用（包括单位本身和机关单位占据的格子）
-      let occupied = false;
-      this.state.units.forEach(u => {
-        if (hexEquals({ q: u.q, r: u.r, s: u.s }, hex) && u.id !== unit.id) {
-          occupied = true;
-        }
-      });
-
-      // 检查是否被机关单位占据（机关单位的所有格子都是实体）
-      if (this.isHexOccupiedByMachine(hex)) {
-        occupied = true;
-      }
-
-      // 检查步兵纵深抗击的移动限制
-      if (unit.movementRestricted && unit.type === 'infantry') {
-        console.log(`[服务端移动验证] 单位被限制 - ID: ${unit.id}, movementRestricted: ${unit.movementRestricted}`);
-        const restrictionSource = {
-          q: unit.movementRestrictionSourceQ,
-          r: unit.movementRestrictionSourceR,
-          s: unit.movementRestrictionSourceS
-        };
-
-        console.log(`[服务端移动验证] 限制来源:`, restrictionSource);
-        console.log(`[服务端移动验证] 当前位置:`, unitPos);
-        console.log(`[服务端移动验证] 目标位置:`, hex);
-
-        // 计算到限制来源的距离
-        const currentDistance = hexDistance(unitPos, restrictionSource);
-        const newDistance = hexDistance(hex, restrictionSource);
-
-        console.log(`[服务端移动验证] 当前距离: ${currentDistance}, 新距离: ${newDistance}`);
-
-        // 如果移动后距离变小（朝向敌人），禁止移动
-        if (newDistance < currentDistance) {
-          console.log(`[服务端移动验证] 禁止移动！距离变小`);
-          return false;
-        }
-      }
-
-      return !occupied && hexDistance(unitPos, hex) <= finalRange;
     });
+
+    return { forPlayer, phase: this.state.phase, moves, attacks, attackHexes };
+  }
+
+  /** 机关的范围型攻击覆盖格。规则实现见 shared/rules/queries.ts */
+  private getAttackRangeHexes(unit: UnitSchema): HexCoord[] {
+    return Rules.getAttackRangeHexes(unit);
+  }
+
+  /**
+   * 状态指纹：只包含会影响合法动作的字段。
+   *
+   * onBeforePatch 每个 patch tick 都会被调用（约 20 次/秒），而且是在
+   * 「检查有没有变化」之前调用，所以必须自己判断要不要重算，
+   * 否则会每秒算 20 遍全场单位的合法动作。
+   */
+  private validActionsFingerprint(): string {
+    const parts: string[] = [
+      this.state.phase,
+      this.state.currentPlayer,
+      String(this.state.player1ActionPoints),
+      String(this.state.player2ActionPoints),
+    ];
+    this.state.units.forEach((u, id) => {
+      parts.push(
+        `${id},${u.q},${u.r},${u.s},${u.hp},${u.actionsThisTurn},` +
+        `${u.hasMoved ? 1 : 0},${u.hasAttacked ? 1 : 0},${u.hasActedThisTurn ? 1 : 0},` +
+        `${u.chargeLevel},${u.movementRestricted ? 1 : 0},${u.unlimitedActions ? 1 : 0},${u.bonusActionLimit},` +
+        // direction 必须在内：投石车的射击线、弩车的贯穿方向都跟着朝向变，
+        // 漏掉它的话转向之后不会重算，客户端会拿着旧的高亮
+        `${u.direction},${u.hasRotated ? 1 : 0}`
+      );
+    });
+    return parts.join('|');
+  }
+
+  /**
+   * Colyseus 在每次广播状态补丁前调用。
+   * 只有在影响合法动作的状态真的变了时，才重算并下发。
+   */
+  onBeforePatch() {
+    const fp = this.validActionsFingerprint();
+    if (fp === this.lastValidActionsFingerprint) return;
+    this.lastValidActionsFingerprint = fp;
+    this.broadcast("validActions", this.buildValidActions());
+  }
+
+  /** 普通攻击合法性。规则实现见 shared/rules/queries.ts */
+  private checkAttackLegality(attacker: UnitSchema, target: UnitSchema) {
+    return Rules.checkAttackLegality(attacker, target, this.unitList);
+  }
+
+  /** 单位占据的格子。规则实现见 shared/rules/queries.ts */
+  private occupiedHexesOf(unit: UnitSchema): HexCoord[] {
+    return Rules.occupiedHexesOf(unit);
+  }
+
+  /** 弩车近战合法性。规则实现见 shared/rules/queries.ts */
+  private checkBallistaMeleeLegality(ballista: UnitSchema, target: UnitSchema) {
+    return Rules.checkBallistaMeleeLegality(ballista, target, this.unitList);
+  }
+
+  /** 可攻击目标 id 列表。规则实现见 shared/rules/queries.ts */
+  private getAttackableTargets(unit: UnitSchema): string[] {
+    return Rules.getAttackableTargets(unit, this.unitList);
+  }
+
+  /** 合法移动位置。规则实现见 shared/rules/queries.ts */
+  private getValidMoves(unit: UnitSchema): { q: number; r: number; s: number; steps?: number }[] {
+    return Rules.getValidMoves(unit, this.unitList);
   }
 
   /**
@@ -1723,83 +1740,25 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
-    // 检查弓兵行动次数上限（2次）
-    if (attacker.type === 'archer' && attacker.actionsThisTurn >= 2) {
-      client.send("error", { message: "该单位本回合已达行动次数上限" });
-      return;
-    }
-
-    // 检查非弓箭手单位是否已攻击（每回合只能攻击1次）
-    if (attacker.type !== 'archer' && attacker.hasAttacked) {
-      client.send("error", { message: "该单位本回合已攻击过" });
-      return;
-    }
-
-    // 检查投石车行动次数上限（2次）
-    if (attacker.type === 'catapult' && attacker.actionsThisTurn >= 2) {
-      client.send("error", { message: "投石车本回合已达行动次数上限" });
-      return;
-    }
-
-    // === 攻击范围校验 ===
     const attackerPos = { q: attacker.q, r: attacker.r, s: attacker.s };
     const targetPos   = { q: target.q,   r: target.r,   s: target.s   };
 
-    // 计算攻击者和目标各自的体积格子
-    const attackerHexes = (attacker.type === 'ballista' || attacker.type === 'chariot' || attacker.type === 'catapult')
-      ? getMachineOccupiedHexes(attackerPos, attacker.type as 'ballista' | 'chariot' | 'catapult', attacker.owner === 'player1')
-      : [attackerPos];
-
-    const targetHexes = (target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult')
-      ? getMachineOccupiedHexes(targetPos, target.type as 'ballista' | 'chariot' | 'catapult', target.owner === 'player1')
-      : [targetPos];
-
-    // 体积最小距离
-    let minBodyDist = Infinity;
-    for (const a of attackerHexes) {
-      for (const t of targetHexes) {
-        const d = hexDistance(a, t);
-        if (d < minBodyDist) minBodyDist = d;
-      }
+    // === 攻击合法性校验 ===
+    // 这段逻辑抽成了 checkAttackLegality，因为 getAttackableTargets 也要用同一份判断
+    // 来算「哪些目标可以打」下发给客户端。以前客户端自己算一遍高亮、服务端算一遍校验，
+    // 两边不一致就会出现「高亮了却点不动」。
+    const legality = this.checkAttackLegality(attacker, target);
+    if (!legality.ok) {
+      client.send("error", { message: legality.reason });
+      return;
     }
 
-    // 近战单位：必须与目标体积相邻（距离1）
-    if (attacker.type === 'infantry' || attacker.type === 'cavalry' || attacker.type === 'general') {
-      if (minBodyDist > 1) {
-        client.send("error", { message: "目标不在攻击范围内" });
-        return;
-      }
+    // 战报是副作用，不能放进谓词里（否则算高亮时会刷屏）
+    if (legality.archerBlocked) {
+      this.addBattleLog(`弓箭手射击路径被友军阻挡，行动点+1`);
     }
 
-    // 弓箭手：射程 = 3 + 距己方基线距离
-    if (attacker.type === 'archer') {
-      const playerSide = attacker.owner === 'player1' ? 'top' : 'bottom';
-      const maxRange = 3 + getDistanceToBaseline(attackerPos, playerSide);
-      if (minBodyDist > maxRange) {
-        client.send("error", { message: "目标超出射程" });
-        return;
-      }
-    }
-
-    // 弓箭手攻击路径经过己方单位时，行动点额外+1
-    let archerPathCost = 0;
-    if (attacker.type === 'archer') {
-      const pathHexes = hexLineDraw(attackerPos, targetPos);
-      // pathHexes 包含起点和终点，检查中间格子（排除首尾）
-      const intermediateHexes = pathHexes.slice(1, -1);
-      const hasFriendlyBlock = intermediateHexes.some(hex =>
-        Array.from(this.state.units.values()).some(u =>
-          u.owner === attacker.owner && u.q === hex.q && u.r === hex.r && u.s === hex.s
-        )
-      );
-      if (hasFriendlyBlock) {
-        archerPathCost = 1;
-        this.addBattleLog(`弓箭手射击路径被友军阻挡，行动点+1`);
-      }
-    }
-
-    // 计算行动点消耗：攻击将领消耗2点，其他单位消耗1点
-    const actionCost = (target.type === "general" ? 2 : 1) + archerPathCost;
+    const actionCost = legality.cost;
 
     // 检查行动点是否足够
     if (role === "player1") {
@@ -2375,8 +2334,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 检查是否已行动
-    if (ballista.hasActedThisTurn) {
-      client.send("error", { message: "弩车本回合已行动" });
+    // 相邻 / 敌我判定。
+    // 这里原来什么都不查，扣掉行动点就直接扣血，等于弩车能近战全图任何单位
+    // （范围规则只存在于客户端高亮里）。改为与 getAttackableTargets 共用同一谓词。
+    const melee = this.checkBallistaMeleeLegality(ballista, target);
+    if (!melee.ok) {
+      client.send("error", { message: melee.reason });
       return;
     }
 
@@ -2547,37 +2510,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     console.log(`[DEBUG] 投石车蓄力 - catapultId: ${data.catapultId}, chargeLevel: ${catapult.chargeLevel}`);
   }
 
-  /**
-   * 计算弩车垂直贯穿路径
-   */
-  private getBallistaVerticalPath(ballista: any, isPlayerOne: boolean): Array<{ q: number, r: number, s: number }> {
-    const path: Array<{ q: number, r: number, s: number }> = [];
-
-    // 正前方推进的增量
-    // 玩家1: (q+1, r-2, s+1)
-    // 玩家2: (q-1, r+2, s-1)
-    const dq = isPlayerOne ? 1 : -1;
-    const dr = isPlayerOne ? -2 : 2;
-    const ds = isPlayerOne ? 1 : -1;
-
-    let current = { q: ballista.q, r: ballista.r, s: ballista.s };
-
-    while (true) {
-      // 计算下一个正前方位置
-      const nextQ = current.q + dq;
-      const nextR = current.r + dr;
-      const nextS = current.s + ds;
-
-      current = { q: nextQ, r: nextR, s: nextS };
-
-      if (!isInMapRange(current, 5)) {
-        break;
-      }
-
-      path.push(current);
-    }
-
-    return path;
+  /** 弩车垂直贯穿路径。规则实现见 shared/rules/queries.ts */
+  private getBallistaVerticalPath(ballista: any, isPlayerOne: boolean): HexCoord[] {
+    return Rules.getBallistaVerticalPath(ballista, isPlayerOne);
   }
 
   /**

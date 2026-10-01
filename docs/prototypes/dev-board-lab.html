@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>棋盘体系方案 · 十元棋</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;padding:26px;background:#06080b;color:#F3E6CA;font-family:"Noto Serif SC",serif}
+  h1{font-size:26px;color:#E8C84A;margin:0 0 3px;letter-spacing:.1em;font-weight:600}
+  .sub{color:rgba(243,230,202,.35);font-size:12px;letter-spacing:.18em;margin-bottom:22px}
+  h2.sec{font-size:13px;color:#7FD4C1;letter-spacing:.24em;margin:34px 0 12px;font-weight:600;
+         border-bottom:1px solid rgba(127,212,193,.2);padding-bottom:7px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px;max-width:1340px}
+  .card{background:#0F1319;border:1px solid rgba(255,255,255,.08);border-radius:7px;padding:13px}
+  .card h3{font-size:14px;margin:0 0 2px;color:#E8C84A;letter-spacing:.06em;font-weight:600}
+  .card .tag{font-size:10px;color:rgba(243,230,202,.3);letter-spacing:.13em;margin-bottom:9px}
+  .card .note{font-size:11px;line-height:1.72;color:rgba(243,230,202,.52);margin-top:9px;
+              border-top:1px solid rgba(255,255,255,.07);padding-top:8px}
+  .card.rec{border-color:rgba(127,212,193,.5);box-shadow:0 0 22px rgba(127,212,193,.1)}
+  .card.rec h3::after{content:" ← 推荐";font-size:10px;color:#7FD4C1}
+  .wide{grid-column:1/-1}
+  b{color:#F0D98A;font-weight:600} i{color:#7FD4C1;font-style:normal}
+  svg{display:block;width:100%;height:auto;border-radius:5px}
+  table.lg{width:100%;border-collapse:collapse;font-size:11px}
+  table.lg td{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.055);vertical-align:middle}
+  table.lg td.g{width:46px;text-align:center}
+  table.lg td.n{color:#F0D98A;width:84px;font-weight:600}
+  table.lg td.d{color:rgba(243,230,202,.5);line-height:1.5}
+  .lgwrap{display:grid;grid-template-columns:1fr 1fr;gap:0 20px}
+</style></head><body>
+<h1>棋盘体系方案</h1>
+<div class="sub">棋盘 · 棋子 · 机制记号 作为一套系统设计</div>
+<div id="out"></div>
+
+<script type="module">
+import { C, HS, HR, hc, hpath, hexMap, seamPath, DIR, DEG, ray, onBoard,
+         arc, at, tileFill, tileRing, G, token } from './dev-lab-core.js';
+
+const OUT = document.getElementById('out');
+const card = c=>`<div class="card ${c.cls||''}"><h3>${c.h3}</h3><div class="tag">${c.tag}</div>
+  ${c.body}${c.note?`<div class="note">${c.note}</div>`:''}</div>`;
+const section = (t,cards)=>`<h2 class="sec">${t}</h2><div class="grid">${cards.map(card).join('')}</div>`;
+
+/* ============ 零 · 记号图例 ============ */
+const chip = inner =>
+  `<svg viewBox="-16 -16 32 32" style="width:30px;height:30px;display:inline-block">${inner}</svg>`;
+const U = 26;
+const LEGEND = [
+  [G.chevron(1,U,C.move), '行进 1 格', '尖角数 = 移动距离，指向行进方向'],
+  [G.chevron(3,U*.78,C.move), '行进 3 格', '骑兵最远一环；不再写数字'],
+  [G.barb(U*.8,C.face), '伤害加成', '矛尖带倒钩 — 骑兵冲 2 格的奖励'],
+  [G.blade(U*.8,'rgba(255,255,255,.45)',{forbid:true}), '本回合不可攻', '矛尖被划掉 — 骑兵冲 3 格的代价'],
+  [G.blade(U*.8,C.threat), '可攻击', '矛尖空心'],
+  [G.blade(U*.8,C.threat,{solid:true}), '可击杀', '矛尖实心'],
+  [G.blade(U*.8,C.face,{solid:true}), '友伤', '同一记号换琥珀色 = 这一刀砍自己人'],
+  [G.shield(U*.8,C.move), '免伤 · 方阵', '队首亮盾，背后有同向步兵时出现'],
+  [G.rotate(U*.9,C.face)+at(0,U*.52,G.pips(1,U*.7,C.face)), '转向 · 耗 1', '回转箭头 + 行动点圆点'],
+  [G.pips(2,U,C.face), '蓄力 2 层', '投石车；圆点通用表示"可数的量"'],
+  [G.arrow(U*.5,U*.8,C.face), '强制位移', '击退 / 冲锋带'],
+  [G.banner(U*.9,C.threat), '大本营', '牙旗；告警环圈数 = 敌军剩余步数'],
+  [G.slash(U*.9,'rgba(255,255,255,.5)'), '已行动', '压暗 + 斜杠'],
+];
+const half = Math.ceil(LEGEND.length/2);
+const tbl = rows => `<table class="lg">${rows.map(([g,n,d])=>
+  `<tr><td class="g">${chip(g)}</td><td class="n">${n}</td><td class="d">${d}</td></tr>`).join('')}</table>`;
+OUT.innerHTML = section('零 · 记号图例（盘面上不再出现任何文字）', [{
+  cls:'wide', h3:'一套笔画语法', tag:'统一线宽 · 统一圆端 · 只用四个信息色',
+  body:`<div class="lgwrap">${tbl(LEGEND.slice(0,half))}${tbl(LEGEND.slice(half))}</div>`,
+  note:'记号之间是<b>可组合的</b>：矛尖＝攻击，实心＝致命，划掉＝禁止，换成琥珀＝打到自己人 —— 三条规则共用一个字根，玩家只需认一次。圆点＝任何"可数的量"（行动点、蓄力层、剩余步数）。这张图例放进规则书首屏 + 对局内可折叠侧栏。',
+}]);
+/* ============ 一 · 四个棋盘体系 ============
+ * 场景完全相同：选中骑兵 + 三段行进环 + 弓手射界 + 敌军 + 大本营告警环
+ * 变量只有"世界层"（格子材质 / 明度结构 / 缝线）与棋子皮肤。
+ */
+const VB = `${-HS*4.8} ${-HS*4.4} ${HS*9.6} ${HS*8.8}`;
+const MAP = hexMap(HR), SEAM = seamPath(HR);
+const line=(a,b,c,w,op=1,dash='')=>`<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}"
+  x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke="${c}" stroke-width="${w}" opacity="${op}"
+  stroke-linecap="round" ${dash?`stroke-dasharray="${dash}"`:''}/>`;
+const mark=(q,r,inner,dx=0,dy=0,rot=0)=>{ const p=hc(q,r); return at(p.x+dx,p.y+dy,inner,rot); };
+
+/** 信息层 + 棋子（所有体系共用，零文字） */
+function scene(skin,variant){
+  const U = HS*.78, lane='NE', deg=DEG[lane];
+  const L = [{q:0,r:0,n:1},{q:1,r:-1,n:2},{q:2,r:-2,n:3}];
+  let s='';
+  /* 行进环：亮度随距离递增 */
+  s += L.map((h,i)=>tileFill(h.q,h.r,C.move,.12+i*.07)+tileRing(h.q,h.r,C.move,1.6,.9)).join('');
+  /* 记号：尖角数 = 距离；第 2 环加倒钩；第 3 环划掉矛尖 */
+  s += L.map(h=>mark(h.q,h.r,G.chevron(h.n,U*1.05,C.move),0,0,deg)).join('');
+  s += mark(1,-1, G.barb(U*.5,C.face), 0, HS*.5);
+  s += mark(2,-2, G.blade(U*.5,'rgba(255,255,255,.5)',{forbid:true}), 0, HS*.5);
+  /* 弓手射界 */
+  const RA = ray(-1,2,'NE',3).filter(onBoard);
+  s += RA.map(h=>tileFill(h.q,h.r,C.face,.1)).join('');
+  s += line(hc(-1,2), hc(2,-1), C.face, 2, .5);
+  /* 敌军：可攻击矛尖 */
+  s += tileRing(1,0,C.threat,1.8,.9) + mark(1,0, G.blade(U*.5,C.threat), HS*.66,-HS*.5);
+  /* 大本营：牙旗 + 告警环（圈数 = 剩余步数） */
+  [1.02,.82].forEach((k,i)=>{ s += tileRing(-2,2,`rgba(226,86,75,${.8-i*.26})`,2.2-i*.5,k); });
+  s += mark(-2,2, G.banner(U*.9,C.threat));
+  /* 选中 */
+  s += tileRing(-1,1,C.pick,2.4,.95);
+  /* 棋子 */
+  const tkn=(q,r,o)=>{const p=hc(q,r);return token({x:p.x,y:p.y,rr:HS*.45,variant,skin,...o});};
+  s += tkn(-1,1,{ch:'骑',move:3});
+  s += tkn(-1,2,{ch:'弓',move:1,facing:deg});
+  s += tkn(1,0,{ch:'步',move:1,side:'p2'});
+  return s;
+}
+
+/* ---------- S1 夜战沙盘 ---------- */
+const S1 = ()=>{
+  let s = `<rect x="-400" y="-400" width="800" height="800" fill="#10141A"/>`;
+  s += MAP.map(h=>tileFill(h.q,h.r, h.r>=1? '#424B57':'#373F49')).join('');
+  s += `<path d="${SEAM}" fill="none" stroke="rgba(255,255,255,.075)" stroke-width="1"/>`;
+  /* 界河：r 只影响 y，所以行边界是一条水平线 */
+  const yR = HS*0.75, xR = HS*3.1;
+  s += [-3,3].map(dy=>line({x:-xR,y:yR+dy},{x:xR,y:yR+dy},
+        'rgba(127,212,193,.3)',1.2,1,'8 6')).join('');
+  return `<svg viewBox="${VB}">${s}${scene('dark','flat')}</svg>`;
+};
+/* ---------- S2 水墨夜卷 ---------- */
+const S2 = ()=>{
+  let s = `<defs>
+    <radialGradient id="wash" cx="50%" cy="48%" r="58%">
+      <stop offset="0%" stop-color="#171C23" stop-opacity="0"/>
+      <stop offset="62%" stop-color="#1B222B" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#2A3340" stop-opacity=".95"/></radialGradient>
+    <filter id="brush"><feTurbulence type="fractalNoise" baseFrequency=".035" numOctaves="2" seed="4"/>
+      <feDisplacementMap in="SourceGraphic" scale="3" xChannelSelector="R" yChannelSelector="G"/></filter>
+    </defs>
+    <rect x="-400" y="-400" width="800" height="800" fill="#0A0D11"/>`;
+  s += MAP.map(h=>tileFill(h.q,h.r,'#141922')).join('');
+  s += MAP.map(h=>tileFill(h.q,h.r,'url(#wash)')).join('');
+  /* 起始区：一层淡墨 */
+  s += MAP.filter(h=>h.r>=1).map(h=>tileFill(h.q,h.r,'#3A4656',.3)).join('');
+  /* 墨线：两道不同粗细叠加 + 位移滤镜做出毛笔感 */
+  s += `<g filter="url(#brush)">
+      <path d="${SEAM}" fill="none" stroke="rgba(150,170,190,.16)" stroke-width="2.4"/>
+      <path d="${SEAM}" fill="none" stroke="rgba(190,205,220,.3)" stroke-width="1"/></g>`;
+  return `<svg viewBox="${VB}">${s}${scene('light','flat')}</svg>`;
+};
+/* ---------- S3 青铜器 ---------- */
+const S3 = ()=>{
+  let s = `<defs>
+    <linearGradient id="lip" x1="18%" y1="0%" x2="82%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255,228,170,.3)"/>
+      <stop offset="48%" stop-color="rgba(255,228,170,.04)"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,.34)"/></linearGradient>
+    <pattern id="hui" width="26" height="26" patternUnits="userSpaceOnUse">
+      <path d="M5,5 H21 V21 H9 V13 H17" fill="none" stroke="rgba(255,228,170,.028)" stroke-width="1.4"/>
+    </pattern></defs>
+    <rect x="-400" y="-400" width="800" height="800" fill="#17160F"/>`;
+  s += MAP.map(h=>tileFill(h.q,h.r, h.r>=1? '#23221A':'#1C1B14')).join('');
+  s += MAP.map(h=>tileFill(h.q,h.r,'url(#hui)')).join('');
+  /* 凹陷：内边一圈上亮下暗，读作"刻进去"而不是"浮起来" */
+  s += MAP.map(h=>tileRing(h.q,h.r,'url(#lip)',2.6,.95)).join('');
+  s += `<path d="${SEAM}" fill="none" stroke="rgba(176,158,106,.3)" stroke-width="1.4"/>`;
+  return `<svg viewBox="${VB}">${s}${scene('light','solid')}</svg>`;
+};
+/* ---------- S4 战术图层 ---------- */
+const S4 = ()=>{
+  let s = `<defs><pattern id="dots" width="9" height="9" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="rgba(255,255,255,.1)"/></pattern></defs>
+    <rect x="-400" y="-400" width="800" height="800" fill="#0C0F13"/>`;
+  s += MAP.filter(h=>h.r>=1).map(h=>tileFill(h.q,h.r,'url(#dots)')).join('');
+  s += `<path d="${SEAM}" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="1"/>`;
+  /* 外轮廓加重，让盘面边界明确 */
+  s += MAP.map(h=>tileRing(h.q,h.r,'rgba(255,255,255,.03)',1,1)).join('');
+  return `<svg viewBox="${VB}">${s}${scene('dark','flat')}</svg>`;
+};
+
+OUT.innerHTML += section('一 · 四个棋盘体系（同一场景 · 同一记号 · 零文字）', [
+ { h3:'S1 · 夜战沙盘', tag:'深青灰平涂 · 明度分区 · 虚线界河',
+   body:S1(),
+   note:'格子只有<b>明度差</b>：起始区亮一档，交战区暗一档，界河用两道青虚线。最安全的一档——不挑美术、不挑分辨率，信息层永远压得住。缺点：没有个性，像任何一款战术游戏。' },
+ { cls:'rec', h3:'S2 · 水墨夜卷', tag:'近黑绢底 · 边缘积墨 · 骨色棋子',
+   body:S2(),
+   note:'格子<b>不填色</b>，靠"墨在边缘积聚"（径向渐变往外压深）显形，墨线用位移滤镜做出毛笔的抖动。棋子翻成<b>骨色底 + 阵营色写字描圈</b> —— 深盘上浅棋子最跳，而且朱红/青玉的色相不会被压暗。古风与暗底同时保住，信息层做成墨晕扩散，软边不与棋子抢。' },
+ { h3:'S3 · 青铜器', tag:'锈青铜板 · 格子内凹 · 玉石嵌片',
+   body:S3(),
+   note:'格子做成<b>刻进去的凹格</b>（内边上亮下暗，与"浮雕凸起"相反），缝线是凸起的铜脊，底板压一层极淡回纹（对比度 &lt;5%，不会糊）。棋子用立体令牌，像嵌进铜板的玉片。质感最贵，代价是暖色底会吃掉一点琥珀色信息层，回纹必须克制。' },
+ { h3:'S4 · 战术图层', tag:'几乎空白 · 只有网格 · 信息层当主角',
+   body:S4(),
+   note:'格子<b>完全不填</b>，只剩 1px 网格，起始区用点阵标示。盘面让到最后，所以叠加层（威胁斜纹、射界、冲锋带）可以堆到很密都不乱。适合把这游戏往竞技/复盘方向做；最不"好看"，但最耐看、信息密度上限最高。' },
+]);
+</script>
+</body></html>

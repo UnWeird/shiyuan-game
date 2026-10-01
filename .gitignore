@@ -12,6 +12,12 @@ build/
 **/build/
 server/lib/
 
+# shared/ 只放 .ts 源码。编译产物归 server/lib/shared/。
+# 曾经有过期的 shared/*.js 被提交进来，客户端直接 import shared/ 时
+# Rollup 会优先解析那份 CommonJS 产物，导致「XXX is not exported」构建失败。
+shared/**/*.js
+shared/**/*.d.ts
+
 # Logs
 logs
 *.log

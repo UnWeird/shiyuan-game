@@ -2,19 +2,20 @@
 
 /* ========== 按钮动画 ========== */
 
-/* 通用按钮 hover 效果 */
+/* 通用按钮过渡（不覆盖组件级 hover 样式） */
 button {
-  transition: all 0.2s ease-in-out;
+  transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out;
 }
 
+/* 轻微上浮作为通用悬停反馈；组件级 box-shadow 由 onMouseEnter 处理 */
 button:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
 }
 
+/* 按压感：向内收缩，像印章按下 */
 button:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transform: scale(0.96);
+  transition: transform 0.08s ease;
 }
 
 button:disabled {
@@ -24,19 +25,12 @@ button:disabled {
 
 /* ========== 单位棋子动画 ========== */
 
-/* 单位选中脉动效果 */
-@keyframes pulse-glow {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
-  }
-  50% {
-    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
-  }
-}
-
-.unit-selected {
-  animation: pulse-glow 1.5s ease-in-out infinite;
-}
+/* 已删除 `@keyframes pulse-glow` / `.unit-selected`：
+ * 它动画的是 box-shadow，而 box-shadow **不作用于 SVG 图形元素**（只作用于 SVG 根元素）。
+ * `.unit-selected` 挂在 UnitPiece 的 <g> 上，所以这个动画一直是空转。
+ * 选中反馈现在由 HexMap 的 #info-top 白框 + 棋子上的 .info-ring 负责。
+ * —— docs/board-art-spec.md §8.3
+ */
 
 /* 单位 hover 效果 */
 .unit-piece {
@@ -62,47 +56,28 @@ button:disabled {
   transform-origin: 0 0;  /* 围绕箭头起点(0,0)旋转 */
 }
 
-/* ========== 六边形格子动画 ========== */
+/* ========== 棋盘信息层动画 ==========
+ *
+ * 这里原来有四条靠「降低 fill-opacity」表达状态的规则：
+ *   .hex-movable / .hex-attackable / .fan-attack-hex / .hex-hover:hover
+ *
+ * 它们全部删除。原因是语义反了：棋盘底是深漆色，把高亮色压到 fill-opacity .35
+ * 之后深底透上来，高亮格渲染成 rgb(239,217,138) @ .35 —— 比普通格**更暗**的脏橄榄绿。
+ * "这里能走"看起来像"这里被禁用"，而且因为可达格总簇在棋子的右下方，
+ * 一圈比棋盘更暗的六边形挂在棋子边上，视觉上就是"每个格子甩了个偏移阴影"。
+ *
+ * 替换原则：**底色恒定不透明，只脉动描边的 opacity**。
+ * —— docs/board-art-spec.md §8.1
+ */
 
-/* 可移动格子呼吸动画 */
-@keyframes hex-breathe-move {
-  0%, 100% {
-    fill-opacity: 0.3;
-  }
-  50% {
-    fill-opacity: 0.6;
-  }
+@keyframes ring-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
 }
 
-.hex-movable {
-  animation: hex-breathe-move 2s ease-in-out infinite;
-  transition: fill-opacity 0.3s ease;
-}
-
-/* 可攻击格子脉动动画 */
-@keyframes hex-pulse-attack {
-  0%, 100% {
-    fill-opacity: 0.4;
-  }
-  50% {
-    fill-opacity: 0.7;
-  }
-}
-
-.hex-attackable {
-  animation: hex-pulse-attack 1.5s ease-in-out infinite;
-  transition: fill-opacity 0.3s ease;
-}
-
-/* 格子 hover 效果 */
-.hex-hover {
-  transition: fill-opacity 0.2s ease, stroke-width 0.2s ease;
-}
-
-.hex-hover:hover {
-  fill-opacity: 0.8 !important;
-  stroke-width: 3;
-  cursor: pointer;
+/* 信息层的内圈：可移动格、选中棋子的呼应环 */
+.info-ring {
+  animation: ring-pulse 2s ease-in-out infinite;
 }
 
 /* ========== 骰子动画 ========== */
@@ -130,10 +105,10 @@ button:disabled {
   animation: dice-roll 0.6s ease-in-out;
 }
 
-/* 骰子选中效果 */
+/* 骰子选中效果 — 金边高亮 */
 .dice-selected {
   transform: scale(1.15);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.7), 0 0 12px rgba(201, 162, 39, 0.3);
   transition: all 0.2s ease;
 }
 
@@ -153,7 +128,7 @@ button:disabled {
 @keyframes fade-in {
   from {
     opacity: 0;
-    transform: translateY(-10px);
+    transform: translateY(-8px);
   }
   to {
     opacity: 1;
@@ -167,7 +142,25 @@ button:disabled {
 }
 
 .panel-card:hover {
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 0 20px rgba(201, 162, 39, 0.12);
+}
+
+/* ========== 页面入场动画 ========== */
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.985) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* 主页面容器使用此类 */
+.page-enter {
+  animation: page-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* ========== 战斗日志动画 ========== */
@@ -190,13 +183,13 @@ button:disabled {
 
 /* ========== 回合切换动画 ========== */
 
-/* 回合切换闪烁 */
+/* 回合切换闪烁 — 琥珀/帝王金 */
 @keyframes turn-flash {
   0%, 100% {
     background-color: transparent;
   }
   50% {
-    background-color: rgba(59, 130, 246, 0.2);
+    background-color: rgba(201, 162, 39, 0.15);
   }
 }
 
@@ -315,19 +308,8 @@ button:disabled {
 
 /* ========== 技能特效 ========== */
 
-/* 无双扇形攻击高亮 */
-@keyframes fan-attack-pulse {
-  0%, 100% {
-    fill-opacity: 0.3;
-  }
-  50% {
-    fill-opacity: 0.6;
-  }
-}
-
-.fan-attack-hex {
-  animation: fan-attack-pulse 1s ease-in-out infinite;
-}
+/* `.fan-attack-hex` 同样是 fill-opacity 降透明度，已删除（见上方「棋盘信息层动画」）。
+ * 无双扇形改用 INFO.threat 实色填充 + .info-ring 描边，属 P1。 */
 
 /* ========== 震动效果 ========== */
 
@@ -386,4 +368,138 @@ button:disabled {
 
 .animate-shimmer {
   animation: shimmer 2s ease-in-out infinite;
+}
+
+/* ========== 等待/加载动画（古风版） ========== */
+
+/* 菱形旋转：带呼吸感的等待指示器 */
+@keyframes imperial-spin {
+  0%   { transform: rotate(0deg);   opacity: 0.5; }
+  50%  { transform: rotate(180deg); opacity: 1;   }
+  100% { transform: rotate(360deg); opacity: 0.5; }
+}
+
+.imperial-spin {
+  animation: imperial-spin 1.8s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+/* 金色文字呼吸（等待提示文字） */
+@keyframes gold-breathe {
+  0%, 100% { opacity: 0.5; }
+  50%       { opacity: 1;   }
+}
+
+.gold-breathe {
+  animation: gold-breathe 2s ease-in-out infinite;
+}
+
+/* 部署区域光晕 — 金绿色（起始区） */
+@keyframes deploy-zone-glow-gold {
+  0%, 100% { box-shadow: 0 0 8px rgba(201, 162, 39, 0.2);  }
+  50%       { box-shadow: 0 0 18px rgba(201, 162, 39, 0.45); }
+}
+
+.deploy-zone-gold {
+  animation: deploy-zone-glow-gold 2s ease-in-out infinite;
+}
+
+/* ========== 游戏内提示（替代原生 alert） ========== */
+
+/* 从右侧滑入并轻微回弹 */
+@keyframes toast-in {
+  0%   { opacity: 0; transform: translateX(24px) scale(0.96); }
+  60%  { opacity: 1; transform: translateX(-2px) scale(1);    }
+  100% { opacity: 1; transform: translateX(0)    scale(1);    }
+}
+
+.toast-enter {
+  animation: toast-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 重复提示时计数徽标弹一下 */
+@keyframes toast-bump {
+  0%   { transform: scale(1);   }
+  50%  { transform: scale(1.3); }
+  100% { transform: scale(1);   }
+}
+
+.toast-bump {
+  animation: toast-bump 0.25s ease-out;
+}
+
+/* ========== 胜负结算 ========== */
+
+/* 印章式落定：放大回落 + 透明度 */
+@keyframes seal-stamp {
+  0%   { opacity: 0; transform: scale(1.6) rotate(-6deg); }
+  55%  { opacity: 1; transform: scale(0.96) rotate(1deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg);    }
+}
+
+.seal-stamp {
+  animation: seal-stamp 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* 结算标题的金光扩散 */
+@keyframes result-glow {
+  0%, 100% { text-shadow: 0 0 24px rgba(201, 162, 39, 0.45), 0 0 48px rgba(201, 162, 39, 0.15); }
+  50%       { text-shadow: 0 0 34px rgba(201, 162, 39, 0.7),  0 0 68px rgba(201, 162, 39, 0.3);  }
+}
+
+.result-glow {
+  animation: result-glow 3s ease-in-out infinite;
+}
+
+/* 结算面板从下方浮起 */
+@keyframes result-rise {
+  0%   { opacity: 0; transform: translateY(18px); }
+  100% { opacity: 1; transform: translateY(0);    }
+}
+
+.result-rise {
+  animation: result-rise 0.5s ease-out 0.15s both;
+}
+
+/* ========== 指令待服务端确认（乐观反馈） ========== */
+
+/* 幽灵棋子：半透明 + 轻微呼吸，表示「在路上，还没落定」 */
+@keyframes ghost-breathe {
+  0%, 100% { opacity: 0.32; }
+  50%      { opacity: 0.55; }
+}
+
+.unit-ghost {
+  animation: ghost-breathe 1.1s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* 已发出指令的原棋子：压暗，等确认 */
+.unit-pending {
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
+}
+
+/* 指令被服务端拒绝：抖一下 */
+@keyframes reject-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-4px); }
+  40%      { transform: translateX(4px); }
+  60%      { transform: translateX(-3px); }
+  80%      { transform: translateX(2px); }
+}
+
+.unit-rejected {
+  animation: reject-shake 0.42s ease-in-out;
+}
+
+/* 攻击指令待确认：目标格上的朱红脉冲环 */
+@keyframes attack-pending-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50%      { opacity: 0.85; transform: scale(1.06); }
+}
+
+.attack-pending-ring {
+  animation: attack-pending-pulse 0.8s ease-in-out infinite;
+  transform-origin: center;
+  pointer-events: none;
 }

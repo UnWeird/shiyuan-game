@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>青铜器体系 · 棋子与范围 · 十元棋</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;padding:26px;background:#07070a;color:#F3E6CA;font-family:"Noto Serif SC",serif}
+  h1{font-size:26px;color:#C9A227;margin:0 0 3px;letter-spacing:.1em;font-weight:600}
+  .sub{color:rgba(243,230,202,.34);font-size:12px;letter-spacing:.18em;margin-bottom:22px}
+  h2.sec{font-size:13px;color:#C9A227;letter-spacing:.24em;margin:34px 0 12px;font-weight:600;
+         border-bottom:1px solid rgba(201,162,39,.22);padding-bottom:7px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px;max-width:1340px}
+  .card{background:#0E0E0B;border:1px solid rgba(201,162,39,.16);border-radius:7px;padding:13px}
+  .card h3{font-size:14px;margin:0 0 2px;color:#E3C661;letter-spacing:.06em;font-weight:600}
+  .card .tag{font-size:10px;color:rgba(243,230,202,.3);letter-spacing:.13em;margin-bottom:9px}
+  .card .note{font-size:11px;line-height:1.72;color:rgba(243,230,202,.52);margin-top:9px;
+              border-top:1px solid rgba(201,162,39,.14);padding-top:8px}
+  .card.rec{border-color:rgba(201,162,39,.6);box-shadow:0 0 22px rgba(201,162,39,.1)}
+  .card.rec h3::after{content:" ← 推荐";font-size:10px;color:#C9A227}
+  b{color:#F0D98A;font-weight:600} i{color:#7FD4C1;font-style:normal}
+  svg{display:block;width:100%;height:auto;border-radius:5px}
+</style></head><body>
+<h1>青铜器体系</h1>
+<div class="sub">平面棋子 · 无方向的距离分级 · 高亮式范围</div>
+<div id="out"></div>
+
+<script type="module">
+import { C, HS, HR, hc, hpath, hexMap, seamPath, DIR, DEG, ray, onBoard, hexDist,
+         bands, neighbors, fan, arc, at, tileFill, tileRing, G, token } from './dev-lab-core.js';
+
+const OUT = document.getElementById('out');
+const card = c=>`<div class="card ${c.cls||''}"><h3>${c.h3}</h3><div class="tag">${c.tag}</div>
+  ${c.body}${c.note?`<div class="note">${c.note}</div>`:''}</div>`;
+const section = (t,cards)=>`<h2 class="sec">${t}</h2><div class="grid">${cards.map(card).join('')}</div>`;
+const VB = `${-HS*4.8} ${-HS*4.4} ${HS*9.6} ${HS*8.8}`;
+const MAP = hexMap(HR), SEAM = seamPath(HR);
+const tkn = (q,r,o)=>{ const p=hc(q,r); return token({x:p.x,y:p.y,rr:HS*.45,variant:'flat',...o}); };
+
+/* ============ 青铜底板（凹格 + 铜脊 + 极淡回纹） ============ */
+const BRONZE_DEFS = `<defs>
+  <linearGradient id="lip" x1="18%" y1="0%" x2="82%" y2="100%">
+    <stop offset="0%" stop-color="rgba(255,228,170,.3)"/>
+    <stop offset="48%" stop-color="rgba(255,228,170,.04)"/>
+    <stop offset="100%" stop-color="rgba(0,0,0,.34)"/></linearGradient>
+  <pattern id="hui" width="26" height="26" patternUnits="userSpaceOnUse">
+    <path d="M5,5 H21 V21 H9 V13 H17" fill="none" stroke="rgba(255,228,170,.028)" stroke-width="1.4"/>
+  </pattern>
+  <radialGradient id="plate" cx="50%" cy="42%" r="72%">
+    <stop offset="0%" stop-color="#201E15"/><stop offset="100%" stop-color="#121109"/></radialGradient>
+</defs>`;
+function bronze(){
+  let s = BRONZE_DEFS + `<rect x="-400" y="-400" width="800" height="800" fill="url(#plate)"/>`;
+  s += MAP.map(h=>tileFill(h.q,h.r, h.r>=1? '#23221A':'#1C1B14')).join('');
+  s += MAP.map(h=>tileFill(h.q,h.r,'url(#hui)')).join('');
+  s += MAP.map(h=>tileRing(h.q,h.r,'url(#lip)',2.6,.95)).join('');   // 刻进去，不是浮起来
+  s += `<path d="${SEAM}" fill="none" stroke="rgba(176,158,106,.3)" stroke-width="1.4"/>`;
+  return s;
+}
+const board = inner => `<svg viewBox="${VB}">${bronze()}${inner}</svg>`;
+
+/* ============ 一 · 平面棋子三材质 ============ */
+const CAST = skin => [
+  tkn(-1,-1,{skin,ch:'步',move:1}),
+  tkn( 1,-2,{skin,ch:'骑',move:3}),
+  tkn( 0, 0,{skin,ch:'弓',move:1,facing:DEG.NE}),
+  tkn( 2,-1,{skin,ch:'步',move:1,side:'p2'}),
+  tkn(-2, 1,{skin,ch:'弓',move:1,facing:DEG.SW,side:'p2'}),
+  tkn( 0, 2,{skin,ch:'步',move:1,hp:1}),
+  tkn( 2, 0,{skin,ch:'步',move:1,spent:true}),
+].join('');
+
+OUT.innerHTML = section('一 · 青铜盘上的平面棋子（三种材质 · 零厚度 · 零投影）', [
+ { h3:'T1 · 骨片', tag:'骨色盘面 + 阵营色写字描圈',
+   body:board(CAST('bone')),
+   note:'对比度最高——骨色在暗铜上永远跳得出来，小尺寸最稳。代价：<b>两方棋子的"身体"同色</b>，阵营只靠字色和圈色区分，扫一眼全场时略弱。' },
+ { cls:'rec', h3:'T2 · 玉石嵌片', tag:'朱玉 / 青玉 + 金错细边',
+   body:board(CAST('jade')),
+   note:'身体就是阵营色，但用<b>玉的明度</b>（朱玉偏粉赭、青玉偏灰绿）而不是饱和原色，所以在暖铜底上既跳得出来又不打架；外圈一道<b>金错</b>把棋子和铜板缝在一起。阵营一眼分、材质统一、全平面。' },
+ { h3:'T3 · 金错漆片', tag:'朱漆 / 青漆 + 金字金边',
+   body:board(CAST('lacquer')),
+   note:'最贵气、最"青铜器"——漆地描金本来就是商周工艺。但<b>深漆压在深铜上明度太近</b>，全靠那圈金边救，小尺寸和低亮度屏幕上会糊。要用的话铜底必须再压暗两档。' },
+]);
+/* ============ 半径 3 的盘，才看得出"一片区域" ============ */
+const R3 = 3, MAP3 = hexMap(R3), SEAM3 = seamPath(R3);
+const VB3 = `${-HS*6.3} ${-HS*5.9} ${HS*12.6} ${HS*11.8}`;
+function bronze3(){
+  let s = BRONZE_DEFS + `<rect x="-500" y="-500" width="1000" height="1000" fill="url(#plate)"/>`;
+  s += MAP3.map(h=>tileFill(h.q,h.r, h.r>=2? '#23221A':'#1C1B14')).join('');
+  s += MAP3.map(h=>tileFill(h.q,h.r,'url(#hui)')).join('');
+  s += MAP3.map(h=>tileRing(h.q,h.r,'url(#lip)',2.6,.95)).join('');
+  s += `<path d="${SEAM3}" fill="none" stroke="rgba(176,158,106,.3)" stroke-width="1.4"/>`;
+  return s;
+}
+const board3 = inner => `<svg viewBox="${VB3}">${bronze3()}${inner}</svg>`;
+const tkn3 = (q,r,o)=>{ const p=hc(q,r); return token({x:p.x,y:p.y,rr:HS*.45,variant:'flat',skin:'jade',...o}); };
+const mk3 = (q,r,inner,dx=0,dy=0)=>{ const p=hc(q,r); return at(p.x+dx,p.y+dy,inner); };
+
+/* 骑兵在 (0,1)，移动 3 → 三段真实可达区（按距离分桶，与方向无关） */
+const CAV = {q:0,r:1};
+const BAND = bands(CAV,3,R3);
+/* 语义色：不是"远近"，而是"落在这里会发生什么" */
+const BC = [ C.move, C.face, 'rgba(176,196,214,.95)' ];
+const BF = [ .13, .19, .13 ];
+const U = HS*.8;
+
+/* --- M1 每格都带记号 --- */
+const M1 = ()=>{ let s='';
+  BAND.forEach((b,i)=>{ s += b.map(h=>tileFill(h.q,h.r,BC[i],BF[i])
+    + tileRing(h.q,h.r,BC[i],1.5,.9)).join(''); });
+  BAND[1].forEach(h=> s += mk3(h.q,h.r,G.barb(U*.46,C.face)));
+  BAND[2].forEach(h=> s += mk3(h.q,h.r,G.blade(U*.46,'rgba(176,196,214,.9)',{forbid:true})));
+  s += tileRing(CAV.q,CAV.r,C.pick,2.4,.95) + tkn3(CAV.q,CAV.r,{ch:'骑',move:3});
+  return board3(s); };
+
+/* --- M2 只有色带，记号随悬停出现 + 棋子旁挂一张小图例 --- */
+const M2 = ()=>{ let s='';
+  BAND.forEach((b,i)=>{ s += b.map(h=>tileFill(h.q,h.r,BC[i],BF[i])
+    + tileRing(h.q,h.r,BC[i],1.4,.9)).join(''); });
+  const hov = {q:2,r:-1};                                  // 正悬停在第 2 环
+  s += tileFill(hov.q,hov.r,C.face,.4) + tileRing(hov.q,hov.r,C.pick,2.2,.92);
+  s += mk3(hov.q,hov.r,G.barb(U*.66,C.face));
+  /* 棋子旁的三格色键：谁是谁一目了然，不占盘面 */
+  const kp = hc(CAV.q,CAV.r);
+  s += at(kp.x-HS*1.5, kp.y+HS*1.0, BC.map((c,i)=>
+    `<rect x="${-7}" y="${i*13-6}" width="14" height="10" rx="2" fill="${c}" opacity=".9"/>`).join('')
+    + BC.map((c,i)=>at(16,i*13-1, i===0? G.chevron(1,13,c)
+        : i===1? G.barb(11,C.face) : G.blade(11,'rgba(176,196,214,.9)',{forbid:true}))).join(''));
+  s += tileRing(CAV.q,CAV.r,C.pick,2.4,.95) + tkn3(CAV.q,CAV.r,{ch:'骑',move:3});
+  return board3(s); };
+
+/* --- M3 等高线：色带不描每格，只画band之间的分界 --- */
+const M3 = ()=>{ let s='';
+  BAND.forEach((b,i)=>{ s += b.map(h=>tileFill(h.q,h.r,BC[i],BF[i]+.04)).join(''); });
+  /* 每段把所有格子描一遍满轮廓：相邻同段的边重合，视觉上只剩段与段的分界，成等高线 */
+  BAND.forEach((b,i)=> s += b.map(h=>tileRing(h.q,h.r,BC[i],1.1,.99)).join(''));
+  s += mk3(1,-1,G.barb(U*.6,C.face));
+  s += mk3(0,-2,G.blade(U*.6,'rgba(176,196,214,.9)',{forbid:true}));
+  s += tileRing(CAV.q,CAV.r,C.pick,2.4,.95) + tkn3(CAV.q,CAV.r,{ch:'骑',move:3});
+  return board3(s); };
+
+OUT.innerHTML += section('二 · 骑兵移动范围：真实可达区 · 无方向 · 色带即语义', [
+ { h3:'M1 · 每格带记号', tag:'最明确，也最吵',
+   body:M1(),
+   note:'三段颜色<b>不是"远近"而是"落在这里会发生什么"</b>：青＝普通移动、琥珀＝<i>伤害+1</i>、冷白＝<i>本回合不可攻击</i>。记号铺满每格最不会误读，但 18 格同时挂记号，画面偏满。' },
+ { cls:'rec', h3:'M2 · 色带 + 悬停出记号', tag:'盘面干净，意图仍然明确',
+   body:M2(),
+   note:'常态只有<b>三段色带</b>；记号只在<i>当前悬停的那一格</i>放大出现（图中悬停在第 2 环，弹出倒钩＝伤害+1）。棋子旁挂一张<b>三格色键</b>，不占盘面又随时可查。这是实际对局里最舒服的一档——玩家扫一眼知道边界，落子前确认后果。' },
+ { h3:'M3 · 等高线', tag:'像地形图，边界最锐利',
+   body:M3(),
+   note:'色带只铺淡底，重点是<b>每段描一圈轮廓</b>，读起来像等高线。距离边界最清楚，缺点是三圈线叠在一起时格子内部会显得空，记号只能零星放几个。' },
+]);
+
+/* ============ 三 · 攻击范围：只用高亮，不画连线 ============ */
+const A_ARCHER = ()=>{
+  const me={q:-2,r:1}, d='NE';
+  let s='';
+  const RA = ray(me.q,me.r,d,6).filter(h=>onBoard(h,R3));
+  s += RA.map(h=>tileFill(h.q,h.r,C.face,.22)+tileRing(h.q,h.r,C.face,1.5,.9)).join('');
+  const foe={q:1,r:-2};
+  s += tileFill(foe.q,foe.r,C.threat,.34)+tileRing(foe.q,foe.r,C.threat,2.2,.9);
+  s += mk3(foe.q,foe.r,G.blade(U*.5,C.threat,{solid:true}),HS*.7,-HS*.52);
+  /* 其余三个可选朝向：淡色幽灵，各挂一个转向成本 */
+  ['E','SE','NW'].forEach(dd=>{ ray(me.q,me.r,dd,6).filter(h=>onBoard(h,R3))
+    .forEach(h=> s += tileFill(h.q,h.r,C.face,.05)); });
+  s += mk3(me.q,me.r,G.rotate(U*.7,'rgba(240,180,74,.85)')
+    + at(0,U*.5,G.pips(1,U*.55,'rgba(240,180,74,.85)')), -HS*1.3, -HS*.9);
+  s += tileRing(me.q,me.r,C.pick,2.4,.95);
+  s += tkn3(me.q,me.r,{ch:'弓',move:1,facing:DEG[d]});
+  s += tkn3(foe.q,foe.r,{ch:'步',move:1,side:'p2'});
+  return board3(s);
+};
+const A_MELEE = ()=>{
+  const me={q:0,r:0};
+  let s='';
+  neighbors(me,R3).forEach(h=> s += tileFill(h.q,h.r,C.threat,.17)+tileRing(h.q,h.r,C.threat,1.5,.9));
+  const foeA={q:1,r:0}, foeB={q:0,r:-1};
+  s += tileFill(foeA.q,foeA.r,C.threat,.4)+tileRing(foeA.q,foeA.r,C.threat,2.2,.9);
+  s += mk3(foeA.q,foeA.r,G.blade(U*.5,C.threat,{solid:true}),HS*.7,-HS*.52);
+  s += tileFill(foeB.q,foeB.r,C.threat,.26)+tileRing(foeB.q,foeB.r,C.threat,1.8,.9);
+  s += mk3(foeB.q,foeB.r,G.blade(U*.5,C.threat),HS*.7,-HS*.52);
+  s += tileRing(me.q,me.r,C.pick,2.4,.95);
+  s += tkn3(me.q,me.r,{ch:'步',move:1});
+  s += tkn3(foeA.q,foeA.r,{ch:'步',move:1,hp:1,side:'p2'});
+  s += tkn3(foeB.q,foeB.r,{ch:'骑',move:3,side:'p2'});
+  return board3(s);
+};
+const A_FAN = ()=>{
+  const me={q:0,r:1};
+  let s='';
+  fan(me,'NE',R3).forEach(h=> s += tileFill(h.q,h.r,C.threat,.26)+tileRing(h.q,h.r,C.threat,1.8,.9));
+  /* 敌方威胁区：斜纹，和我方攻击范围的实色高亮区分开 */
+  const th=[{q:2,r:-2},{q:3,r:-3},{q:1,r:-3}].filter(h=>onBoard(h,R3));
+  s += `<defs><pattern id="hz2" width="7" height="7" patternTransform="rotate(45)"
+      patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="7" stroke="${C.threat}" stroke-width="2.2" opacity=".4"/>
+    </pattern></defs>`;
+  s += th.map(h=>tileFill(h.q,h.r,'url(#hz2)')).join('');
+  s += tileRing(me.q,me.r,C.pick,2.4,.95);
+  s += tkn3(me.q,me.r,{ch:'将',move:1});
+  s += tkn3(1,0,{ch:'步',move:1,side:'p2'});
+  s += tkn3(2,-2,{ch:'弓',move:1,facing:DEG.SW,side:'p2'});
+  return board3(s);
+};
+OUT.innerHTML += section('三 · 攻击范围：同一套规则的三种形态（不是三选一）', [
+ { h3:'A1 · 射线型（弓手 / 弩车 / 投石车）', tag:'整条射线的格子都亮，没有线',
+   body:A_ARCHER(),
+   note:'弓手无限射程但有朝向 —— 所以范围<b>就是朝向那条射线上的全部格子</b>，直接铺琥珀高亮到棋盘边缘。射线上有敌军的那一格升级成<b>朱色实心矛尖</b>（可击杀）。其余三个朝向以 5% 的淡色幽灵铺出来，棋子旁挂回转记号 + 一个行动点圆点，表示转过去要花 1 点。' },
+ { h3:'A2 · 相邻环型（步兵 / 骑兵 / 战车）', tag:'同一片高亮里分出轻重',
+   body:A_MELEE(),
+   note:'相邻 6 格铺淡朱底＝"这一圈是你的攻击范围"；格子里真有敌人时加深并挂矛尖——<b>空心＝打得到，实心＝这一下能杀</b>（图中右侧敌军剩 1 血，所以是实心）。玩家不用算血量就知道哪一刀是斩。' },
+ { h3:'A3 · 扇形型（无双）+ 敌方威胁区', tag:'我方实色 / 敌方斜纹，永不混淆',
+   body:A_FAN(),
+   note:'无双的 120° 扇形＝相邻 3 格实色高亮。同时把<b>敌方下回合能打到的格子铺成朱色斜纹</b>——实色＝我能打的，斜纹＝我会被打的，同一个色相靠<i>填充方式</i>区分，不用再多占一个颜色。' },
+]);
+window.__OK = true;
+</script>
+</body></html>

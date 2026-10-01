@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>棋盘格渲染方案对比 · 十元棋</title>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --red:#8B1A1A; --redL:#C0392B; --gold:#C9A227; --goldL:#E8C84A; --goldD:#8B6914;
+    --ink:#0D0D0D; --parch:#F5E6C8; --jade:#2E6B4F;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px;background:#0a0500;color:var(--parch);
+       font-family:"Noto Serif SC",serif}
+  h1{font-family:"Ma Shan Zheng",serif;font-weight:400;font-size:34px;color:var(--gold);
+     margin:0 0 4px;letter-spacing:.14em}
+  .sub{color:rgba(201,162,39,.45);font-size:12px;letter-spacing:.2em;margin-bottom:24px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));
+        gap:18px;max-width:1240px}
+  .card{background:linear-gradient(180deg,rgba(26,18,9,.9),rgba(13,5,0,.96));
+        border:1px solid rgba(201,162,39,.22);border-radius:6px;padding:14px 14px 10px}
+  .card h2{font-size:15px;margin:0 0 2px;color:var(--goldL);letter-spacing:.08em;font-weight:600}
+  .card .tag{font-size:10px;color:rgba(201,162,39,.4);letter-spacing:.14em;margin-bottom:10px}
+  .card .note{font-size:11px;line-height:1.65;color:rgba(245,230,200,.5);margin-top:10px;
+              border-top:1px solid rgba(201,162,39,.14);padding-top:9px}
+  .card.bad{border-color:rgba(192,57,43,.45)}
+  .card.bad h2{color:#E08476}
+  .card.rec{border-color:rgba(201,162,39,.6);box-shadow:0 0 26px rgba(201,162,39,.12)}
+  .card.rec h2::after{content:" ← 推荐";font-size:10px;color:var(--gold);letter-spacing:.1em}
+  svg{display:block;width:100%;height:auto;border-radius:4px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:10px;margin:18px 0 0;
+          color:rgba(245,230,200,.45)}
+  .legend b{color:var(--goldL);font-weight:600}
+  .note b{color:rgba(232,200,74,.8);font-weight:600}
+  /* A 方案：忠实复刻现状的 fill-opacity 呼吸（问题所在） */
+  @keyframes labBreathe{0%,100%{fill-opacity:.3}50%{fill-opacity:.6}}
+  .lab-movable{animation:labBreathe 2s ease-in-out infinite}
+  /* B–E 方案：只脉动内圈的不透明度，底色始终不透明 */
+  @keyframes labRing{0%,100%{opacity:.55}50%{opacity:1}}
+  .lab-ring{animation:labRing 2s ease-in-out infinite}
+</style></head><body>
+
+<h1>棋盘格渲染方案</h1>
+<div class="sub">同一几何 · 同一棋子 · 只换格子与状态表现</div>
+<div class="grid" id="grid"></div>
+<div class="legend">
+  <span>每块板都含：<b>选中格</b>（中心，带步兵）· <b>可移动格</b>（3 格）· <b>可攻击格</b>（1 格，带敌军）· <b>大本营</b> · 普通格</span>
+</div>
+
+<script>
+const S = 34, R = 2;                     // 格子半径 / 棋盘半径
+const P = { red:'#8B1A1A', redL:'#C0392B', gold:'#C9A227', goldL:'#E8C84A',
+            goldD:'#8B6914', ink:'#0D0D0D', parch:'#F5E6C8', jade:'#2E6B4F' };
+
+/* ---- 几何：与 shared/utils/hexUtils.ts 完全一致（pointy-top） ---- */
+const px = (q,r)=>({ x:S*(Math.sqrt(3)*q + Math.sqrt(3)/2*r), y:S*1.5*r });
+const corners = c => Array.from({length:6},(_,i)=>{
+  const a = Math.PI/180*(60*i+30);
+  return { x:c.x+S*Math.cos(a), y:c.y+S*Math.sin(a) };
+});
+const pathOf = (q,r,k=1)=>{
+  const c = px(q,r);
+  return corners(c).map((p,i)=>
+    `${i?'L':'M'} ${(c.x+(p.x-c.x)*k).toFixed(2)},${(c.y+(p.y-c.y)*k).toFixed(2)}`
+  ).join(' ')+' Z';
+};
+const map = [];
+for(let q=-R;q<=R;q++)
+  for(let r=Math.max(-R,-q-R); r<=Math.min(R,-q+R); r++) map.push({q,r});
+
+/* ---- 场景：哪个格子是什么状态 ---- */
+const key = (q,r)=>q+','+r;
+const STATE = {
+  [key(0,0)]:'selected',
+  [key(1,0)]:'movable', [key(0,1)]:'movable', [key(-1,1)]:'movable',
+  [key(1,-1)]:'attackable',
+  [key(-2,0)]:'base',
+};
+const PIECES = [
+  { q:0,  r:0,  ch:'步', side:'p1' },
+  { q:1,  r:-1, ch:'步', side:'p2' },
+  { q:-1, r:-1, ch:'骑', side:'p2', shape:'diamond' },
+];
+
+/* ---- 去重的网格边：每条边只画一次（消除双描边脏缝） ---- */
+function seamPath(){
+  const seen = new Set(), out = [];
+  for(const {q,r} of map){
+    const cs = corners(px(q,r));
+    for(let i=0;i<6;i++){
+      const a=cs[i], b=cs[(i+1)%6];
+      const ka=`${a.x.toFixed(1)},${a.y.toFixed(1)}`, kb=`${b.x.toFixed(1)},${b.y.toFixed(1)}`;
+      const k = ka<kb ? ka+'|'+kb : kb+'|'+ka;
+      if(seen.has(k)) continue;
+      seen.add(k); out.push(`M ${ka.replace(',',' ')} L ${kb.replace(',',' ')}`);
+    }
+  }
+  return out.join(' ');
+}
+/* ---- 整块棋盘的外轮廓（用于"一整张绢面"方案） ---- */
+function boardOutline(){
+  const W = S*Math.sqrt(3)*(R+0.5), H = S*1.5*R + S;
+  const pts = Array.from({length:6},(_,i)=>{
+    const a = Math.PI/180*(60*i+30), Rr = S*(R+0.62)*1.78;
+    return [ (Rr*Math.cos(a)).toFixed(1), (Rr*0.995*Math.sin(a)).toFixed(1) ];
+  });
+  return 'M '+pts.map(p=>p.join(',')).join(' L ')+' Z';
+}
+const VB = (()=>{ const w=S*Math.sqrt(3)*(R+0.9), h=S*1.5*R+S*1.5;
+                  return `${-w} ${-h} ${w*2} ${h*2}`; })();
+
+/* ================= 棋子 ================= */
+const FACTION = {
+  p1:{ pri:P.red,  sec:P.redL,  stk:'#4A0E0E' },
+  p2:{ pri:P.jade, sec:'#3F8A66', stk:'#163A2A' },
+};
+/** 现状棋子：径向高光渐变 + 粗刻边 + 单向偏移投影 */
+function pieceOld(pf, {q,r,ch,side,shape,id,at,k=1}){
+  const c = at || px(q,r), f = FACTION[side], g = `${pf}-g-${id??q+'_'+r}`, sz = S*0.7*k;
+  const body = shape==='diamond'
+    ? `<polygon points="0,${-sz/2} ${sz/2},0 0,${sz/2} ${-sz/2},0"
+         fill="url(#${g})" stroke="${f.stk}" stroke-width="3"/>`
+    : `<circle r="${sz/2}" fill="url(#${g})" stroke="${f.stk}" stroke-width="3"/>`;
+  return `<defs><radialGradient id="${g}" cx="35%" cy="28%" r="78%">
+      <stop offset="0%" stop-color="${f.sec}"/><stop offset="100%" stop-color="${f.pri}"/>
+    </radialGradient></defs>
+    <g transform="translate(${c.x.toFixed(1)},${c.y.toFixed(1)})"
+       style="filter:drop-shadow(0 2px 3px rgba(13,13,13,.45))">${body}
+      <text y="1" text-anchor="middle" dominant-baseline="middle"
+            font-size="${sz*(shape==='diamond'?.4:.5)}" fill="${P.parch}"
+            font-family="'Noto Serif SC',serif" font-weight="700">${ch}</text></g>`;
+}
+/** 提案棋子：哑光印章 + 金细内圈 + 对称接地影，无偏移投影 */
+function pieceNew(pf, {q,r,ch,side,shape,at,k=1}){
+  const c = at || px(q,r), f = FACTION[side], sz = S*0.72*k, rr = sz/2;
+  const body = shape==='diamond'
+    ? `<polygon points="0,${-rr} ${rr},0 0,${rr} ${-rr},0" fill="${f.pri}"/>
+       <polygon points="0,${-rr+4.5} ${rr-4.5},0 0,${rr-4.5} ${-rr+4.5},0"
+                fill="none" stroke="rgba(201,162,39,.55)" stroke-width="1"/>`
+    : `<circle r="${rr}" fill="${f.pri}"/>
+       <circle r="${rr-3.5}" fill="none" stroke="rgba(201,162,39,.55)" stroke-width="1"/>`;
+  return `<g transform="translate(${c.x.toFixed(1)},${c.y.toFixed(1)})">
+      <ellipse cy="${rr*0.92}" rx="${rr*0.78}" ry="${rr*0.2}" fill="rgba(60,40,15,.32)"/>
+      ${body}
+      <text y="1" text-anchor="middle" dominant-baseline="middle"
+            font-size="${sz*(shape==='diamond'?.42:.52)}" fill="${P.parch}"
+            font-family="'Noto Serif SC',serif" font-weight="600"
+            letter-spacing="0">${ch}</text></g>`;
+}
+const drawPieces = (pf, fn=pieceOld) => PIECES.map(p=>fn(pf,p)).join('');
+
+/** 现状弓箭手：三角形 + 深色粗箭头画在棋子上面（糊成一团黑） */
+function archerOld(pf,{q,r,at,k=1}){
+  const c = at || px(q,r), sz = S*0.7*k, f = FACTION.p1, g = `${pf}-ag`;
+  return `<defs><radialGradient id="${g}" cx="35%" cy="28%" r="78%">
+      <stop offset="0%" stop-color="${f.sec}"/><stop offset="100%" stop-color="${f.pri}"/>
+    </radialGradient>
+    <marker id="${pf}-ah" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <polygon points="0 0, 10 3, 0 6" fill="#3E2F14"/></marker></defs>
+    <g transform="translate(${c.x.toFixed(1)},${c.y.toFixed(1)})"
+       style="filter:drop-shadow(0 2px 3px rgba(13,13,13,.45))">
+      <polygon points="0,${-sz/2} ${sz/2},${sz/2} ${-sz/2},${sz/2}"
+               fill="url(#${g})" stroke="${f.stk}" stroke-width="3"/>
+      <line x1="0" y1="0" x2="${sz*0.8}" y2="0" stroke="#3E2F14" stroke-width="4"
+            marker-end="url(#${pf}-ah)"/></g>`;
+}
+/** 提案弓箭手：平涂三角 + 金细内边 + 汉字，方向做成格边上的金色小尖 */
+function archerNew(pf,{q,r,at,k=1}){
+  const c = at || px(q,r), sz = S*0.74*k, h = sz/2, f = FACTION.p1;
+  return `<g transform="translate(${c.x.toFixed(1)},${c.y.toFixed(1)})">
+      <ellipse cy="${h*0.95}" rx="${h*0.8}" ry="${h*0.18}" fill="rgba(60,40,15,.3)"/>
+      <polygon points="0,${-h} ${h},${h*0.86} ${-h},${h*0.86}" fill="${f.pri}"/>
+      <polygon points="0,${-h+5.5} ${h-4.5},${h*0.86-3} ${-h+4.5},${h*0.86-3}"
+               fill="none" stroke="rgba(201,162,39,.6)" stroke-width="1"/>
+      <text y="${h*0.30}" text-anchor="middle" dominant-baseline="middle" font-size="${sz*0.4}"
+            fill="${P.parch}" font-family="'Noto Serif SC',serif" font-weight="600">弓</text>
+      <polygon points="${(h*2.0).toFixed(1)},0 ${(h*1.52).toFixed(1)},${(-h*0.35).toFixed(1)} ${(h*1.52).toFixed(1)},${(h*0.35).toFixed(1)}"
+               fill="${P.goldL}" stroke="rgba(60,40,15,.5)" stroke-width=".8"/></g>`;
+}
+
+/* ================= 公共片段 ================= */
+const lacquer = id => `<radialGradient id="${id}" cx="50%" cy="40%" r="75%">
+    <stop offset="0%" stop-color="#241A0C"/><stop offset="100%" stop-color="#120B03"/>
+  </radialGradient>`;
+/** 宣纸颗粒：feTurbulence 出噪声，只留很低的明度扰动 */
+const grain = id => `<filter id="${id}" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" seed="7"/>
+    <feColorMatrix type="matrix" values="0 0 0 0 .35  0 0 0 0 .27  0 0 0 0 .13  0 0 0 .42 0"/>
+  </filter>`;
+const clipAll = id => `<clipPath id="${id}">${map.map(h=>`<path d="${pathOf(h.q,h.r)}"/>`).join('')}</clipPath>`;
+const seam = (color,w=1) =>
+  `<path d="${seamPath()}" fill="none" stroke="${color}" stroke-width="${w}"
+         stroke-linecap="square" shape-rendering="geometricPrecision"/>`;
+/** 单格叠加层：ring = 内圈描边，glow = 中心径向光 */
+const ring = (q,r,color,w=1.4,k=.86,cls='lab-ring') =>
+  `<path class="${cls}" d="${pathOf(q,r,k)}" fill="none" stroke="${color}" stroke-width="${w}"/>`;
+const frame = (q,r,color) =>
+  `<path d="${pathOf(q,r,.99)}" fill="none" stroke="${color}" stroke-width="2.4"/>
+   <path d="${pathOf(q,r,.80)}" fill="none" stroke="${color}" stroke-width="1" opacity=".75"/>`;
+const tint = (q,r,color,op) => `<path d="${pathOf(q,r)}" fill="${color}" opacity="${op}"/>`;
+const shell = (inner) =>
+  `<svg viewBox="${VB}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+
+/* ================= 五种方案 ================= */
+const V = [];
+
+/* ---------- A. 现状 ---------- */
+V.push({ cls:'bad', title:'A · 现状', tag:'FILL-OPACITY 高亮',
+  note:'可移动格把淡金压到 fill-opacity .35，深底透上来变成脏橄榄绿，比普通格<b>更暗</b> —— 这就是你看到的"偏移阴影"。每格各自描边，共享边被画两遍，缝线粗细不均。',
+  render(){
+    const F = { normal:'#EADCBD', p1z:'#E9D3B6', p2z:'#DCD9BC' };
+    const tiles = map.map(({q,r})=>{
+      const st = STATE[key(q,r)];
+      let fill=F.normal, stroke='rgba(13,13,13,0.30)', sw=1, cls='';
+      if(st==='base'){ fill='#D8AC96'; stroke=P.red; sw=3; }
+      else if(st==='selected'){ fill='#D9B63C'; stroke='#8B6914'; sw=3; }
+      else if(st==='movable'||st==='attackable'){ fill='#EFD98A'; stroke='#A8821F'; sw=2; cls='lab-movable'; }
+      return `<path class="${cls}" d="${pathOf(q,r)}" fill="${fill}"
+                stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="miter"/>`;
+    }).join('');
+    // 步数小点（现状）
+    const dots = map.filter(h=>STATE[key(h.q,h.r)]==='movable').map(h=>{
+      const c=px(h.q,h.r);
+      return `<circle cx="${c.x}" cy="${c.y}" r="${S*.08}" fill="#6B4E0F" stroke="#3B2A08" stroke-width="1"/>`;
+    }).join('');
+    return shell(`<defs>${lacquer('bgA')}</defs>
+      <rect x="-999" y="-999" width="2000" height="2000" fill="url(#bgA)"/>
+      ${tiles}${dots}${drawPieces('A')}`);
+  }});
+
+/* ---------- B. 绢面 · 墨格（推荐） ---------- */
+V.push({ cls:'rec', title:'B · 绢面墨格', tag:'一整张绢 + 单遍墨线 + 加光高亮',
+  note:'格子不再是 19 个独立六边形：<b>一整张绢面</b>铺底（带宣纸颗粒 + 中心受光），网格用<b>去重后的单遍墨线</b>画在上面，像围棋盘。状态全部走<b>加光</b>——金晕 + 内圈，永远比底色亮；选中只加双层金框，不填色，棋子不被吃掉。',
+  render(){
+    const T = map.map(h=>`<path d="${pathOf(h.q,h.r)}" fill="#EBDDBE"/>`).join('');
+    const ov = map.map(({q,r})=>{
+      const st = STATE[key(q,r)];
+      if(st==='movable')    return tint(q,r,'url(#bGold)','.9') + ring(q,r,'rgba(201,162,39,.95)',1.6);
+      if(st==='attackable') return tint(q,r,'url(#bRed)','.9')  + ring(q,r,'rgba(192,57,43,.9)',1.6);
+      if(st==='selected')   return tint(q,r,P.goldL,'.16') + frame(q,r,P.gold);
+      if(st==='base')       return tint(q,r,P.red,'.13') + frame(q,r,'rgba(139,26,26,.85)');
+      return '';
+    }).join('');
+    return shell(`<defs>${lacquer('bgB')}${grain('grB')}${clipAll('clB')}
+        <radialGradient id="bGold"><stop offset="0%" stop-color="${P.goldL}" stop-opacity=".62"/>
+          <stop offset="100%" stop-color="${P.gold}" stop-opacity=".10"/></radialGradient>
+        <radialGradient id="bRed"><stop offset="0%" stop-color="${P.redL}" stop-opacity=".5"/>
+          <stop offset="100%" stop-color="${P.red}" stop-opacity=".08"/></radialGradient>
+        <radialGradient id="bLight" cx="48%" cy="36%" r="72%">
+          <stop offset="0%" stop-color="#fff" stop-opacity=".30"/>
+          <stop offset="70%" stop-color="#fff" stop-opacity="0"/>
+          <stop offset="100%" stop-color="#5A3F18" stop-opacity=".22"/></radialGradient></defs>
+      <rect x="-999" y="-999" width="2000" height="2000" fill="url(#bgB)"/>
+      <g clip-path="url(#clB)">${T}
+        <rect x="-300" y="-300" width="600" height="600" filter="url(#grB)"
+              opacity=".5" style="mix-blend-mode:multiply"/>
+        <rect x="-300" y="-300" width="600" height="600" fill="url(#bLight)"/>
+      </g>
+      ${seam('rgba(52,36,12,0.42)',1)}
+      ${ov}${drawPieces('B')}`);
+  }});
+
+/* ---------- C. 玉石浮雕 ---------- */
+V.push({ title:'C · 玉石浮雕', tag:'逐格内斜面 + 实心状态',
+  note:'保留独立格子，但把"外投影"换成<b>内斜面</b>：每格自带左上亮／右下暗的渐变 + 一圈内亮线，像嵌进漆盘的玉片。状态用<b>实心换色</b>（永远不降不透明度）。厚重，但 19 格各有高光，略碎。',
+  render(){
+    const tiles = map.map(({q,r})=>{
+      const st = STATE[key(q,r)];
+      const g = st==='movable'?'cMov': st==='attackable'?'cAtk':
+                st==='selected'?'cSel': st==='base'?'cBase':'cN';
+      return `<path d="${pathOf(q,r)}" fill="url(#${g})"/>
+              <path d="${pathOf(q,r,.955)}" fill="none" stroke="rgba(255,248,225,.55)" stroke-width="1.1"/>`;
+    }).join('');
+    const lg = (id,a,b)=>`<linearGradient id="${id}" x1="12%" y1="4%" x2="88%" y2="96%">
+        <stop offset="0%" stop-color="${a}"/><stop offset="100%" stop-color="${b}"/></linearGradient>`;
+    return shell(`<defs>${lacquer('bgC')}
+        ${lg('cN','#F2E6C8','#D9C8A2')}${lg('cMov','#FBEBA4','#DDBE58')}
+        ${lg('cAtk','#F6CBBB','#D99381')}${lg('cSel','#FFF0C2','#E0C05C')}
+        ${lg('cBase','#E8C3A8','#C99476')}</defs>
+      <rect x="-999" y="-999" width="2000" height="2000" fill="url(#bgC)"/>
+      ${tiles}${seam('rgba(48,32,10,0.5)',1.1)}
+      ${map.map(({q,r})=>STATE[key(q,r)]==='selected'?frame(q,r,P.goldD):'').join('')}
+      ${drawPieces('C')}`);
+  }});
+
+/* ---------- D. 掐丝漆盘 ---------- */
+V.push({ title:'D · 掐丝漆盘', tag:'深底 + 金丝缝 · 反转明度',
+  note:'整盘翻成<b>深漆底 + 金丝缝线</b>（景泰蓝掐丝）。最有辨识度，高亮直接"点亮"格子，语义天然正确。代价：朱红／青玉棋子压在深底上对比不足，棋子必须整套改成浅色描金 —— 是一次<b>整体换皮</b>，不是局部修。',
+  render(){
+    const tiles = map.map(({q,r})=>{
+      const st = STATE[key(q,r)];
+      const f = st==='movable'?'#5E4718': st==='attackable'?'#5A241D':
+                st==='selected'?'#8A6A1E': st==='base'?'#3A2A16':'url(#dN)';
+      return `<path d="${pathOf(q,r)}" fill="${f}"/>`;
+    }).join('');
+    const ov = map.map(({q,r})=>{
+      const st = STATE[key(q,r)];
+      if(st==='movable')    return ring(q,r,'rgba(232,200,74,.95)',1.6,.88);
+      if(st==='attackable') return ring(q,r,'rgba(224,110,90,.95)',1.6,.88);
+      if(st==='selected')   return frame(q,r,P.goldL);
+      if(st==='base')       return frame(q,r,'rgba(201,162,39,.5)');
+      return '';
+    }).join('');
+    const pieces = PIECES.map(p=>{
+      const c=px(p.q,p.r), rr=S*.36, f=p.side==='p1'?'#E8D2A8':'#CFE3D6';
+      const st=p.side==='p1'?P.red:P.jade;
+      return `<g transform="translate(${c.x.toFixed(1)},${c.y.toFixed(1)})">
+        <circle r="${rr}" fill="${f}" stroke="${st}" stroke-width="2.4"/>
+        <text y="1" text-anchor="middle" dominant-baseline="middle" font-size="${rr*1.05}"
+          fill="${st}" font-family="'Noto Serif SC',serif" font-weight="700">${p.ch}</text></g>`;
+    }).join('');
+    return shell(`<defs><radialGradient id="dN" cx="45%" cy="35%" r="80%">
+        <stop offset="0%" stop-color="#2E2415"/><stop offset="100%" stop-color="#1E1709"/>
+      </radialGradient>${lacquer('bgD')}</defs>
+      <rect x="-999" y="-999" width="2000" height="2000" fill="#0E0903"/>
+      ${tiles}${seam('rgba(201,162,39,0.55)',1)}${ov}${pieces}`);
+  }});
+
+/* ---------- E. 宣纸淡墨 ---------- */
+V.push({ title:'E · 宣纸淡墨', tag:'全平涂 · 零阴影 · 单遍赭线',
+  note:'最保守也最快：完全去掉渐变与投影，平涂宣纸色 + 单遍赭石细缝。状态<b>只提亮</b>不降透明度，选中只加金框。改动量最小（只动 boardTheme + HexTile），风格偏现代桌游 App，古意最弱。',
+  render(){
+    const tiles = map.map(({q,r})=>{
+      const st = STATE[key(q,r)];
+      const f = st==='movable'?'#FBE9A8': st==='attackable'?'#F4CDBE':
+                st==='base'?'#EBD3BA':'#EFE4C9';
+      return `<path d="${pathOf(q,r)}" fill="${f}"/>`;
+    }).join('');
+    const ov = map.map(({q,r})=>{
+      const st = STATE[key(q,r)];
+      if(st==='movable')    return ring(q,r,'rgba(168,130,31,.9)',1.5,.88);
+      if(st==='attackable') return ring(q,r,'rgba(176,58,42,.85)',1.5,.88);
+      if(st==='selected')   return frame(q,r,P.goldD);
+      if(st==='base')       return frame(q,r,'rgba(139,26,26,.7)');
+      return '';
+    }).join('');
+    return shell(`<rect x="-999" y="-999" width="2000" height="2000" fill="#15100A"/>
+      ${tiles}${seam('rgba(120,82,34,0.45)',1)}${ov}${drawPieces('E')}`);
+  }});
+
+/* ---------- F. 棋子：现状 vs 提案 ---------- */
+V.push({ title:'F · 棋子（另一条轴）', tag:'左 现状 · 右 提案',
+  note:'左三枚现状：<b>径向高光 + 粗刻边 + 单向投影</b>＝塑料糖果按钮。右三枚提案：哑光印章色、金色细内圈、汉字压中，投影换成<b>脚下对称接地椭圆</b>。同时该修：弓／弩／投石的方向箭头现在用深色粗线画在棋子<b>上面</b>，把三角形糊成一团黑。',
+  render(){
+    const K = 1.55, colL = -46, colR = 46, rows = [-52, 8, 66];
+    const bg = `<rect x="-118" y="-92" width="236" height="196" rx="5" fill="#EFE4C9"/>
+      <line x1="0" y1="-92" x2="0" y2="104" stroke="rgba(120,82,34,.3)"
+            stroke-width="1" stroke-dasharray="4 4"/>`;
+    const lab = (x,t,c)=>`<text x="${x}" y="-72" text-anchor="middle" font-size="11"
+        fill="${c}" font-family="'Noto Serif SC',serif" letter-spacing="2">${t}</text>`;
+    const old = [
+      pieceOld('F',{ch:'步',side:'p1',id:'o1',at:{x:colL,y:rows[0]},k:K}),
+      pieceOld('F',{ch:'骑',side:'p1',shape:'diamond',id:'o2',at:{x:colL,y:rows[1]},k:K}),
+      archerOld('F',{at:{x:colL,y:rows[2]},k:K}),
+    ].join('');
+    const neo = [
+      pieceNew('F',{ch:'步',side:'p1',at:{x:colR,y:rows[0]},k:K}),
+      pieceNew('F',{ch:'骑',side:'p1',shape:'diamond',at:{x:colR,y:rows[1]},k:K}),
+      archerNew('F',{at:{x:colR,y:rows[2]},k:K}),
+    ].join('');
+    return `<svg viewBox="-124 -98 248 208" xmlns="http://www.w3.org/2000/svg">
+      <rect x="-999" y="-999" width="2000" height="2000" fill="#15100A"/>
+      ${bg}${lab(colL,'现 状','rgba(176,58,42,.9)')}${lab(colR,'提 案','rgba(139,105,20,.95)')}
+      ${old}${neo}</svg>`;
+  }});
+
+/* ================= 渲染 ================= */
+document.getElementById('grid').innerHTML = V.map(v=>`
+  <div class="card ${v.cls||''}">
+    <h2>${v.title}</h2><div class="tag">${v.tag}</div>
+    ${v.render()}
+    <div class="note">${v.note}</div>
+  </div>`).join('');
+</script>
+</body></html>

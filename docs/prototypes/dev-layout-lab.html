@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>布局方案对比 · 十元棋</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px;background:#07080a;color:#F3E6CA;
+       font-family:"Noto Serif SC",serif;font-size:13px}
+  h1{font-size:23px;color:#C9A227;margin:0 0 3px;letter-spacing:.09em;font-weight:600}
+  .sub{color:rgba(243,230,202,.34);font-size:11.5px;letter-spacing:.16em;margin-bottom:16px}
+
+  .bar{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .bar .g{display:flex;gap:6px;align-items:center}
+  .bar label{font-size:10.5px;color:rgba(243,230,202,.4);letter-spacing:.14em}
+  button.sw{background:#14171c;border:1px solid rgba(255,255,255,.14);color:rgba(243,230,202,.75);
+    padding:5px 11px;border-radius:4px;font-family:inherit;font-size:11.5px;cursor:pointer;
+    letter-spacing:.04em}
+  button.sw:hover{border-color:rgba(201,162,39,.6)}
+  button.sw[aria-pressed=true]{background:#2A2314;border-color:#C9A227;color:#F0D98A}
+
+  .stage{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+  .col{min-width:0}
+  .col h2{font-size:13px;margin:0 0 7px;letter-spacing:.1em;font-weight:600}
+  .col.cur h2{color:#E08476} .col.pro h2{color:#7FD4C1}
+  /* 等比缩小的「视口」 */
+  .shell{border:1px solid rgba(255,255,255,.14);border-radius:5px;overflow:hidden;
+         background:#000;position:relative}
+  .frame{transform-origin:0 0;overflow:hidden;background:#0C0F13;position:relative}
+
+  /* ───── mockup 内部的通用块 ───── */
+  .blk{border:1px solid rgba(201,162,39,.22);border-radius:4px;
+       background:linear-gradient(180deg,rgba(26,18,9,.9),rgba(13,9,3,.95));
+       display:flex;align-items:center;justify-content:center;
+       color:rgba(243,230,202,.5);letter-spacing:.1em;overflow:hidden;flex:none}
+  .blk.lbl{flex-direction:column;gap:3px}
+  .blk b{color:#F0D98A;font-weight:600}
+  /* 棋盘"吃满剩余空间"的全部实现：容器量尺寸，棋盘取 min(可用宽, 可用高×AR) */
+  .bwrap{container-type:size;flex:1;min-height:0;min-width:0;display:flex;position:relative}
+  .board{position:relative;background:radial-gradient(ellipse at 50% 42%,#201E15,#121109);
+         border:1px solid rgba(176,158,106,.35);border-radius:4px;margin:auto;
+         width:min(100cqw, calc(100cqh * var(--ar)));aspect-ratio:var(--ar)}
+  .hexfield{position:absolute;inset:0;margin:auto;
+    background:repeating-linear-gradient(60deg,#262520 0 9px,#1E1D17 9px 10px),
+               repeating-linear-gradient(-60deg,transparent 0 9px,rgba(176,158,106,.18) 9px 10px);
+    clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+  .flat .hexfield{clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)}
+  .actbar{display:flex;gap:6px;align-items:center;justify-content:center;flex:none}
+  .pill{border:1px solid rgba(201,162,39,.45);border-radius:4px;
+        background:rgba(42,35,20,.9);color:#F0D98A;display:flex;align-items:center;
+        justify-content:center;flex:none}
+  .dead{position:absolute;background:repeating-linear-gradient(45deg,
+        rgba(226,86,75,.1) 0 6px,transparent 6px 12px);pointer-events:none}
+
+  table.m{border-collapse:collapse;font-size:11.5px;margin-top:9px;width:100%}
+  table.m td{padding:3px 7px;border-bottom:1px solid rgba(255,255,255,.06)}
+  table.m td:first-child{color:rgba(243,230,202,.42);white-space:nowrap}
+  table.m td:last-child{text-align:right;color:#F0D98A;font-weight:600;white-space:nowrap}
+  .bad{color:#E08476 !important} .good{color:#7FD4C1 !important}
+  .legend{margin-top:14px;font-size:11px;color:rgba(243,230,202,.42);line-height:1.8;max-width:900px}
+  .legend s{color:#E08476;text-decoration:none}
+</style></head><body>
+
+<h1>布局方案对比</h1>
+<div class="sub">真实 CSS · 等比缩放的视口 · 指标从 mockup 的 DOM 实测</div>
+
+<div class="bar">
+  <div class="g"><label>视口</label><span id="vpBtns"></span></div>
+  <div class="g"><label>操作方式</label>
+    <button class="sw" data-act="bar">底部动作条</button>
+    <button class="sw" data-act="radial">棋子旁径向菜单</button></div>
+  <div class="g"><label>棋盘朝向</label>
+    <button class="sw" data-or="pointy">pointy-top 现状</button>
+    <button class="sw" data-or="flat">flat-top 转 90°</button></div>
+  <div class="g"><label>红斜纹</label>
+    <button class="sw" id="deadToggle" aria-pressed="true">标出死空间</button></div>
+</div>
+
+<div class="stage">
+  <div class="col cur"><h2>现状</h2>
+    <div class="shell" id="shellA"><div class="frame" id="frameA"></div></div>
+    <table class="m" id="mA"></table></div>
+  <div class="col pro"><h2>提案</h2>
+    <div class="shell" id="shellB"><div class="frame" id="frameB"></div></div>
+    <table class="m" id="mB"></table></div>
+</div>
+
+<div class="legend">
+  棋盘长宽比 = viewBox <b>772.82 × 680 ≈ 1.137 : 1</b>（半径 5 的 pointy-top 六边形图）。
+  提案里棋盘用 <code>aspect-ratio: 772.82/680</code> + <code>max-width/max-height: 100%</code>，
+  等价于 <code>min(可用宽, 可用高 × 1.137)</code> —— 这就是"吃满剩余空间"的全部实现。
+  <s>红斜纹</s>＝既不是棋盘也不承载信息的死空间。
+</div>
+
+<script>
+const VPS = [[1920,1080],[1440,900],[1366,768],[1024,768],[820,1180],[375,812]];
+let VP = [1440,900], SHOW_DEAD = true, ACT_MODE = 'bar', ORIENT = 'pointy';
+const MAX_W = 620;           // 每栏最大显示宽度
+const px = n => Math.round(n)+'px';
+const AR_POINTY = 772.8203230275508 / 680;   // 1.1365 — 现在的 pointy-top
+const AR_FLAT   = 680 / 772.8203230275508;   // 0.8800 — 转 90° 的 flat-top
+let BOARD_AR = AR_POINTY;
+/** 侧栏布局的下限：一条右栏至少要 ~1024 视口宽才站得住，768 太低 */
+const RAIL_MIN = 1024;
+const blk = (h,label,extra='') =>
+  `<div class="blk lbl" style="height:${px(h)};width:100%;${extra}">${label}</div>`;
+/** radial = true 时在棋子旁画一圈动作按钮，travel 从该棋子量起 */
+const boardEl = (radial=false) =>
+  `<div class="bwrap"><div class="board" data-board style="--ar:${BOARD_AR}">
+     <div class="hexfield"></div>
+     ${radial ? `<div data-piece style="position:absolute;left:38%;top:58%;width:26px;height:26px;
+         margin:-13px 0 0 -13px;border-radius:50%;background:#D98A74;border:2px solid #C9A227;
+         display:flex;align-items:center;justify-content:center;font-size:12px;color:#6E2317;
+         font-weight:700;z-index:2">骑</div>
+       ${['移','攻','转','技'].map((t,i)=>{const a=(-135+i*45)*Math.PI/180,R=52;
+         return `<div class="pill" ${i===0?'data-act':''} style="position:absolute;left:38%;top:58%;
+           width:30px;height:30px;border-radius:50%;font-size:12px;
+           transform:translate(calc(-50% + ${(R*Math.cos(a)).toFixed(1)}px),
+                               calc(-50% + ${(R*Math.sin(a)).toFixed(1)}px))">${t}</div>`;}).join('')}
+       ` : ''}
+   </div></div>`;
+
+/* ───────── 现状：忠实复刻现有结构与硬编码数值 ───────── */
+function renderCurrent(w,h){
+  const narrow = w < 768;
+  if(!narrow){
+    const PAD=16, CAP=1280, inner=Math.min(w-PAD*2, CAP), side=(w-inner)/2;
+    const COL=(inner-48)/4, boardW=COL*3+32, railW=COL;
+    return `<div style="position:absolute;inset:0;padding:${px(PAD)} ${px(side)};display:flex;
+        flex-direction:column;gap:16px">
+      ${blk(138.5,'<b>HUD 138px</b><span>七个元素 · 五条中心线</span>')}
+      <div style="display:flex;gap:16px;align-items:flex-start;flex:none">
+        <div class="blk" style="width:${px(boardW)};height:700px;padding:16px;align-items:stretch">
+          ${boardEl()}</div>
+        <div style="width:${px(railW)};display:flex;flex-direction:column;gap:12px;flex:none">
+          ${blk(118,'选中单位<span style="color:#E08476">黑字黑底 1.04:1</span>')}
+          <div class="pill" data-act style="height:38px;width:100%">移动</div>
+          <div class="pill" style="height:38px;width:100%;opacity:.55">攻击</div>
+          ${blk(150,'部署单位<span style="color:#E08476">行动阶段也显示</span>')}
+          ${blk(120,'将军技能<span style="color:#E08476">被 maxHeight 截断</span>')}
+        </div>
+      </div>
+      ${blk(218,'战报')}
+    </div>`;
+  }
+  const PAD=8;
+  return `<div style="position:absolute;inset:0;padding:${px(PAD)};display:flex;
+      flex-direction:column;gap:12px">
+    ${blk(236,'<b>HUD 236px = 29% 视口高</b>')}
+    <div class="blk" style="width:100%;padding:8px;align-items:stretch;
+         height:${px(Math.min((w-PAD*2-16)/ (9.66/8.5), h*0.62))}">
+      ${boardEl()}</div>
+    ${blk(96,'选中单位')}
+    <div class="pill" data-act style="height:44px;width:100%">移动</div>
+    <div class="pill" style="height:44px;width:100%;opacity:.55">攻击</div>
+    ${blk(190,'部署单位')}
+    ${blk(150,'将军技能')}
+    ${blk(200,'战报')}
+  </div>`;
+}
+
+/* ───────── 提案：零滚动 · 棋盘吃满 · 操作贴棋盘 ───────── */
+function renderProposed(w,h){
+  const narrow = w < RAIL_MIN;
+  if(!narrow){
+    const PAD=14, GAP=12, HUD=48, ACT=52;
+    return `<div style="position:absolute;inset:0;padding:${px(PAD)};display:flex;
+        flex-direction:column;gap:${px(GAP)}">
+      ${blk(HUD,'<b>HUD 48px 单行</b> — 共享一条基线')}
+      <div style="display:flex;gap:${px(GAP)};flex:1;min-height:0">
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:${px(GAP)}">
+          ${boardEl(ACT_MODE==='radial')}
+          ${ACT_MODE==='radial' ? '' : `<div class="actbar" data-act style="height:${px(ACT)}">
+            ${['移动','攻击','转向','技能'].map(t=>
+              `<div class="pill" style="height:${px(ACT-10)};padding:0 20px">${t}</div>`).join('')}
+          </div>`}
+        </div>
+        <div style="flex:0 0 clamp(264px, 22%, 400px);display:flex;flex-direction:column;gap:${px(GAP)};min-width:0">
+          ${blk(188,'选中单位<span style="color:#7FD4C1">令牌放大 + 通道图解</span>')}
+          <div class="blk lbl" style="flex:1;min-height:0;width:100%">战报<span>首屏内可见</span></div>
+        </div>
+      </div>
+    </div>`;
+  }
+  const PAD=8, GAP=8, HUD=44, ACT=56, LOG=38;
+  return `<div style="position:absolute;inset:0;padding:${px(PAD)};display:flex;
+      flex-direction:column;gap:${px(GAP)}">
+    ${blk(HUD,'<b>HUD 44px</b>')}
+    ${boardEl(ACT_MODE==='radial')}
+    ${blk(76,'选中单位（单行摘要）')}
+    ${ACT_MODE==='radial' ? '' : `<div class="actbar" data-act style="height:${px(ACT)}">
+      ${['移动','攻击','转向'].map(t=>
+        `<div class="pill" style="height:${px(ACT-10)};flex:1">${t}</div>`).join('')}
+    </div>`}
+    ${blk(LOG,'战报 ▸ 默认折叠')}
+  </div>`;
+}
+
+/* ───────── 渲染 + 实测 ───────── */
+function paint(which, html){
+  const [w,h] = VP;
+  const frame = document.getElementById('frame'+which);
+  const shell = document.getElementById('shell'+which);
+  const scale = Math.min(1, MAX_W/w);
+  frame.style.width = px(w); frame.style.height = px(h);
+  frame.style.transform = `scale(${scale})`;
+  shell.style.width = px(w*scale); shell.style.height = px(h*scale);
+  frame.className = 'frame' + (ORIENT==='flat'?' flat':'');
+  frame.innerHTML = html;
+
+  const board = frame.querySelector('[data-board]');
+  const act   = frame.querySelector('[data-act]');
+  const inner = frame.firstElementChild;
+  const bb = board.getBoundingClientRect(), ab = act.getBoundingClientRect();
+  const bw = bb.width/scale, bh = bb.height/scale;
+  const pc = frame.querySelector('[data-piece]');
+  const from = pc ? pc.getBoundingClientRect() : bb;
+  const travel = Math.hypot((ab.x+ab.width/2)-(from.x+from.width/2),
+                            (ab.y+ab.height/2)-(from.y+from.height/2))/scale;
+  /* 内容总高（现状是竖向堆叠，可能超出视口） */
+  const need = [...inner.children].reduce((s,c)=>s+c.getBoundingClientRect().height/scale,0)
+             + (parseFloat(getComputedStyle(inner).gap)||0)*(inner.children.length-1)
+             + parseFloat(getComputedStyle(inner).paddingTop)*2;
+  const overflow = Math.max(0, Math.round(need - h));
+
+  if(SHOW_DEAD){
+    const host = board.parentElement;
+    const hostB = host.getBoundingClientRect();
+    const padL = (hostB.width/scale - bw)/2;
+    if(padL > 4) [[0,padL],[hostB.width/scale-padL,padL]].forEach(([x,ww])=>{
+      const d=document.createElement('div'); d.className='dead';
+      d.style.cssText=`left:${px(x)};top:0;width:${px(ww)};height:100%`;
+      host.style.position='relative'; host.appendChild(d); });
+  }
+  return {bw:Math.round(bw), bh:Math.round(bh), pct:+(bh/h*100).toFixed(1),
+          travel:Math.round(travel), overflow};
+}
+
+function metrics(id, m, ref){
+  const row=(k,v,cls='')=>`<tr><td>${k}</td><td class="${cls}">${v}</td></tr>`;
+  let extra='';
+  if(ref) {
+    const dLin = ((m.bw/ref.bw-1)*100).toFixed(0);
+    const dArea = ((m.bw*m.bh/(ref.bw*ref.bh)-1)*100).toFixed(0);
+    extra = row('棋盘线性变化', (dLin>0?'+':'')+dLin+'%', dLin>0?'good':'bad')
+          + row('棋盘面积变化', (dArea>0?'+':'')+dArea+'%', dArea>0?'good':'bad');
+  }
+  document.getElementById(id).innerHTML =
+      row('棋盘实际绘制', `${m.bw} × ${m.bh}`)
+    + row('占视口高', m.pct+'%', m.pct>=55?'good':'bad')
+    + row('超出首屏', m.overflow?m.overflow+'px':'0 — 不滚动', m.overflow?'bad':'good')
+    + row('棋盘中心 → 操作', m.travel+'px', m.travel<=200?'good':'bad')
+    + extra;
+}
+
+function render(){
+  const [w,h]=VP;
+  const a = paint('A', renderCurrent(w,h));
+  const b = paint('B', renderProposed(w,h));
+  metrics('mA', a);
+  metrics('mB', b, a);
+}
+
+/* 控件 */
+const vpBtns=document.getElementById('vpBtns');
+vpBtns.innerHTML = VPS.map(([w,h])=>
+  `<button class="sw" data-w="${w}" data-h="${h}">${w}×${h}</button>`).join(' ');
+vpBtns.addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  VP=[+b.dataset.w,+b.dataset.h]; sync(); });
+document.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click',()=>{
+  ACT_MODE=b.dataset.act; sync(); }));
+document.querySelectorAll('button[data-or]').forEach(b=>b.addEventListener('click',()=>{
+  ORIENT=b.dataset.or; BOARD_AR = ORIENT==='flat'?AR_FLAT:AR_POINTY; sync(); }));
+document.getElementById('deadToggle').addEventListener('click',e=>{
+  SHOW_DEAD=!SHOW_DEAD; e.currentTarget.setAttribute('aria-pressed',SHOW_DEAD); render(); });
+function sync(){
+  [...vpBtns.querySelectorAll('button')].forEach(b=>
+    b.setAttribute('aria-pressed', +b.dataset.w===VP[0] && +b.dataset.h===VP[1]));
+  document.querySelectorAll('button[data-act]').forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.act===ACT_MODE));
+  document.querySelectorAll('button[data-or]').forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.or===ORIENT));
+  render();
+}
+sync();
+window.__LAYOUT_OK = true;
+</script>
+</body></html>

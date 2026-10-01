@@ -5,7 +5,10 @@
   "scripts": {
     "start": "node lib/server/src/index.js",
     "dev": "nodemon --exec ts-node src/index.ts",
-    "build": "tsc"
+    "dev:tools": "SHIYUAN_DEV_TOOLS=1 nodemon --exec ts-node src/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +27,7 @@
     "colyseus.js": "^0.16.22",
     "nodemon": "^3.1.11",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
   }
 }

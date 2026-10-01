@@ -187,15 +187,18 @@ export function getShootingPath(
   from: HexCoord,
   direction: Direction,
   maxRange: number,
-  blockedHexes?: HexCoord[]
+  blockedHexes?: HexCoord[],
+  mapRadius: number = 5
 ): HexCoord[] {
   const path: HexCoord[] = [];
   let current = hexNeighbor(from, direction);
   let distance = 1; // 当前距离起点的步数
 
   while (distance <= maxRange) {
-    // 检查是否还在地图范围内（地图半径固定为5）
-    if (!isInMapRange(current, 5)) {
+    // 检查是否还在地图范围内。
+    // 以前这里把半径硬编码成 5，而同文件的 getBallistaVerticalPath 是收参数的 ——
+    // 地图尺寸一改，射击路径会静默按 5 算。改成可选参数，默认仍是 5。
+    if (!isInMapRange(current, mapRadius)) {
       break;
     }
 
@@ -261,14 +264,14 @@ export function getBallistaVerticalPath(
  * 120度扇形：包括中心方向和左右各60度的相邻3个格子
  * @param from 起始位置（将领位置）
  * @param direction 中心方向
- * @param range 扇形范围（距离，但当前实现固定为相邻的3格）
+ * @param _range 保留参数，当前实现不使用：120° 扇形固定就是相邻的 3 格
  * @param mapRadius 地图半径
  * @returns 扇形区域内的所有六边形坐标
  */
 export function getFanShapedHexes(
   from: HexCoord,
   direction: Direction,
-  range: number,
+  _range: number,
   mapRadius: number
 ): HexCoord[] {
   const result: HexCoord[] = [];

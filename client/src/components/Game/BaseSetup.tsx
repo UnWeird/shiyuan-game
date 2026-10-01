@@ -4,10 +4,11 @@ import { useGameStore } from '../../stores/gameStore';
 import { HexMap } from '../Map/HexMap';
 import { isInStartZone } from '../../utils/hexUtils';
 import { colyseusService } from '../../services/ColyseusService';
-import { useIsMobile } from '../../hooks/useMobile';
+import { useIsNarrowScreen } from '../../hooks/useMobile';
 
 export const BaseSetup: React.FC = () => {
-  const isMobile = useIsMobile();
+  // 窄屏布局：只看视口宽度，不看设备类型
+  const isNarrow = useIsNarrowScreen();
   const {
     currentPlayer,
     player1Base,
@@ -15,6 +16,7 @@ export const BaseSetup: React.FC = () => {
     setBase,
     nextPhase,
     isOnlineMode,
+    isHotseat,
     myPlayerRole,
   } = useGameStore();
 
@@ -22,6 +24,9 @@ export const BaseSetup: React.FC = () => {
   const [hasSubmitted, setHasSubmitted] = useState(false);
 
   // 获取我的大本营和对手的大本营
+  // 同机轮流下没有「对手在另一端」这回事：双方都是你自己按顺序操作。
+  // 所以「等待对手」这类 UI 只在真人对战时显示。
+  const isVersus = isOnlineMode && !isHotseat;
   const myBase = isOnlineMode && myPlayerRole
     ? (myPlayerRole === 'player1' ? player1Base : player2Base)
     : (currentPlayer === Player.PLAYER1 ? player1Base : player2Base);
@@ -35,13 +40,19 @@ export const BaseSetup: React.FC = () => {
     ? (myPlayerRole === 'player1' ? 'top' : 'bottom')
     : (currentPlayer === Player.PLAYER1 ? 'top' : 'bottom');
 
-  // 加载已有的大本营位置
+  // 同步成这一方的状态。
+  //
+  // 原来只在 myBase 存在时把 hasSubmitted 置 true、从不置回 false，
+  // 同机轮流下玩家一设置完后玩家二会被判成「已设置」而无法确认。
+  //
+  // 依赖里必须带上「这一方是谁」：交接时 myBase 的**含义**变了但**值没变**
+  // —— 交接前是玩家一还没设的大本营(null)，交接后是玩家二还没设的(也是 null)，
+  // 只依赖 myBase 的话 effect 根本不会重跑。
   useEffect(() => {
-    if (myBase) {
-      setTempBase(myBase);
-      setHasSubmitted(true);
-    }
-  }, [myBase]);
+    setTempBase(myBase ?? null);
+    setHasSubmitted(!!myBase);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myBase, myPlayerRole, currentPlayer]);
 
   const handleHexClick = (hex: HexCoord) => {
     // 已提交后不能再修改
@@ -83,68 +94,92 @@ export const BaseSetup: React.FC = () => {
 
   // 判断对手是否已设置
   const opponentDone = opponentBase !== null;
-  const waitingForOpponent = isOnlineMode && hasSubmitted && !opponentDone;
+  const waitingForOpponent = isVersus && hasSubmitted && !opponentDone;
+
+  const canConfirm = !!tempBase && !hasSubmitted;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex flex-col items-center justify-center p-4 md:p-8">
-      <div className="max-w-6xl w-full">
-        <div className="text-center mb-4 md:mb-8">
-          <h1 className="text-2xl md:text-4xl font-bold mb-2">设置大本营</h1>
-          <p className="text-xl text-gray-600">
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-6 relative overflow-hidden"
+      style={{ background: 'radial-gradient(ellipse at 50% 10%, #2a0a00 0%, #0d0500 60%, #050200 100%)' }}
+    >
+      {/* 背景网格 */}
+      <div className="absolute inset-0 opacity-10" style={{
+        backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 40px, rgba(201,162,39,0.12) 40px, rgba(201,162,39,0.12) 41px), repeating-linear-gradient(90deg, transparent, transparent 40px, rgba(201,162,39,0.12) 40px, rgba(201,162,39,0.12) 41px)'
+      }} />
+
+      <div className="relative z-10 max-w-4xl w-full">
+        {/* 标题区 */}
+        <div className="text-center mb-4">
+          <h1 className="font-ancient text-3xl md:text-4xl tracking-[0.3em]" style={{ color: '#C9A227', textShadow: '0 0 20px rgba(201,162,39,0.4)' }}>
+            安 置 大 本 营
+          </h1>
+          <div className="flex items-center justify-center gap-3 my-2">
+            <div className="h-px w-16 bg-gradient-to-r from-transparent to-imperial-gold/40" />
+            <div className="w-1.5 h-1.5 rotate-45 bg-imperial-gold/40" />
+            <div className="h-px w-16 bg-gradient-to-l from-transparent to-imperial-gold/40" />
+          </div>
+          <p className="font-chinese text-xs tracking-widest" style={{ color: 'rgba(201,162,39,0.55)' }}>
             {isOnlineMode
-              ? `${myPlayerRole === 'player1' ? '玩家 1' : '玩家 2'} (你) 请在你的起始区（${myZone === 'top' ? '黄色区域' : '蓝色区域'}）选择大本营位置`
-              : `${currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 请在你的起始区（${currentPlayer === Player.PLAYER1 ? '黄色区域' : '蓝色区域'}）选择大本营位置`
+              ? `${myPlayerRole === 'player1' ? '玩家一' : '玩家二'} · 在${myZone === 'top' ? '上方起始区' : '下方起始区'}选择大本营位置`
+              : `${currentPlayer === Player.PLAYER1 ? '玩家一' : '玩家二'} · 在${currentPlayer === Player.PLAYER1 ? '上方起始区' : '下方起始区'}选择位置`
             }
           </p>
-          <p className="text-sm text-gray-500 mt-2">
+          <p className="font-chinese text-xs mt-1" style={{ color: 'rgba(245,230,200,0.3)' }}>
             胜利条件：敌方单位触碰到大本营
           </p>
-          {isOnlineMode && (
-            <p className="text-sm text-gray-500 mt-1">
-              对手设置状态: {opponentDone ? '✅ 已完成' : '⏳ 设置中...'}
+          {isVersus && (
+            <p className="font-chinese text-xs mt-1" style={{ color: opponentDone ? 'rgba(100,200,100,0.7)' : 'rgba(201,162,39,0.4)' }}>
+              {opponentDone ? '对手已完成设置' : '对手设置中...'}
             </p>
           )}
         </div>
 
-        <div className="bg-white rounded-lg shadow-xl p-2 md:p-4 mb-4 md:mb-6" style={{ height: isMobile ? '350px' : '600px' }}>
+        {/* 地图容器 */}
+        <div className="rounded mb-4"
+          style={{
+            height: isNarrow ? '350px' : '560px',
+            border: '1px solid rgba(201,162,39,0.25)',
+            background: 'rgba(13,5,0,0.7)',
+            boxShadow: 'inset 0 0 40px rgba(0,0,0,0.5)',
+          }}
+        >
           <HexMap
             radius={5}
-            hexSize={isMobile ? 25 : 40}
+            hexSize={isNarrow ? 25 : 40}
             onHexClick={handleHexClick}
             highlightedHexes={highlightedHexes}
           />
         </div>
 
-        <div className="flex flex-col items-center gap-4">
+        {/* 底部操作区 */}
+        <div className="flex flex-col items-center gap-3">
           {waitingForOpponent && (
-            <div className="text-center">
-              <div className="flex justify-center mb-4">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-              </div>
-              <p className="text-blue-600 font-semibold">
-                ✅ 你的大本营位置已设置！等待对手完成设置...
-              </p>
-            </div>
+            <p className="font-chinese text-sm tracking-wider" style={{ color: 'rgba(201,162,39,0.7)' }}>
+              大本营已设置，等待对手完成...
+            </p>
           )}
           {hasSubmitted && opponentDone && (
-            <p className="text-green-600 font-semibold">
-              ✅ 双方大本营设置完成！即将进入部署阶段...
+            <p className="font-chinese text-sm tracking-wider" style={{ color: 'rgba(100,200,100,0.8)' }}>
+              双方设置完成，即将进入部署阶段
             </p>
           )}
           <button
             onClick={handleConfirm}
-            disabled={!tempBase || hasSubmitted}
-            className={`
-              px-8 py-3 rounded-lg font-bold text-lg transition-all duration-200
-              ${tempBase && !hasSubmitted
-                ? 'bg-green-500 text-white hover:bg-green-600 shadow-lg'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              }
-            `}
+            disabled={!canConfirm}
+            className="px-10 py-3 rounded font-chinese tracking-widest transition-all duration-300"
+            style={{
+              border: canConfirm ? '1px solid rgba(201,162,39,0.7)' : '1px solid rgba(201,162,39,0.15)',
+              color: canConfirm ? '#E8C84A' : 'rgba(201,162,39,0.25)',
+              background: canConfirm ? 'linear-gradient(135deg, rgba(139,26,26,0.5) 0%, rgba(26,10,0,0.9) 100%)' : 'rgba(13,5,0,0.5)',
+              cursor: canConfirm ? 'pointer' : 'not-allowed',
+              boxShadow: canConfirm ? '0 0 20px rgba(201,162,39,0.2)' : 'none',
+            }}
+            onMouseEnter={e => canConfirm && ((e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 30px rgba(201,162,39,0.4)')}
+            onMouseLeave={e => canConfirm && ((e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 20px rgba(201,162,39,0.2)')}
           >
             {isOnlineMode
               ? (hasSubmitted ? '已设置位置' : '确认位置')
-              : (currentPlayer === Player.PLAYER1 ? '确认位置（玩家2设置）' : '确认位置（开始游戏）')
+              : (currentPlayer === Player.PLAYER1 ? '确认（下一位设置）' : '确认（开始游戏）')
             }
           </button>
         </div>

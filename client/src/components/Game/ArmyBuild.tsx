@@ -55,6 +55,7 @@ export const ArmyBuild: React.FC = () => {
     setArmy,
     nextPhase,
     isOnlineMode,
+    isHotseat,
     myPlayerRole,
   } = useGameStore();
 
@@ -64,6 +65,9 @@ export const ArmyBuild: React.FC = () => {
   const [hasSubmitted, setHasSubmitted] = useState(false);
 
   // 获取我的军队和对手的军队
+  // 同机轮流下没有「对手在另一端」这回事：双方都是你自己按顺序操作。
+  // 所以「等待对手」这类 UI 只在真人对战时显示。
+  const isVersus = isOnlineMode && !isHotseat;
   const myArmy = isOnlineMode && myPlayerRole
     ? (myPlayerRole === 'player1' ? player1Army : player2Army)
     : (currentPlayer === Player.PLAYER1 ? player1Army : player2Army);
@@ -72,35 +76,20 @@ export const ArmyBuild: React.FC = () => {
     ? (myPlayerRole === 'player1' ? player2Army : player1Army)
     : null;
 
-  // 加载当前配置（仅在初始化或角色改变时加载）
+  // 行动方切换（同机轮流）或初次进入时，把表单和「是否已提交」同步成这一方的状态。
+  //
+  // 原来的实现只会把 hasSubmitted 置 true、从不置回 false，
+  // 而且表单只在「当前为空」时才加载。同机轮流下玩家一提交后，
+  // 玩家二会拿到玩家一的数字、而且确认按钮永远是禁用的 —— 直接卡住。
+  // 改成从 myArmy 完整推导，不再是粘住的状态。
   useEffect(() => {
-    if (isOnlineMode && myPlayerRole) {
-      // 在线模式：只在初始化时加载自己的配置
-      if (infantry === 0 && cavalry === 0 && archer === 0) {
-        // 只在当前配置为空时才从状态加载
-        setInfantry(myArmy.infantry);
-        setCavalry(myArmy.cavalry);
-        setArcher(myArmy.archer);
-      }
-
-      // 检查是否已提交（配置不为0说明已提交）
-      if (myArmy.infantry > 0 || myArmy.cavalry > 0 || myArmy.archer > 0) {
-        setHasSubmitted(true);
-      }
-    } else {
-      // 单机模式：根据当前玩家加载
-      if (currentPlayer === Player.PLAYER1) {
-        setInfantry(player1Army.infantry);
-        setCavalry(player1Army.cavalry);
-        setArcher(player1Army.archer);
-      } else if (currentPlayer === Player.PLAYER2) {
-        setInfantry(player2Army.infantry);
-        setCavalry(player2Army.cavalry);
-        setArcher(player2Army.archer);
-      }
-    }
+    setInfantry(myArmy.infantry);
+    setCavalry(myArmy.cavalry);
+    setArcher(myArmy.archer);
+    setHasSubmitted(myArmy.infantry > 0 || myArmy.cavalry > 0 || myArmy.archer > 0);
+    // 依赖「这一方是谁」而不是 army 本身，避免编辑过程中被回写覆盖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPlayer, isOnlineMode, myPlayerRole]); // 只依赖这些关键变量，不依赖army状态
+  }, [currentPlayer, myPlayerRole]);
 
   const totalCost = infantry * UNIT_COSTS.infantry +
                     cavalry * UNIT_COSTS.cavalry +
@@ -138,186 +127,170 @@ export const ArmyBuild: React.FC = () => {
 
   // 判断对手是否已配置
   const opponentDone = opponentArmy && (opponentArmy.infantry > 0 || opponentArmy.cavalry > 0 || opponentArmy.archer > 0);
-  const waitingForOpponent = isOnlineMode && hasSubmitted && !opponentDone;
+  const waitingForOpponent = isVersus && hasSubmitted && !opponentDone;
+
+  // 共用样式常量
+  const panelStyle = {
+    background: 'linear-gradient(180deg, rgba(26,10,0,0.95) 0%, rgba(13,5,0,0.98) 100%)',
+    border: '1px solid rgba(201,162,39,0.3)',
+    boxShadow: '0 0 40px rgba(201,162,39,0.1), inset 0 1px 0 rgba(201,162,39,0.15)',
+  };
+
+  const unitCardStyle = (active: boolean) => ({
+    background: active
+      ? 'linear-gradient(135deg, rgba(26,10,0,0.9) 0%, rgba(13,5,0,0.95) 100%)'
+      : 'rgba(13,5,0,0.6)',
+    border: active ? '1px solid rgba(201,162,39,0.5)' : '1px solid rgba(201,162,39,0.15)',
+    transition: 'all 0.3s',
+  });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex items-center justify-center p-4 md:p-8">
-      <div className="max-w-6xl w-full bg-white rounded-lg shadow-xl p-4 md:p-8">
-        <div className="text-center mb-6 md:mb-8">
-          <h1 className="text-2xl md:text-4xl font-bold mb-2">配置部队</h1>
-          <p className="text-xl text-gray-600">
-            {isOnlineMode
-              ? `${myPlayerRole === 'player1' ? '玩家 1' : '玩家 2'} (你) 请分配你的 4 元预算`
-              : `${currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 请分配你的 4 元预算`
-            }
-          </p>
-          {isOnlineMode && opponentArmy && (
-            <p className="text-sm text-gray-500 mt-2">
-              对手配兵状态: {opponentDone ? '✅ 已完成' : '⏳ 配置中...'}
+    <div className="min-h-screen flex items-center justify-center p-4 md:p-6 relative overflow-hidden"
+      style={{ background: 'radial-gradient(ellipse at 50% 20%, #2a0a00 0%, #0d0500 60%, #050200 100%)' }}
+    >
+      {/* 背景网格 */}
+      <div className="absolute inset-0 opacity-10" style={{
+        backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 40px, rgba(201,162,39,0.12) 40px, rgba(201,162,39,0.12) 41px), repeating-linear-gradient(90deg, transparent, transparent 40px, rgba(201,162,39,0.12) 40px, rgba(201,162,39,0.12) 41px)'
+      }} />
+
+      <div className="relative z-10 max-w-4xl w-full" style={panelStyle as React.CSSProperties}>
+        <div className="p-5 md:p-8">
+          {/* 标题 */}
+          <div className="text-center mb-6">
+            <h1 className="font-ancient text-3xl md:text-4xl tracking-[0.3em] mb-2" style={{ color: '#C9A227', textShadow: '0 0 20px rgba(201,162,39,0.4)' }}>
+              点 兵 配 将
+            </h1>
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <div className="h-px w-20 bg-gradient-to-r from-transparent to-imperial-gold/40" />
+              <div className="w-1.5 h-1.5 rotate-45 bg-imperial-gold/40" />
+              <div className="h-px w-20 bg-gradient-to-l from-transparent to-imperial-gold/40" />
+            </div>
+            <p className="font-chinese text-sm tracking-widest" style={{ color: 'rgba(201,162,39,0.6)' }}>
+              {isOnlineMode
+                ? `${myPlayerRole === 'player1' ? '玩家一' : '玩家二'} · 分配四元军费`
+                : `${currentPlayer === Player.PLAYER1 ? '玩家一' : '玩家二'} · 分配四元军费`
+              }
             </p>
-          )}
-        </div>
-
-        {/* 推荐配置 */}
-        <div className="mb-6 md:mb-8">
-          <h2 className="text-lg font-bold mb-3">推荐配置</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {RECOMMENDED_BUILDS.map((build, index) => (
-              <button
-                key={index}
-                onClick={() => applyBuild(build)}
-                className="p-3 border-2 border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all text-left"
-              >
-                <h3 className="font-bold text-sm mb-1">{build.name}</h3>
-                <p className="text-xs text-gray-600 mb-2">{build.description}</p>
-                <div className="text-xs space-y-0.5">
-                  <div>步兵: {build.infantry}</div>
-                  <div>骑兵: {build.cavalry}</div>
-                  <div>弓箭手: {build.archer}</div>
-                </div>
-              </button>
-            ))}
+            {isVersus && opponentArmy && (
+              <p className="font-chinese text-xs mt-1" style={{ color: opponentDone ? 'rgba(100,200,100,0.7)' : 'rgba(201,162,39,0.4)' }}>
+                {opponentDone ? '对手已完成配兵' : '对手配兵中...'}
+              </p>
+            )}
           </div>
-        </div>
 
-        <div className="mb-6 md:mb-8">
-          <div className="flex justify-between items-center mb-4 p-3 md:p-4 bg-gray-100 rounded-lg">
-            <span className="text-lg font-semibold">剩余预算:</span>
-            <span className={`text-2xl font-bold ${remaining < 0 ? 'text-red-500' : 'text-green-500'}`}>
+          {/* 预算条 */}
+          <div className="flex items-center justify-between mb-5 px-4 py-3 rounded"
+            style={{ background: 'rgba(201,162,39,0.08)', border: '1px solid rgba(201,162,39,0.2)' }}
+          >
+            <span className="font-chinese text-sm tracking-wider" style={{ color: 'rgba(245,230,200,0.7)' }}>剩余军费</span>
+            <span className="font-ancient text-2xl" style={{ color: remaining < 0 ? '#ef4444' : remaining === 0 ? '#4ade80' : '#C9A227', textShadow: remaining === 0 ? '0 0 10px rgba(74,222,128,0.4)' : 'none' }}>
               {remaining.toFixed(1)} 元
             </span>
           </div>
 
-          <div className="space-y-6">
-            {/* 步兵 */}
-            <div className="border-2 border-gray-200 rounded-lg p-4">
-              <div className="flex justify-between items-center mb-3">
-                <div>
-                  <h3 className="text-xl font-bold">步兵</h3>
-                  <p className="text-sm text-gray-600">一角/个 · 基础单位 · 移动1格 · 攻击范围1格</p>
-                </div>
-                <div className="text-lg font-semibold text-amber-600">
-                  {(infantry * UNIT_COSTS.infantry).toFixed(1)} 元
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
+          {/* 推荐配置 */}
+          <div className="mb-5">
+            <p className="font-chinese text-xs tracking-widest mb-3" style={{ color: 'rgba(201,162,39,0.5)' }}>— 推荐阵容 —</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {RECOMMENDED_BUILDS.map((build, index) => (
                 <button
-                  onClick={() => setInfantry(Math.max(0, infantry - 1))}
+                  key={index}
+                  onClick={() => applyBuild(build)}
                   disabled={hasSubmitted}
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="p-3 rounded text-left transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'rgba(13,5,0,0.7)', border: '1px solid rgba(201,162,39,0.2)' }}
+                  onMouseEnter={e => !hasSubmitted && ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.6)')}
+                  onMouseLeave={e => !hasSubmitted && ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.2)')}
                 >
-                  -
+                  <h3 className="font-chinese font-medium text-sm mb-1" style={{ color: '#C9A227' }}>{build.name}</h3>
+                  <p className="font-chinese text-xs mb-2" style={{ color: 'rgba(245,230,200,0.45)' }}>{build.description}</p>
+                  <div className="font-chinese text-xs space-y-0.5" style={{ color: 'rgba(245,230,200,0.6)' }}>
+                    <div>步兵 {build.infantry}</div>
+                    <div>骑兵 {build.cavalry}</div>
+                    <div>弓箭手 {build.archer}</div>
+                  </div>
                 </button>
-                <span className="text-2xl font-bold w-12 text-center">{infantry}</span>
-                <button
-                  onClick={() => setInfantry(infantry + 1)}
-                  disabled={hasSubmitted}
-                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* 骑兵 */}
-            <div className="border-2 border-gray-200 rounded-lg p-4">
-              <div className="flex justify-between items-center mb-3">
-                <div>
-                  <h3 className="text-xl font-bold">骑兵</h3>
-                  <p className="text-sm text-gray-600">两角/个 · 移动2格 · 攻击范围1格 · 受伤退化为步兵</p>
-                </div>
-                <div className="text-lg font-semibold text-amber-600">
-                  {(cavalry * UNIT_COSTS.cavalry).toFixed(1)} 元
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setCavalry(Math.max(0, cavalry - 1))}
-                  disabled={hasSubmitted}
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  -
-                </button>
-                <span className="text-2xl font-bold w-12 text-center">{cavalry}</span>
-                <button
-                  onClick={() => setCavalry(cavalry + 1)}
-                  disabled={hasSubmitted}
-                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* 弓箭手 */}
-            <div className="border-2 border-gray-200 rounded-lg p-4">
-              <div className="flex justify-between items-center mb-3">
-                <div>
-                  <h3 className="text-xl font-bold">弓箭手</h3>
-                  <p className="text-sm text-gray-600">五角/个 · 移动1格 · 无限射程 · 需要朝向</p>
-                </div>
-                <div className="text-lg font-semibold text-amber-600">
-                  {(archer * UNIT_COSTS.archer).toFixed(1)} 元
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setArcher(Math.max(0, archer - 1))}
-                  disabled={hasSubmitted}
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  -
-                </button>
-                <span className="text-2xl font-bold w-12 text-center">{archer}</span>
-                <button
-                  onClick={() => setArcher(archer + 1)}
-                  disabled={hasSubmitted}
-                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  +
-                </button>
-              </div>
+              ))}
             </div>
           </div>
-        </div>
 
-        <div className="flex flex-col items-center gap-4">
-          {waitingForOpponent && (
-            <div className="text-center">
-              <div className="flex justify-center mb-4">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          {/* 兵种调整 */}
+          <div className="space-y-3 mb-6">
+            {[
+              { label: '步兵', desc: '一角/个 · 移动1格 · 攻击范围1格', count: infantry, cost: infantry * UNIT_COSTS.infantry, setFn: setInfantry },
+              { label: '骑兵', desc: '两角/个 · 移动2格 · 受伤退化步兵', count: cavalry, cost: cavalry * UNIT_COSTS.cavalry, setFn: setCavalry },
+              { label: '弓箭手', desc: '五角/个 · 无限射程 · 需要朝向', count: archer, cost: archer * UNIT_COSTS.archer, setFn: setArcher },
+            ].map(({ label, desc, count, cost, setFn }) => (
+              <div key={label} className="p-4 rounded" style={unitCardStyle(count > 0) as React.CSSProperties}>
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-baseline gap-3">
+                      <h3 className="font-ancient text-xl" style={{ color: count > 0 ? '#E8C84A' : '#C9A227' }}>{label}</h3>
+                      <p className="font-chinese text-xs" style={{ color: 'rgba(245,230,200,0.45)' }}>{desc}</p>
+                    </div>
+                  </div>
+                  <span className="font-chinese text-sm ml-3" style={{ color: 'rgba(201,162,39,0.7)' }}>{cost.toFixed(1)} 元</span>
+                </div>
+                <div className="flex items-center gap-4 mt-3">
+                  <button
+                    onClick={() => setFn(Math.max(0, count - 1))}
+                    disabled={hasSubmitted}
+                    className="w-9 h-9 rounded flex items-center justify-center font-bold text-lg transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed"
+                    style={{ border: '1px solid rgba(220,60,60,0.5)', color: '#ef9999', background: 'rgba(139,26,26,0.3)' }}
+                    onMouseEnter={e => !hasSubmitted && ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(220,60,60,0.9)')}
+                    onMouseLeave={e => !hasSubmitted && ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(220,60,60,0.5)')}
+                  >−</button>
+                  <span className="font-ancient text-2xl w-12 text-center" style={{ color: '#E8C84A' }}>{count}</span>
+                  <button
+                    onClick={() => setFn(count + 1)}
+                    disabled={hasSubmitted}
+                    className="w-9 h-9 rounded flex items-center justify-center font-bold text-lg transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed"
+                    style={{ border: '1px solid rgba(100,200,100,0.5)', color: '#99ef99', background: 'rgba(26,80,26,0.3)' }}
+                    onMouseEnter={e => !hasSubmitted && ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(100,200,100,0.9)')}
+                    onMouseLeave={e => !hasSubmitted && ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(100,200,100,0.5)')}
+                  >+</button>
+                </div>
               </div>
-              <p className="text-blue-600 font-semibold">
-                ✅ 你的配置已提交！等待对手完成配置...
+            ))}
+          </div>
+
+          {/* 底部状态 & 按钮 */}
+          <div className="flex flex-col items-center gap-3">
+            {waitingForOpponent && (
+              <p className="font-chinese text-sm tracking-wider" style={{ color: 'rgba(201,162,39,0.7)' }}>
+                已提交配置，等待对手完成...
               </p>
-            </div>
-          )}
-          {hasSubmitted && opponentDone && (
-            <p className="text-green-600 font-semibold">
-              ✅ 双方配置完成！即将进入大本营设置阶段...
-            </p>
-          )}
-          {!canConfirm && !hasSubmitted && (
-            <p className="text-red-500 font-semibold">
-              {remaining < 0 ? '预算超支！' : '请用完所有预算！'}
-            </p>
-          )}
-          <button
-            onClick={handleConfirm}
-            disabled={!canConfirm}
-            className={`
-              px-8 py-3 rounded-lg font-bold text-lg transition-all duration-200
-              ${canConfirm
-                ? 'bg-green-500 text-white hover:bg-green-600 shadow-lg'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            )}
+            {hasSubmitted && opponentDone && (
+              <p className="font-chinese text-sm tracking-wider" style={{ color: 'rgba(100,200,100,0.8)' }}>
+                双方配置完成，即将进入大本营设置
+              </p>
+            )}
+            {!canConfirm && !hasSubmitted && (
+              <p className="font-chinese text-sm tracking-wider" style={{ color: remaining < 0 ? '#ef4444' : 'rgba(201,162,39,0.6)' }}>
+                {remaining < 0 ? '军费超支' : '请用尽所有军费'}
+              </p>
+            )}
+            <button
+              onClick={handleConfirm}
+              disabled={!canConfirm}
+              className="px-10 py-3 rounded font-chinese tracking-widest transition-all duration-300"
+              style={{
+                border: canConfirm ? '1px solid rgba(201,162,39,0.7)' : '1px solid rgba(201,162,39,0.15)',
+                color: canConfirm ? '#E8C84A' : 'rgba(201,162,39,0.25)',
+                background: canConfirm ? 'linear-gradient(135deg, rgba(139,26,26,0.5) 0%, rgba(26,10,0,0.9) 100%)' : 'rgba(13,5,0,0.5)',
+                cursor: canConfirm ? 'pointer' : 'not-allowed',
+                boxShadow: canConfirm ? '0 0 20px rgba(201,162,39,0.2)' : 'none',
+              }}
+              onMouseEnter={e => canConfirm && ((e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 30px rgba(201,162,39,0.4)')}
+              onMouseLeave={e => canConfirm && ((e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 20px rgba(201,162,39,0.2)')}
+            >
+              {isOnlineMode
+                ? (hasSubmitted ? '已提交配置' : '确认配置')
+                : (currentPlayer === Player.PLAYER1 ? '确认（下一位配兵）' : '确认（设置大本营）')
               }
-            `}
-          >
-            {isOnlineMode
-              ? (hasSubmitted ? '已提交配置' : '确认配置')
-              : (currentPlayer === Player.PLAYER1 ? '确认配置（玩家2配兵）' : '确认配置（设置大本营）')
-            }
-          </button>
+            </button>
+          </div>
         </div>
       </div>
     </div>

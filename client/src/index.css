@@ -7,8 +7,257 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-family: 'Noto Serif SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ========== 棋盘尺寸 ==========
+ *
+ * "棋盘吃满剩余空间"的全部实现，见 docs/layout-spec.md §3.1。
+ *
+ * 容器用 container-type: size 量出自己的可用宽高，棋盘取
+ *   min(可用宽, 可用高 × 长宽比)
+ * 这样横向受限时按宽算、纵向受限时按高算，两种情况都不溢出、也都不留白。
+ *
+ * --sy-board-ar = 772.8203230275508 / 680，即半径 5 的 pointy-top 棋盘 viewBox 比值
+ * （与 theme/boardTheme.ts 的 BOARD_ASPECT 同源，改动需同步）。
+ */
+.sy-board-wrap {
+  container-type: size;
+  display: flex;
+}
+
+.sy-board {
+  --sy-board-ar: 1.136500475;
+  width: min(100cqw, calc(100cqh * var(--sy-board-ar)));
+  aspect-ratio: var(--sy-board-ar);
+  margin: auto;
+  min-width: 0;
+}
+
+/* 窄屏：棋盘是**宽度受限**的，不是高度受限。
+ *
+ * 375 宽的屏幕上 1.1365:1 的棋盘最大只能到 335×295，再怎么抢高度也变不大；
+ * 用 flex-1 去抢高度反而会让它和下方面板互相挤（实测掉到 229×201 = 24.8% 视口高）。
+ * 所以这里换成只量宽度（inline-size），高度由 aspect-ratio 推出，容器自己长到那么高，
+ * 剩下的高度全部留给操作面板。见 docs/layout-spec.md §3.5 */
+.sy-board-wrap--width {
+  container-type: inline-size;
+}
+
+.sy-board-wrap--width .sy-board {
+  width: 100cqw;
+  margin: 0 auto;
+}
+
+/* ========== 可折叠面板 ========== */
+
+/* 去掉浏览器默认的三角，换成自绘的、跟着展开状态转的指示符 */
+.sy-collapse > summary::-webkit-details-marker { display: none; }
+.sy-collapse > summary { position: relative; padding-right: 1.1rem; }
+
+.sy-collapse > summary::after {
+  content: '';
+  position: absolute;
+  right: 2px;
+  top: 0.45em;
+  width: 0.4em;
+  height: 0.4em;
+  border-right: 1.5px solid rgba(201, 162, 39, 0.6);
+  border-bottom: 1.5px solid rgba(201, 162, 39, 0.6);
+  transform: rotate(45deg);
+  transition: transform 0.18s ease;
+}
+
+.sy-collapse[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+/* ========== 自定义滚动条 — 暗色金边 ========== */
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(13, 5, 0, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(201, 162, 39, 0.35);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(201, 162, 39, 0.65);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(201, 162, 39, 0.35) rgba(13, 5, 0, 0.8);
+}
+
+/* ========== 输入框焦点样式统一 ========== */
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: rgba(201, 162, 39, 0.7) !important;
+  box-shadow: 0 0 0 2px rgba(201, 162, 39, 0.15) !important;
+}
+
+/* placeholder 颜色 */
+input::placeholder,
+textarea::placeholder {
+  color: rgba(201, 162, 39, 0.3);
+}
+
+/* ========== 对局内按钮：语义化配色 ==========
+ *
+ * 替代原来 32 个按钮上 14 种随手选的 Tailwind 渐变
+ * （from-blue-500 / from-purple-500 / from-emerald-500 …）。
+ * 颜色不再是随机的，而是承载语义，玩家能靠颜色分辨动作类型：
+ *
+ *   金 gold     推进类：结束回合、部署、结算、将领技能
+ *   朱红 red    攻击类：攻击、击杀、认输（与棋盘上玩家1同色系）
+ *   青玉 jade   移动与兵种部署（与棋盘上玩家2同色系）
+ *   青铜 bronze 机关类：弩车/战车/投石车、转向
+ *   墨 ghost    取消、次要操作
+ */
+
+.btn-sy {
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  font-family: 'Noto Serif SC', serif;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  transition: border-color 0.22s ease, box-shadow 0.22s ease, transform 0.12s ease, filter 0.22s ease;
+}
+
+.btn-sy:disabled {
+  opacity: 0.4;
+  filter: grayscale(0.55);
+  cursor: not-allowed;
+}
+
+.btn-sy:not(:disabled) {
+  cursor: pointer;
+}
+
+.btn-sy:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.btn-sy:not(:disabled):active {
+  transform: translateY(0);
+  filter: brightness(0.92);
+}
+
+/* 金 — 推进 */
+.btn-sy-gold {
+  background: linear-gradient(135deg, rgba(139, 105, 20, 0.8) 0%, rgba(26, 18, 9, 0.92) 100%);
+  border-color: rgba(201, 162, 39, 0.55);
+  color: #f2e3a9;
+}
+.btn-sy-gold:not(:disabled):hover {
+  border-color: rgba(201, 162, 39, 0.95);
+  box-shadow: 0 0 18px rgba(201, 162, 39, 0.3);
+}
+
+/* 朱红 — 攻击 */
+.btn-sy-red {
+  background: linear-gradient(135deg, rgba(139, 26, 26, 0.85) 0%, rgba(74, 14, 14, 0.94) 100%);
+  border-color: rgba(192, 57, 43, 0.6);
+  color: #f0c7c0;
+}
+.btn-sy-red:not(:disabled):hover {
+  border-color: rgba(192, 57, 43, 1);
+  box-shadow: 0 0 18px rgba(192, 57, 43, 0.35);
+}
+
+/* 青玉 — 移动 / 兵种 */
+.btn-sy-jade {
+  background: linear-gradient(135deg, rgba(46, 107, 79, 0.8) 0%, rgba(22, 58, 42, 0.94) 100%);
+  border-color: rgba(63, 138, 102, 0.6);
+  color: #c6e2d3;
+}
+.btn-sy-jade:not(:disabled):hover {
+  border-color: rgba(111, 207, 164, 0.95);
+  box-shadow: 0 0 18px rgba(63, 138, 102, 0.35);
+}
+
+/* 青铜 — 机关 / 转向 */
+.btn-sy-bronze {
+  background: linear-gradient(135deg, rgba(139, 84, 30, 0.7) 0%, rgba(40, 24, 10, 0.94) 100%);
+  border-color: rgba(205, 127, 50, 0.5);
+  color: #e6c9a8;
+}
+.btn-sy-bronze:not(:disabled):hover {
+  border-color: rgba(230, 168, 92, 0.9);
+  box-shadow: 0 0 18px rgba(205, 127, 50, 0.3);
+}
+
+/* 墨 — 取消 / 次要 */
+.btn-sy-ghost {
+  background: rgba(26, 18, 9, 0.75);
+  border-color: rgba(201, 162, 39, 0.22);
+  color: rgba(201, 162, 39, 0.7);
+}
+.btn-sy-ghost:not(:disabled):hover {
+  border-color: rgba(201, 162, 39, 0.55);
+  color: #c9a227;
+}
+
+/* 将领技能：常驻微光，强调它是有限次的特殊资源 */
+.btn-sy-ability:not(:disabled) {
+  box-shadow: inset 0 1px 0 rgba(201, 162, 39, 0.2), 0 0 12px rgba(201, 162, 39, 0.18);
+}
+.btn-sy-ability:not(:disabled):hover {
+  box-shadow: inset 0 1px 0 rgba(201, 162, 39, 0.3), 0 0 24px rgba(201, 162, 39, 0.4);
+}
+
+/* ========== 对局内面板 ==========
+ * 技能面板原来用 bg-orange-50 / bg-red-50 / bg-indigo-50 这类近白色底，
+ * 在深色古风界面里是一块块惨白的方块，是「草台感」的另一个来源。
+ */
+
+.panel-sy {
+  background: linear-gradient(180deg, rgba(26, 18, 9, 0.88) 0%, rgba(13, 5, 0, 0.94) 100%);
+  border: 1px solid rgba(201, 162, 39, 0.28);
+  /* 这些面板原来是近白底，里面有不带颜色类的文字靠默认黑色可读。
+   * 换成深底后必须给一个继承色，否则那些文字会变成黑底黑字。 */
+  color: rgba(245, 230, 200, 0.82);
+}
+
+.panel-sy-title {
+  color: #e8c84a;
+}
+
+.panel-sy-text {
+  color: rgba(245, 230, 200, 0.7);
+}
+
+/* 方向选择按钮（无双扇形攻击的六向选择器） */
+.btn-sy-dir {
+  background: rgba(26, 18, 9, 0.85);
+  border: 1px solid rgba(201, 162, 39, 0.3);
+  color: rgba(201, 162, 39, 0.75);
+  transition: border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+.btn-sy-dir:hover {
+  border-color: rgba(201, 162, 39, 0.7);
+  color: #c9a227;
+}
+
+/* 已选中的方向：朱红实心，与攻击语义一致 */
+.btn-sy-dir-on {
+  background: linear-gradient(135deg, rgba(139, 26, 26, 0.92) 0%, rgba(74, 14, 14, 0.96) 100%);
+  border-color: #c0392b;
+  color: #f5e6c8;
+  box-shadow: 0 0 14px rgba(192, 57, 43, 0.45);
 }
 

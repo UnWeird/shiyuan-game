@@ -1,14 +1,48 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { HexCoord } from '../../types';
-import { generateHexMap, hexToPixel, hexEquals, isInStartZone } from '../../utils/hexUtils';
+import { generateHexMap, hexToPixel, hexEquals } from '../../utils/hexUtils';
+import { hexPath, boardViewBox } from '../../utils/boardGeometry';
 import { HexTile } from './HexTile';
+import { WorldLayer, WorldDefs } from './WorldLayer';
 import { useGameStore } from '../../stores/gameStore';
+import { INFO, INFO_FILL, PIECE } from '../../theme/boardTheme';
+import { Banner, Blade, Barb } from '../../theme/glyphs';
 
+/**
+ * 棋盘：整个对局**唯一**的 SVG，分五层。
+ *
+ * 规格：docs/board-art-spec.md §4.2
+ *
+ * 旧实现是两个互相重叠的 <svg>（这一个画棋盘，GameBoard 里另一个画棋子），
+ * 实测尺寸 920×664 vs 922×666 —— 两层本来就差 2px，任何缩放或边距改动都会
+ * 把它放大成可见错位。现在棋子作为 children 进 #pieces 层，只剩一个 SVG。
+ *
+ * 层序（后面的盖前面的）：
+ *   #world      铜板，静态，只依赖 [radius, size]
+ *   #info-area  范围填充（可移动等），加光，永不压暗
+ *   #info-mark  标记（步数、大本营）
+ *   #hit        透明点击热区 —— 必须在填充之上才收得到点击
+ *   #pieces     棋子（children）
+ *   #info-top   选中框，pointer-events: none，不挡点击
+ */
 interface HexMapProps {
   radius: number;
   hexSize: number;
   onHexClick?: (hex: HexCoord) => void;
-  highlightedHexes?: (HexCoord & { steps?: number })[];
+  /**
+   * 可达/可攻击格。`damageUp` / `noAttack` 由服务端在 validActions 里下发
+   * （见 shared/rules/queries.ts 的 MOVE_FLAG_*），客户端不自己按 steps 推。
+   */
+  highlightedHexes?: (HexCoord & { steps?: number; damageUp?: boolean; noAttack?: boolean })[];
+  /**
+   * 高亮的语义。移动用青、攻击用朱 ——
+   * 原来两者都走同一套填充，攻击范围显示成"可移动"的青色，是实打实的误导。
+   */
+  highlightKind?: 'move' | 'attack';
+  /** 范围内有敌军的格子，挂一个矛尖记号 */
+  threatHexes?: HexCoord[];
+  /** 棋子与其它随对局变化的叠加层，由 GameBoard 提供 */
+  children?: React.ReactNode;
 }
 
 export const HexMap: React.FC<HexMapProps> = React.memo(({
@@ -16,176 +50,200 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
   hexSize,
   onHexClick,
   highlightedHexes = [],
+  highlightKind = 'move',
+  threatHexes = [],
+  children,
 }) => {
   const { player1Base, player2Base, selectedUnitId, units } = useGameStore();
 
-  // 生成地图
   const hexes = useMemo(() => generateHexMap(radius), [radius]);
+  const vb = useMemo(() => boardViewBox(radius, hexSize), [radius, hexSize]);
 
-  // 计算SVG视图框
-  const viewBox = useMemo(() => {
-    const maxX = hexSize * Math.sqrt(3) * radius;
-    const maxY = hexSize * 1.5 * radius;
-    const padding = hexSize;
-    return {
-      minX: -maxX - padding,
-      minY: -maxY - padding,
-      width: (maxX + padding) * 2,
-      height: (maxY + padding) * 2,
-    };
-  }, [radius, hexSize]);
-
-  // 获取选中的单位位置
   const selectedUnit = selectedUnitId ? units[selectedUnitId] : null;
+  const rangeColor = highlightKind === 'attack' ? INFO.threat : INFO.move;
+
+  /* 悬停：M2 的"记号只在当前悬停的那一格出现"。
+   * 常态盘面只有三段色带，18 格同时挂记号会太满。 */
+  const [hovered, setHovered] = useState<string | null>(null);
+  const handleHover = useCallback((hex: HexCoord | null) => {
+    setHovered(hex ? `${hex.q},${hex.r}` : null);
+  }, []);
+
+  /**
+   * 一格的颜色不编码"远近"，而是编码"落在这里会发生什么"：
+   *   青   普通移动
+   *   琥珀 伤害 +1（骑兵冲 2 格的奖励，所以是最亮最诱人的一档）
+   *   冷白 本回合不可攻击（代价，所以是失色的一档）
+   * 距离本身不画 —— 玩家看格子就能数。
+   */
+  const tileColor = (h: { damageUp?: boolean; noAttack?: boolean }) =>
+    highlightKind === 'attack' ? INFO.threat
+      : h.noAttack ? INFO.muted
+      : h.damageUp ? INFO.face
+      : INFO.move;
+
+  /**
+   * 大本营：双环 + 牙旗记号，画在格子下沿，棋子站上去也遮不住。
+   *
+   * 原来是「帥 / 將」两个汉字。改成记号是为了达成"盘面零文字" ——
+   * 汉字在盘面上有两个问题：缩放到 hexSize 30 时笔画糊成一团，
+   * 而且它和棋子上的汉字是同一套视觉语言，玩家分不清哪个是地标哪个是单位。
+   * 见 docs/board-art-spec.md §3
+   */
+  const renderBase = (base: HexCoord, key: string) => {
+    const c = hexToPixel(base, hexSize);
+    const color = INFO.threat;
+    return (
+      <g key={key}>
+        <path d={hexPath(base, hexSize, 1)} fill={color} opacity={0.14} />
+        <path d={hexPath(base, hexSize, 0.99)} fill="none" stroke={color} strokeWidth={2.4} />
+        <path d={hexPath(base, hexSize, 0.8)} fill="none" stroke={color} strokeWidth={1} opacity={0.75} />
+        <g transform={`translate(${c.x}, ${c.y + hexSize * 0.58})`}>
+          <Banner u={hexSize * 0.42} color={color} />
+        </g>
+      </g>
+    );
+  };
 
   return (
     <svg
       width="100%"
       height="100%"
-      viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.width} ${viewBox.height}`}
-      className="border border-gray-300 rounded-lg bg-white"
+      viewBox={`${vb.minX} ${vb.minY} ${vb.width} ${vb.height}`}
+      className="rounded"
+      style={{ display: 'block', touchAction: 'none' }}
     >
-      {/* 渲染所有六边形 */}
-      {hexes.map((hex, index) => {
-        const isPlayer1Zone = isInStartZone(hex, 'top');
-        const isPlayer2Zone = isInStartZone(hex, 'bottom');
-        const isBase1 = player1Base ? hexEquals(hex, player1Base) : false;
-        const isBase2 = player2Base ? hexEquals(hex, player2Base) : false;
-        const isSelected = selectedUnit ? hexEquals(hex, selectedUnit.position) : false;
-        const highlightedHex = highlightedHexes.find(h => hexEquals(h, hex));
-        const isHighlighted = !!highlightedHex;
-        const highlightSteps = highlightedHex?.steps;
+      {/* 全局 defs：只在这里定义一次，id 用稳定常量 */}
+      <defs>
+        <WorldDefs />
+      </defs>
 
-        return (
+      <WorldLayer radius={radius} size={hexSize} />
+
+      {/* ── 信息层：范围填充 ── */}
+      <g id="info-area" pointerEvents="none">
+        {highlightedHexes.map((h) => {
+          const c = tileColor(h);
+          const isHovered = hovered === `${h.q},${h.r}`;
+          return (
+            <g key={`hl-${h.q},${h.r}`}>
+              <path
+                d={hexPath(h, hexSize)}
+                fill={c}
+                opacity={isHovered ? INFO_FILL.hover : INFO_FILL.able}
+              />
+              <path
+                className={isHovered ? undefined : 'info-ring'}
+                d={hexPath(h, hexSize, 0.9)}
+                fill="none"
+                stroke={isHovered ? INFO.pick : c}
+                strokeWidth={isHovered ? 2.2 : 1.6}
+              />
+            </g>
+          );
+        })}
+        {/* 范围内真有敌军的格子：加深 + 挂矛尖，把"打得到"和"这一圈是范围"分开 */}
+        {threatHexes.map((h) => (
+          <path
+            key={`th-${h.q},${h.r}`}
+            d={hexPath(h, hexSize)}
+            fill={INFO.threat}
+            opacity={INFO_FILL.occupied - INFO_FILL.able}
+          />
+        ))}
+      </g>
+
+      {/* ── 信息层：标记 ── */}
+      <g id="info-mark" pointerEvents="none">
+        {player1Base && renderBase(player1Base, 'base1')}
+        {player2Base && renderBase(player2Base, 'base2')}
+
+        {/* 范围内的敌军：矛尖记号画在格子右上角，不压住棋子 */}
+        {threatHexes.map((h) => {
+          const c = hexToPixel(h, hexSize);
+          return (
+            <g key={`bl-${h.q},${h.r}`} transform={`translate(${c.x + hexSize * 0.58}, ${c.y - hexSize * 0.52})`}>
+              <Blade u={hexSize * 0.4} />
+            </g>
+          );
+        })}
+
+        {/* 悬停格的后果记号：只画当前这一格，放大显示。
+          * 常态盘面不出现任何记号 —— 这是 M2 相对 M1（每格都挂记号）的取舍。 */}
+        {highlightedHexes.map((h) => {
+          if (hovered !== `${h.q},${h.r}`) return null;
+          if (!h.damageUp && !h.noAttack) return null;
+          const c = hexToPixel(h, hexSize);
+          return (
+            <g key={`hv-${h.q},${h.r}`} transform={`translate(${c.x}, ${c.y + hexSize * 0.5})`}>
+              {h.noAttack
+                ? <Blade u={hexSize * 0.5} color={INFO.muted} forbid />
+                : <Barb u={hexSize * 0.5} />}
+            </g>
+          );
+        })}
+
+        {/* 步数提示：旧实现是深色小点（在浅底上还行，暗底上等于看不见），改成信息色 */}
+        {highlightedHexes.map((h) => {
+          if (!h.steps || h.steps < 1) return null;
+          const c = hexToPixel(h, hexSize);
+          const r = hexSize * 0.075;
+          const gap = hexSize * 0.22;
+          const offset = ((h.steps - 1) * gap) / 2;
+          return (
+            <g key={`st-${h.q},${h.r}`}>
+              {Array.from({ length: h.steps }).map((_, i) => (
+                <circle
+                  key={i}
+                  cx={c.x - offset + i * gap}
+                  cy={c.y + hexSize * 0.42}
+                  r={r}
+                  fill={tileColor(h)}
+                />
+              ))}
+            </g>
+          );
+        })}
+      </g>
+
+      {/* ── 点击热区：在填充之上、棋子之下 ── */}
+      <g id="hit">
+        {hexes.map((hex) => (
           <HexTile
-            key={`${hex.q},${hex.r},${hex.s}-${index}`}
+            key={`${hex.q},${hex.r}`}
             hex={hex}
             size={hexSize}
             onClick={onHexClick}
-            isBase={isBase1 || isBase2}
-            isSelected={isSelected}
-            isHighlighted={isHighlighted}
-            highlightSteps={highlightSteps}
-            isPlayer1Zone={isPlayer1Zone}
-            isPlayer2Zone={isPlayer2Zone}
+            onHover={handleHover}
           />
-        );
-      })}
+        ))}
+      </g>
 
-      {/* 绘制基地标记 - 玩家1（琥珀金色） */}
-      {player1Base && (
-        <g>
-          {/* 外层光晕 */}
-          <circle
-            cx={hexToPixel(player1Base, hexSize).x}
-            cy={hexToPixel(player1Base, hexSize).y}
-            r={hexSize * 0.45}
-            fill="url(#player1BaseGlow)"
-            opacity={0.6}
-          />
-          {/* 主圆 */}
-          <circle
-            cx={hexToPixel(player1Base, hexSize).x}
-            cy={hexToPixel(player1Base, hexSize).y}
-            r={hexSize * 0.35}
-            fill="url(#player1BaseGradient)"
-            stroke="#b45309"
-            strokeWidth={3}
-          />
-          {/* 内圈装饰 */}
-          <circle
-            cx={hexToPixel(player1Base, hexSize).x}
-            cy={hexToPixel(player1Base, hexSize).y}
-            r={hexSize * 0.28}
-            fill="none"
-            stroke="#fbbf24"
-            strokeWidth={2}
-            strokeDasharray="4,4"
-            opacity={0.8}
-          />
-          <text
-            x={hexToPixel(player1Base, hexSize).x}
-            y={hexToPixel(player1Base, hexSize).y}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fontSize={hexSize * 0.35}
-            fill="white"
-            fontWeight="bold"
-            style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.5)' }}
-          >
-            P1
-          </text>
-        </g>
-      )}
+      {/* ── 棋子层 ── */}
+      <g id="pieces">{children}</g>
 
-      {/* 绘制基地标记 - 玩家2（浅蓝色） */}
-      {player2Base && (
-        <g>
-          {/* 外层光晕 */}
-          <circle
-            cx={hexToPixel(player2Base, hexSize).x}
-            cy={hexToPixel(player2Base, hexSize).y}
-            r={hexSize * 0.45}
-            fill="url(#player2BaseGlow)"
-            opacity={0.6}
-          />
-          {/* 主圆 */}
-          <circle
-            cx={hexToPixel(player2Base, hexSize).x}
-            cy={hexToPixel(player2Base, hexSize).y}
-            r={hexSize * 0.35}
-            fill="url(#player2BaseGradient)"
-            stroke="#1e40af"
-            strokeWidth={3}
-          />
-          {/* 内圈装饰 */}
-          <circle
-            cx={hexToPixel(player2Base, hexSize).x}
-            cy={hexToPixel(player2Base, hexSize).y}
-            r={hexSize * 0.28}
-            fill="none"
-            stroke="#60a5fa"
-            strokeWidth={2}
-            strokeDasharray="4,4"
-            opacity={0.8}
-          />
-          <text
-            x={hexToPixel(player2Base, hexSize).x}
-            y={hexToPixel(player2Base, hexSize).y}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fontSize={hexSize * 0.35}
-            fill="white"
-            fontWeight="bold"
-            style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.5)' }}
-          >
-            P2
-          </text>
-        </g>
-      )}
-
-      {/* 定义渐变色 */}
-      <defs>
-        {/* 玩家1渐变 */}
-        <radialGradient id="player1BaseGradient">
-          <stop offset="0%" stopColor="#fbbf24" />
-          <stop offset="100%" stopColor="#f59e0b" />
-        </radialGradient>
-        <radialGradient id="player1BaseGlow">
-          <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.8" />
-          <stop offset="100%" stopColor="#fbbf24" stopOpacity="0" />
-        </radialGradient>
-
-        {/* 玩家2渐变 */}
-        <radialGradient id="player2BaseGradient">
-          <stop offset="0%" stopColor="#60a5fa" />
-          <stop offset="100%" stopColor="#3b82f6" />
-        </radialGradient>
-        <radialGradient id="player2BaseGlow">
-          <stop offset="0%" stopColor="#60a5fa" stopOpacity="0.8" />
-          <stop offset="100%" stopColor="#60a5fa" stopOpacity="0" />
-        </radialGradient>
-      </defs>
+      {/* ── 最上层：选中框。不填色，棋子不被吃掉 ── */}
+      <g id="info-top" pointerEvents="none">
+        {selectedUnit && (
+          <>
+            <path
+              d={hexPath(selectedUnit.position, hexSize, 0.96)}
+              fill="none"
+              stroke={INFO.pick}
+              strokeWidth={2.6}
+            />
+            <path
+              d={hexPath(selectedUnit.position, hexSize, 0.8)}
+              fill="none"
+              stroke={PIECE.rim}
+              strokeWidth={1}
+              opacity={0.6}
+            />
+          </>
+        )}
+      </g>
     </svg>
   );
 });
+
+HexMap.displayName = 'HexMap';

@@ -1,11 +1,25 @@
 import { useState, useEffect } from 'react';
 import { colyseusService } from '../../services/ColyseusService';
 import { useGameStore } from '../../stores/gameStore';
+import { toast } from '../../stores/uiStore';
 import RulesModal from '../UI/RulesModal';
 
 interface RoomLobbyProps {
   onRoomJoined: () => void;
 }
+
+/**
+ * 装饰分割线。
+ * 提到组件外面：定义在 render 里的话每次渲染都是一个新组件类型，
+ * React 会把它整棵子树卸载重建（eslint react-hooks/static-components 报的就是这个）。
+ */
+const Divider = () => (
+  <div className="flex items-center justify-center gap-3 my-4">
+    <div className="h-px w-16 bg-gradient-to-r from-transparent to-imperial-gold/30" />
+    <div className="w-1.5 h-1.5 rotate-45 bg-imperial-gold/30" />
+    <div className="h-px w-16 bg-gradient-to-l from-transparent to-imperial-gold/30" />
+  </div>
+);
 
 export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
   const [mode, setMode] = useState<'menu' | 'create' | 'join' | 'spectate'>('menu');
@@ -72,132 +86,144 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
     }
   };
 
+  // 古风面板样式
+  const bgStyle = { background: 'radial-gradient(ellipse at 50% 30%, #2a0a00 0%, #0d0500 50%, #050200 100%)' };
+  const panelStyle = {
+    background: 'linear-gradient(180deg, rgba(26,10,0,0.95) 0%, rgba(13,5,0,0.98) 100%)',
+    border: '1px solid rgba(201,162,39,0.3)',
+    boxShadow: '0 0 60px rgba(201,162,39,0.12), inset 0 1px 0 rgba(201,162,39,0.15)',
+  };
+
+  const lobbyBtn = (active = true) => ({
+    border: active ? '1px solid rgba(201,162,39,0.5)' : '1px solid rgba(201,162,39,0.2)',
+    color: active ? '#E8C84A' : 'rgba(201,162,39,0.35)',
+    background: active ? 'linear-gradient(135deg, rgba(80,20,20,0.4) 0%, rgba(26,10,0,0.8) 100%)' : 'rgba(13,5,0,0.5)',
+    cursor: active ? 'pointer' : 'not-allowed',
+    transition: 'all 0.25s',
+  });
+
   if (mode === 'menu') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full">
-          <h1 className="text-4xl font-bold text-center mb-2 text-gray-800">
+      <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={bgStyle}>
+        <div className="absolute inset-0 opacity-10" style={{
+          backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 40px, rgba(201,162,39,0.15) 40px, rgba(201,162,39,0.15) 41px), repeating-linear-gradient(90deg, transparent, transparent 40px, rgba(201,162,39,0.15) 40px, rgba(201,162,39,0.15) 41px)'
+        }} />
+        {/* 四角装饰 */}
+        <div className="absolute top-4 left-4 w-14 h-14 border-t-2 border-l-2 border-imperial-gold opacity-30" />
+        <div className="absolute top-4 right-4 w-14 h-14 border-t-2 border-r-2 border-imperial-gold opacity-30" />
+        <div className="absolute bottom-4 left-4 w-14 h-14 border-b-2 border-l-2 border-imperial-gold opacity-30" />
+        <div className="absolute bottom-4 right-4 w-14 h-14 border-b-2 border-r-2 border-imperial-gold opacity-30" />
+
+        <div className="relative z-10 max-w-sm w-full rounded-lg p-8 page-enter" style={panelStyle as React.CSSProperties}>
+          <h1 className="font-ancient text-5xl text-center mb-1 tracking-widest" style={{ color: '#C9A227', textShadow: '0 0 25px rgba(201,162,39,0.5)' }}>
             十元
           </h1>
-          <p className="text-center text-gray-600 mb-8">在线多人对战</p>
+          <p className="font-chinese text-center text-xs tracking-[0.3em] mb-1" style={{ color: 'rgba(201,162,39,0.5)' }}>联网对战大厅</p>
+          <Divider />
 
           {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+            <div className="mb-4 px-4 py-2 rounded font-chinese text-sm" style={{ border: '1px solid rgba(220,60,60,0.4)', color: '#ef9999', background: 'rgba(80,10,10,0.4)' }}>
               {error}
             </div>
           )}
 
-          <div className="space-y-4">
-            <button
-              onClick={handleCreateRoom}
-              disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? '创建中...' : '创建房间'}
-            </button>
-
-            <button
-              onClick={() => {
-                setMode('join');
-                setIsSpectator(false);
-              }}
-              disabled={loading}
-              className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              加入对战
-            </button>
-
-            <button
-              onClick={() => {
-                setMode('spectate');
-                setIsSpectator(true);
-              }}
-              disabled={loading}
-              className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              观战房间
-            </button>
-
-            <button
-              onClick={() => window.location.href = '/'}
-              className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-4 px-6 rounded-lg transition duration-200"
-            >
-              单机模式
-            </button>
-
+          <div className="space-y-3">
+            {[
+              { label: loading ? '创建中...' : '创建房间', onClick: handleCreateRoom, disabled: loading },
+              { label: '加入对战', onClick: () => { setMode('join'); setIsSpectator(false); }, disabled: loading },
+              { label: '观战房间', onClick: () => { setMode('spectate'); setIsSpectator(true); }, disabled: loading },
+              { label: '返回', onClick: () => window.location.href = '/', disabled: false },
+            ].map(({ label, onClick, disabled }) => (
+              <button
+                key={label}
+                onClick={onClick}
+                disabled={disabled}
+                className="w-full py-3 px-6 rounded font-chinese tracking-widest"
+                style={lobbyBtn(!disabled) as React.CSSProperties}
+                onMouseEnter={e => !disabled && ((e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 18px rgba(201,162,39,0.25)')}
+                onMouseLeave={e => !disabled && ((e.currentTarget as HTMLButtonElement).style.boxShadow = 'none')}
+              >
+                {label}
+              </button>
+            ))}
             <button
               onClick={() => setRulesModalOpen(true)}
-              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200"
+              className="w-full py-2.5 px-6 rounded font-chinese text-sm tracking-widest"
+              style={{ border: '1px solid rgba(201,162,39,0.2)', color: 'rgba(201,162,39,0.5)', background: 'transparent', transition: 'all 0.25s' }}
+              onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.color = 'rgba(201,162,39,0.8)')}
+              onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.color = 'rgba(201,162,39,0.5)')}
             >
-              📖 查看规则
+              查看规则
             </button>
           </div>
 
-          <p className="text-center text-gray-500 text-sm mt-6">
-            创建房间后，将房间ID分享给好友即可一起游戏
+          <p className="font-chinese text-center text-xs mt-6" style={{ color: 'rgba(201,162,39,0.25)' }}>
+            创建房间后将 ID 分享给好友
           </p>
         </div>
 
-        {/* 规则书模态 */}
         <RulesModal isOpen={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
       </div>
     );
   }
 
   if (mode === 'join' || mode === 'spectate') {
+    const canJoin = !loading && !!roomId.trim();
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full">
-          <h2 className="text-3xl font-bold text-center mb-6 text-gray-800">
-            {mode === 'spectate' ? '观战房间' : '加入房间'}
+      <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={bgStyle}>
+        <div className="relative z-10 max-w-sm w-full rounded-lg p-8 page-enter" style={panelStyle as React.CSSProperties}>
+          <h2 className="font-ancient text-3xl text-center tracking-[0.3em] mb-1" style={{ color: '#C9A227', textShadow: '0 0 20px rgba(201,162,39,0.4)' }}>
+            {mode === 'spectate' ? '观战入场' : '加入对局'}
           </h2>
+          <Divider />
 
           {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+            <div className="mb-4 px-4 py-2 rounded font-chinese text-sm" style={{ border: '1px solid rgba(220,60,60,0.4)', color: '#ef9999', background: 'rgba(80,10,10,0.4)' }}>
               {error}
             </div>
           )}
 
           <div className="space-y-4">
             <div>
-              <label className="block text-gray-700 text-sm font-bold mb-2">
-                房间 ID
-              </label>
+              <label className="font-chinese text-xs tracking-widest mb-2 block" style={{ color: 'rgba(201,162,39,0.6)' }}>房间令牌</label>
               <input
                 type="text"
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value)}
-                placeholder="输入房间ID"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                placeholder="输入房间 ID"
+                className="w-full px-4 py-3 rounded font-chinese text-sm"
+                style={{
+                  background: 'rgba(13,5,0,0.8)',
+                  border: '1px solid rgba(201,162,39,0.3)',
+                  color: '#E8C84A',
+                  caretColor: '#C9A227',
+                }}
                 disabled={loading}
               />
             </div>
 
             {mode === 'spectate' && (
-              <div className="bg-purple-50 border-2 border-purple-300 rounded-lg p-4">
-                <p className="text-purple-800 text-sm">
-                  你将以<span className="font-bold">观战者</span>身份加入，可以观看对局但不能操作
-                </p>
-              </div>
+              <p className="font-chinese text-xs px-3 py-2 rounded" style={{ border: '1px solid rgba(201,162,39,0.15)', color: 'rgba(245,230,200,0.5)', background: 'rgba(13,5,0,0.4)' }}>
+                以观战者身份入场，可观看对局但不可操作
+              </p>
             )}
 
             <button
               onClick={handleJoinRoom}
-              disabled={loading || !roomId.trim()}
-              className={`w-full ${mode === 'spectate' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'} text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed`}
+              disabled={!canJoin}
+              className="w-full py-3 px-6 rounded font-chinese tracking-widest"
+              style={lobbyBtn(canJoin) as React.CSSProperties}
+              onMouseEnter={e => canJoin && ((e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 20px rgba(201,162,39,0.3)')}
+              onMouseLeave={e => canJoin && ((e.currentTarget as HTMLButtonElement).style.boxShadow = 'none')}
             >
-              {loading ? '加入中...' : (mode === 'spectate' ? '观战' : '加入游戏')}
+              {loading ? '加入中...' : (mode === 'spectate' ? '进入观战' : '进入对局')}
             </button>
 
             <button
-              onClick={() => {
-                setMode('menu');
-                setError('');
-                setRoomId('');
-                setIsSpectator(false);
-              }}
+              onClick={() => { setMode('menu'); setError(''); setRoomId(''); setIsSpectator(false); }}
               disabled={loading}
-              className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-4 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-2.5 px-6 rounded font-chinese text-sm tracking-widest"
+              style={{ border: '1px solid rgba(201,162,39,0.2)', color: 'rgba(201,162,39,0.5)', background: 'transparent' }}
             >
               返回
             </button>
@@ -207,85 +233,65 @@ export default function RoomLobby({ onRoomJoined }: RoomLobbyProps) {
     );
   }
 
-  // mode === 'create' - 显示等待对手
+  // mode === 'create' - 等待对手
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full">
-        <h2 className="text-3xl font-bold text-center mb-6 text-gray-800">
-          {opponentJoined ? '✅ 对手已加入！' : '等待对手加入'}
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={bgStyle}>
+      <div className="relative z-10 max-w-sm w-full rounded-lg p-8 page-enter" style={panelStyle as React.CSSProperties}>
+        <h2 className="font-ancient text-3xl text-center tracking-[0.3em] mb-1"
+          style={{ color: opponentJoined ? '#4ade80' : '#C9A227', textShadow: opponentJoined ? '0 0 20px rgba(74,222,128,0.4)' : '0 0 20px rgba(201,162,39,0.4)' }}
+        >
+          {opponentJoined ? '对手已入场' : '恭候对手'}
         </h2>
+        <Divider />
 
-        <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-6 mb-6">
-          <p className="text-gray-700 text-center mb-2 font-semibold">
-            房间 ID
-          </p>
-          <p className="text-3xl font-mono text-center text-blue-600 font-bold tracking-wider break-all">
-            {roomId}
-          </p>
+        {/* 房间 ID 展示 */}
+        <div className="mb-6 rounded p-5 text-center" style={{ border: '1px solid rgba(201,162,39,0.25)', background: 'rgba(13,5,0,0.6)' }}>
+          <p className="font-chinese text-xs tracking-widest mb-2" style={{ color: 'rgba(201,162,39,0.5)' }}>房间令牌</p>
+          <p className="font-ancient text-2xl tracking-widest break-all" style={{ color: '#E8C84A' }}>{roomId}</p>
           <button
             onClick={() => {
-              // 降级方案：支持非HTTPS环境
-              if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(roomId)
-                  .then(() => alert('房间ID已复制到剪贴板！'))
-                  .catch(() => {
-                    // 如果失败，使用旧方法
-                    fallbackCopy(roomId);
-                  });
+              const fallbackCopy = (text: string) => {
+                const el = document.createElement('textarea');
+                el.value = text;
+                el.style.position = 'fixed';
+                el.style.left = '-999999px';
+                document.body.appendChild(el);
+                el.focus();
+                el.select();
+                try { document.execCommand('copy'); toast.success('已复制到剪贴板'); } catch { toast.warn(`请手动复制：${text}`); }
+                document.body.removeChild(el);
+              };
+              if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(roomId).then(() => toast.success('已复制到剪贴板')).catch(() => fallbackCopy(roomId));
               } else {
-                // 使用旧方法
                 fallbackCopy(roomId);
               }
-
-              function fallbackCopy(text: string) {
-                const textArea = document.createElement('textarea');
-                textArea.value = text;
-                textArea.style.position = 'fixed';
-                textArea.style.left = '-999999px';
-                document.body.appendChild(textArea);
-                textArea.focus();
-                textArea.select();
-                try {
-                  document.execCommand('copy');
-                  alert('房间ID已复制到剪贴板！');
-                } catch (err) {
-                  alert('复制失败，请手动复制房间ID：' + text);
-                }
-                document.body.removeChild(textArea);
-              }
             }}
-            className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition duration-200"
+            className="mt-3 px-5 py-1.5 rounded font-chinese text-xs tracking-widest transition-all duration-200"
+            style={{ border: '1px solid rgba(201,162,39,0.4)', color: '#C9A227', background: 'rgba(13,5,0,0.7)' }}
+            onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.8)')}
+            onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.4)')}
           >
-            复制房间ID
+            复制令牌
           </button>
         </div>
 
-        {!opponentJoined && (
-          <>
-            <div className="flex justify-center mb-6">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-            </div>
-
-            <p className="text-center text-gray-600">
-              将房间ID分享给你的朋友
-            </p>
-            <p className="text-center text-gray-500 text-sm mt-2">
-              对手加入后游戏将自动开始
-            </p>
-          </>
-        )}
-
-        {opponentJoined && (
+        {!opponentJoined ? (
           <div className="text-center">
-            <div className="bg-green-100 border border-green-400 rounded-lg p-4 mb-4">
-              <p className="text-green-800 font-semibold">
-                🎉 对手已加入房间！
-              </p>
-              <p className="text-green-700 text-sm mt-1">
-                即将开始游戏...
-              </p>
+            {/* 等待动画：呼吸旋转菱形 */}
+            <div className="flex justify-center mb-4">
+              <div className="w-8 h-8 imperial-spin"
+                style={{ border: '2px solid transparent', borderTopColor: 'rgba(201,162,39,0.8)', borderRightColor: 'rgba(201,162,39,0.25)', transform: 'rotate(45deg)' }}
+              />
             </div>
+            <p className="font-chinese text-sm tracking-wider gold-breathe" style={{ color: 'rgba(245,230,200,0.6)' }}>
+              将令牌分享给好友，对手加入后自动开始
+            </p>
           </div>
+        ) : (
+          <p className="font-chinese text-sm text-center tracking-wider" style={{ color: 'rgba(100,200,100,0.8)' }}>
+            对手已入场，即将开始对局...
+          </p>
         )}
       </div>
     </div>

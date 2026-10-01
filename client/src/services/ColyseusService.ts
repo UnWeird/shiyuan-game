@@ -1,5 +1,9 @@
 import { Client, Room } from 'colyseus.js';
 import { useGameStore } from '../stores/gameStore';
+import { useUIStore, toast } from '../stores/uiStore';
+import { playSfx } from '../audio/sfx';
+import { pendingAction, reconcilePending } from '../game/pendingAction';
+import { validActions, type ValidActionsPayload } from '../game/validActions';
 import { GeneralType, Player } from '../types';
 
 /**
@@ -10,6 +14,8 @@ class ColyseusService {
   private client: Client;
   private room: Room | null = null;
   private myPlayerRole: 'player1' | 'player2' | 'spectator' | null = null;
+  /** 上一次同步时的单位 id，用于检测击杀（单位从 state 里消失）并发声 */
+  private previousUnitIds: Set<string> = new Set();
 
   constructor() {
     // 连接到服务器（支持环境变量配置）
@@ -21,9 +27,9 @@ class ColyseusService {
   /**
    * 创建新房间
    */
-  async createRoom(): Promise<string> {
+  async createRoom(options: { hotseat?: boolean } = {}): Promise<string> {
     try {
-      this.room = await this.client.create('shiyuan_room');
+      this.room = await this.client.create('shiyuan_room', options);
       this.saveReconnectionToken();
       this.setupRoomListeners();
       console.log('✅ 房间创建成功:', this.room.roomId);
@@ -82,25 +88,27 @@ class ColyseusService {
       gamePhase?: string;
       actionPoints?: number;
       currentPlayer?: string;
+      hotseat?: boolean;
     }) => {
       this.myPlayerRole = data.role;
       console.log('👤 我的角色:', data.role, data);
 
       useGameStore.setState({
         isOnlineMode: true,
-        myPlayerRole: data.role
+        myPlayerRole: data.role,
+        ...(data.hotseat ? { isHotseat: true } : {}),
       });
 
       // 接管或重连时弹出提示
       if (data.takenOver || data.reconnected) {
-        const roleLabel = data.role === 'spectator' ? '观战者' : data.role;
+        const roleLabel =
+          data.role === 'spectator' ? '观战者' : data.role === 'player1' ? '朱红' : '青玉';
         const actionLabel = data.takenOver ? '接管' : '重连';
-        alert(
-          `${actionLabel}成功！\n` +
-          `你的角色：${roleLabel}\n` +
-          `当前阶段：${data.gamePhase ?? '未知'}\n` +
-          `当前行动方：${data.currentPlayer ?? '未知'}\n` +
-          `可用行动点：${data.actionPoints ?? 0}`
+        toast.success(
+          `你的身份：${roleLabel}\n` +
+          `当前行动方：${data.currentPlayer === 'player1' ? '朱红' : data.currentPlayer === 'player2' ? '青玉' : '未知'}\n` +
+          `可用行动点：${data.actionPoints ?? 0}`,
+          `${actionLabel}成功`
         );
       }
     });
@@ -118,53 +126,57 @@ class ColyseusService {
     // 监听回合变化
     this.room.onMessage('turnChange', (data: { currentPlayer: string }) => {
       console.log('🔄 回合切换:', data.currentPlayer);
+      playSfx('turn');
     });
 
-    // 监听错误消息
+    // 监听错误消息（非法操作被服务端拒绝）
     this.room.onMessage('error', (data: { message: string }) => {
       console.error('❌ 服务器错误:', data.message);
-      alert(`错误: ${data.message}`);
+      // 指令被拒：回滚乐观显示（幽灵棋子消失 + 原棋子抖一下）
+      pendingAction.reject();
+      toast.error(data.message);
     });
 
     // 监听信息消息
     this.room.onMessage('info', (data: { message: string }) => {
       console.log('ℹ️  服务器信息:', data.message);
+      toast.info(data.message);
     });
 
     // 监听玩家离开（主动）
     this.room.onMessage('playerLeft', (data: { role: string; message: string }) => {
       console.log('👋 玩家离开:', data.message);
-      alert(data.message);
+      toast.warn(data.message, '对手离开');
     });
 
     // 监听玩家断线
     this.room.onMessage('playerDisconnected', (data: { role: string; message: string }) => {
       console.log('⚠️ 玩家断线:', data.message);
-      alert(`提示：${data.message}`);
+      toast.warn(data.message, '对手断线');
     });
 
     // 监听断线槽位已释放（60秒超时，可加入新玩家）
     this.room.onMessage('playerSlotOpen', (data: { role: string; message: string }) => {
       console.log('🔓 槽位释放:', data.message);
-      alert(`提示：${data.message}`);
+      toast.info(data.message, '席位开放');
     });
 
     // 监听新玩家接管
     this.room.onMessage('playerTookOver', (data: { role: string; message: string }) => {
       console.log('🔄 玩家接管:', data.message);
-      alert(`提示：${data.message}`);
+      toast.info(data.message, '有人接管');
     });
 
     // 监听玩家重连
     this.room.onMessage('playerReconnected', (data: { role: string; message: string }) => {
       console.log('✅ 玩家重连:', data.message);
-      alert(`提示：${data.message}`);
+      toast.success(data.message, '对手已重连');
     });
 
-    // 监听游戏结束
+    // 监听游戏结束：交给结算画面，不再用 alert
     this.room.onMessage('gameEnd', (data: { winner: string; message: string }) => {
       console.log('🏆 游戏结束:', data.message);
-      alert(`游戏结束！${data.message}`);
+      useUIStore.getState().setGameOver({ winner: data.winner, message: data.message });
     });
 
     // 监听观战者加入
@@ -188,6 +200,11 @@ class ColyseusService {
       }
     });
 
+    // 监听服务端下发的合法动作（高亮数据的唯一来源）
+    this.room.onMessage('validActions', (payload: ValidActionsPayload) => {
+      validActions.apply(payload);
+    });
+
     // 监听状态变化（核心！）
     this.room.onStateChange((state) => {
       this.syncStateToStore(state);
@@ -196,7 +213,7 @@ class ColyseusService {
     // 监听房间错误
     this.room.onError((code, message) => {
       console.error('房间错误:', code, message);
-      alert(`房间错误: ${message}`);
+      toast.error(message ?? `错误代码 ${code}`, '房间异常');
     });
 
     // 监听离开房间
@@ -233,7 +250,7 @@ class ColyseusService {
       this.room = null;
       this.myPlayerRole = null;
       this.clearReconnectionToken();
-      alert('连接已断开，无法重连');
+      toast.error('连接已断开，无法重连', '断线');
       return;
     }
 
@@ -247,7 +264,7 @@ class ColyseusService {
       this.room = null;
       this.myPlayerRole = null;
       this.clearReconnectionToken();
-      alert('重连失败，请刷新页面重新加入');
+      toast.error('重连失败，请刷新页面重新加入', '断线');
     }
   }
 
@@ -324,12 +341,41 @@ class ColyseusService {
     // 转换扇形攻击状态
     const wushuangDiceRolls = state.wushuangDiceRolls ? Array.from(state.wushuangDiceRolls) as number[] : [];
 
+    // 待确认动作的落定判定：放在击杀检测之前，
+    // 保证幽灵棋子在真棋子就位的同一帧消失，不会闪一下两个棋子。
+    reconcilePending(units);
+
+    // 击杀检测：有单位从 state 里消失就发声。
+    // 比对 id 集合比解析战报字符串可靠，且对双方玩家都会触发。
+    const currentUnitIds = new Set(Object.keys(units));
+    if (this.previousUnitIds.size > 0) {
+      let removed = 0;
+      this.previousUnitIds.forEach(id => {
+        if (!currentUnitIds.has(id)) removed++;
+      });
+      if (removed > 0) playSfx('kill');
+    }
+    this.previousUnitIds = currentUnitIds;
+
     // 保存当前选中的单位ID（避免状态同步时清空选中）
     const currentSelectedUnitId = useGameStore.getState().selectedUnitId;
 
     // 更新 Zustand Store
     console.log(`[CLIENT DEBUG] 同步状态 - currentPlayer从服务器: ${state.currentPlayer}, 我的角色: ${this.myPlayerRole}`);
+    // 同机轮流：服务端的 getPlayerRole 返回的就是 currentPlayer，
+    // 这里让客户端的 myPlayerRole 跟着一起走，于是所有既有的
+    // 「我方 / 对方」判断（isMyTurn、myGeneral、myArmy、myBase…）自动落到当前行动方，
+    // 不需要把几十处 UI 分支重写一遍。
+    const hotseatRole = useGameStore.getState().isHotseat
+      ? (state.currentPlayer as 'player1' | 'player2')
+      : null;
+
     useGameStore.setState({
+      ...(hotseatRole ? { myPlayerRole: hotseatRole } : {}),
+
+      // 服务端权威战报：以前完全没同步，客户端只显示自己猜的那份
+      serverBattleLog: state.battleLog ? (Array.from(state.battleLog) as string[]) : [],
+
       phase: state.phase,
       currentPlayer: state.currentPlayer as Player,
       turn: state.turn,
@@ -756,6 +802,9 @@ class ColyseusService {
       this.room.leave();
       this.room = null;
       this.myPlayerRole = null;
+      // 清空击杀检测基线，否则下一局第一次同步会把整局单位当成「消失」
+      this.previousUnitIds = new Set();
+      validActions.clear();
     }
   }
 }

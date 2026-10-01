@@ -5,6 +5,8 @@ import { GamePhase, Player, UnitType, GeneralType } from '../types';
 interface GameStore extends GameState {
   // 在线模式相关
   isOnlineMode: boolean;
+  /** 同机轮流：一个客户端操作双方（原「单机对弈」，现在也走服务端房间） */
+  isHotseat: boolean;
   myPlayerRole: 'player1' | 'player2' | 'spectator' | null;
 
   // 无双扇形攻击状态（需要显式声明以覆盖可选类型）
@@ -43,10 +45,8 @@ interface GameStore extends GameState {
   setRulesModalOpen: (open: boolean) => void;
 
   // 初始化游戏
-  initGame: () => void;
 
   // 阶段控制
-  setPhase: (phase: GamePhase) => void;
   nextPhase: () => void;
 
   // 玩家选择将领
@@ -59,16 +59,12 @@ interface GameStore extends GameState {
   setBase: (player: Player, position: HexCoord) => void;
 
   // 单位操作
-  addUnit: (unit: Unit) => void;
   removeUnit: (unitId: string) => void;
   updateUnit: (unitId: string, updates: Partial<Unit>) => void;
   selectUnit: (unitId: string | null) => void;
 
   // 行动点操作
-  setActionPoints: (player: Player, points: number) => void;
   addActionPoints: (player: Player, points: number) => void;
-  consumeActionPoint: (player: Player) => void;
-  setTempMaxActionPoints: (player: Player, max: number | null) => void;
 
   // 骰子操作
   rollDice: (player: Player) => number[];
@@ -77,7 +73,6 @@ interface GameStore extends GameState {
   modifyDiceResult: (player: Player, diceIndex: number, newValue: number) => void;
 
   // 重投次数操作
-  addRerollToken: (player: Player) => void;
   rerollDice: (player: Player, diceIndex: number) => void;
 
   // 回合控制
@@ -91,7 +86,8 @@ interface GameStore extends GameState {
   resetGame: () => void;
 }
 
-const initialState: GameState = {
+// 带上在线模式两项，好让 resetGame() 能一并重置（GameState 本身不含它们）
+const initialState: GameState & Pick<GameStore, 'isOnlineMode' | 'isHotseat' | 'myPlayerRole'> = {
   phase: GamePhase.GENERAL_SELECT,
   currentPlayer: Player.PLAYER1,
   turn: 1,
@@ -175,15 +171,20 @@ const initialState: GameState = {
   player1TaipingDeployInitDone: false,
   player2TaipingDeployInitDone: false,
 
+  serverBattleLog: [],
+
   history: [],
+
+  // 在线模式：放在 initialState 内，resetGame() 才会一起清掉。
+  // 之前这两项声明在 create() 里，resetGame 重置不到，
+  // 导致重开一局后 myPlayerRole 残留、结算画面按上一局的视角判胜负。
+  isOnlineMode: false,
+  isHotseat: false,
+  myPlayerRole: null,
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
   ...initialState,
-
-  // 在线模式初始值
-  isOnlineMode: false,
-  myPlayerRole: null,
 
   // 无双扇形攻击状态初始值
   wushuangFanAttackActive: false,
@@ -208,13 +209,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   isRulesModalOpen: false,
   setRulesModalOpen: (open: boolean) => set({ isRulesModalOpen: open }),
 
-  initGame: () => {
-    set(initialState);
-  },
 
-  setPhase: (phase: GamePhase) => {
-    set({ phase });
-  },
 
   nextPhase: () => {
     const { phase } = get();
@@ -273,31 +268,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
-  addUnit: (unit: Unit) => {
-    set(state => {
-      // 计算单位价值（元）
-      let unitValue = 0;
-      if (unit.type === UnitType.INFANTRY) unitValue = 0.1;
-      else if (unit.type === UnitType.CAVALRY) unitValue = 0.2;
-      else if (unit.type === UnitType.ARCHER) unitValue = 0.5;
-      else if (unit.type === UnitType.BALLISTA) unitValue = 0.9;
-      else if (unit.type === UnitType.CHARIOT) unitValue = 0.6;
-      // 将军不计入部署价值
-
-      // 累加部署价值（不会因单位死亡而减少）
-      const newState: any = {
-        units: { ...state.units, [unit.id]: unit },
-      };
-
-      if (unit.owner === Player.PLAYER1 && unit.type !== UnitType.GENERAL) {
-        newState.player1DeployedValue = state.player1DeployedValue + unitValue;
-      } else if (unit.owner === Player.PLAYER2 && unit.type !== UnitType.GENERAL) {
-        newState.player2DeployedValue = state.player2DeployedValue + unitValue;
-      }
-
-      return newState;
-    });
-  },
 
   removeUnit: (unitId: string) => {
     set(state => {
@@ -322,13 +292,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ selectedUnitId: unitId });
   },
 
-  setActionPoints: (player: Player, points: number) => {
-    if (player === Player.PLAYER1) {
-      set({ player1ActionPoints: points });
-    } else if (player === Player.PLAYER2) {
-      set({ player2ActionPoints: points });
-    }
-  },
 
   addActionPoints: (player: Player, points: number) => {
     const state = get();
@@ -339,36 +302,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
-  consumeActionPoint: (player: Player) => {
-    const state = get();
-    if (player === Player.PLAYER1 && state.player1ActionPoints > 0) {
-      const newPoints = state.player1ActionPoints - 1;
-      set({ player1ActionPoints: newPoints });
-      // 如果行动点耗尽，自动切换回合（直接掷骰子，不显示中间界面）
-      if (newPoints === 0) {
-        setTimeout(() => {
-          get().nextTurn();
-        }, 500);
-      }
-    } else if (player === Player.PLAYER2 && state.player2ActionPoints > 0) {
-      const newPoints = state.player2ActionPoints - 1;
-      set({ player2ActionPoints: newPoints });
-      // 如果行动点耗尽，自动切换回合（直接掷骰子，不显示中间界面）
-      if (newPoints === 0) {
-        setTimeout(() => {
-          get().nextTurn();
-        }, 500);
-      }
-    }
-  },
 
-  setTempMaxActionPoints: (player: Player, max: number | null) => {
-    if (player === Player.PLAYER1) {
-      set({ player1TempMaxActionPoints: max });
-    } else if (player === Player.PLAYER2) {
-      set({ player2TempMaxActionPoints: max });
-    }
-  },
 
   rollDice: (player: Player) => {
     const state = get();
@@ -466,14 +400,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
-  addRerollToken: (player: Player) => {
-    const state = get();
-    if (player === Player.PLAYER1) {
-      set({ player1RerollTokens: state.player1RerollTokens + 1 });
-    } else if (player === Player.PLAYER2) {
-      set({ player2RerollTokens: state.player2RerollTokens + 1 });
-    }
-  },
 
   rerollDice: (player: Player, diceIndex: number) => {
     const state = get();
@@ -792,7 +718,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const damage = lishiCount > newDestiny ? 1 : 0;
 
     // 扣血（走共享血池路径）
-    let newUnits = { ...state.units };
+    const newUnits = { ...state.units };
     let sharedHpUpdate: any = {};
     if (damage > 0) {
       const newSharedHp = state.taipingSharedHp - damage;

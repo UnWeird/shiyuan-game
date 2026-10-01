@@ -1,15 +1,20 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { UnitType, Direction, GamePhase, Player } from '../../types';
 import type { Unit, HexCoord } from '../../types';
 import { useGameStore } from '../../stores/gameStore';
-import { useGameActions } from '../../hooks/useGameActions';
-import { useIsMobile } from '../../hooks/useMobile';
+import { useIsNarrowScreen, useHasSideRail } from '../../hooks/useMobile';
 import { HexMap } from '../Map/HexMap';
 import { UnitPiece } from '../Unit/UnitPiece';
 import { BattleLog } from '../UI/BattleLog';
+import { LegendPanel } from '../UI/LegendPanel';
 import RulesModal from '../UI/RulesModal';
-import { hexEquals, hexToPixel, generateHexMap, isInStartZone, getShootingPath, getFanShapedHexes, getMachineOccupiedHexes, getBallistaVerticalPath, hexDistance, hexNeighbors, getDistanceToBaseline } from '../../utils/hexUtils';
+import { hexEquals, hexToPixel, generateHexMap, isInStartZone, getShootingPath, getFanShapedHexes, getMachineOccupiedHexes, hexDistance, hexNeighbors, getDistanceToBaseline } from '../../utils/hexUtils';
 import { colyseusService } from '../../services/ColyseusService';
+import { toast, askConfirm, useUIStore } from '../../stores/uiStore';
+import { IMPERIAL, UNIT_NAME } from '../../theme/boardTheme';
+import { pendingAction, usePendingStore } from '../../game/pendingAction';
+import { getServerAttackHexes, getServerAttackTargets, getServerMoves } from '../../game/validActions';
+import { playSfx } from '../../audio/sfx';
 
 interface BattleLogEntry {
   id: string;
@@ -21,6 +26,14 @@ interface BattleLogEntry {
 // 辅助函数：判断是否是机关单位
 const isMachineUnit = (unitType: UnitType): boolean => {
   return unitType === UnitType.BALLISTA || unitType === UnitType.CHARIOT || unitType === UnitType.CATAPULT;
+};
+
+/** 将领 id → 显示名。原来是一串 4 层三元表达式，在 HUD 里写了两遍 */
+const GENERAL_NAME: Record<string, string> = {
+  wushuang: '无双',
+  shenji: '神机',
+  rende: '仁德',
+  taiping: '太平',
 };
 
 // 辅助函数：获取机关单位类型字符串
@@ -68,9 +81,7 @@ export const GameBoard: React.FC = () => {
     rerollDice,
     updateUnit,
     removeUnit,
-    consumeActionPoint,
     addActionPoints,
-    setTempMaxActionPoints,
     isOnlineMode,
     myPlayerRole,
     // 扇形攻击状态（在线模式使用服务器同步的状态）
@@ -102,27 +113,23 @@ export const GameBoard: React.FC = () => {
     taipingDeployInit: storeTaipingDeployInit,
   } = useGameStore();
 
-  const {
-    selectedUnit,
-    currentActionPoints,
-    getValidMoves,
-    getValidAttacks,
-    moveUnit,
-    attackUnit,
-    rotateUnit,
-    deployUnit,
-    deployMachine,
-    ballistaAttack,
-    ballistaMeleeAttack,
-    chariotMove,
-    rendeConvertAdjacent,
-    rendeConvertToInfantry,
-    rendeCompleteKill,
-    rendeSpareAsNeutral,
-  } = useGameActions();
+  // selectedUnit / currentActionPoints 原来由 useGameActions 派生。
+  // 那个 hook 是客户端自己的规则引擎（2024 行），单机改走服务端后已无用，整体删除，
+  // 这两个派生值直接从 store 算即可。
+  const selectedUnit = selectedUnitId ? units[selectedUnitId] : null;
+  const currentActionPoints = currentPlayer === Player.PLAYER1 ? player1ActionPoints : player2ActionPoints;
 
   const isRulesModalOpen = useGameStore(state => state.isRulesModalOpen);
   const setRulesModalOpen = useGameStore(state => state.setRulesModalOpen);
+  const soundEnabled = useUIStore(state => state.soundEnabled);
+  const toggleSound = useUIStore(state => state.toggleSound);
+
+  // 「指令已发出、等服务端确认」状态：用于幽灵棋子与压暗原棋子
+  const pending = usePendingStore(state => state.pending);
+  const rejectedUnitId = usePendingStore(state => state.rejectedUnitId);
+
+  // 服务端权威战报（在线模式显示这份，而不是本地猜的那份）
+  const serverBattleLog = useGameStore(state => state.serverBattleLog);
 
   const [highlightedHexes, setHighlightedHexes] = useState<HexCoord[]>([]);
   const [actionMode, setActionMode] = useState<'move' | 'attack' | 'deploy' | 'rotate' | 'rende-convert' | 'rende-neutral' | null>(null);
@@ -135,7 +142,11 @@ export const GameBoard: React.FC = () => {
   const [pendingRendeSkill, setPendingRendeSkill] = useState<'convert' | 'neutral' | null>(null);
 
   // 移动端检测
-  const isMobile = useIsMobile();
+  // 窄屏布局：只看视口宽度，不看设备类型
+  const isNarrow = useIsNarrowScreen();
+  /* 摆不摆得下右侧栏，是和 isNarrow 不同的一个断点（1024）。
+   * 820×1180 这类视口 isNarrow=false 但侧栏放不下，见 docs/layout-spec.md §3.4 */
+  const hasSideRail = useHasSideRail();
   // 扇形攻击本地状态（单机模式使用）
   const [localWushuangFanAttackActive, setLocalWushuangFanAttackActive] = useState(false);
   const [localWushuangSelectedDirection, setLocalWushuangSelectedDirection] = useState<Direction | null>(null);
@@ -247,7 +258,7 @@ export const GameBoard: React.FC = () => {
     (myPlayerRole === 'player1' && currentPlayer === Player.PLAYER1) ||
     (myPlayerRole === 'player2' && currentPlayer === Player.PLAYER2);
 
-  // 添加战斗日志
+  // 添加战斗日志（仅单机模式使用；在线模式的战报由服务端下发）
   const addLog = (message: string, type: BattleLogEntry['type']) => {
     setBattleLogs(prev => [...prev, {
       id: `${Date.now()}-${Math.random()}`,
@@ -256,6 +267,39 @@ export const GameBoard: React.FC = () => {
       timestamp: Date.now(),
     }]);
   };
+
+  /**
+   * 发出在线指令前登记「待确认」，让界面立刻给出反馈。
+   * 只记录请求内容，不在本地重演规则。
+   */
+  const beginPending = (
+    kind: 'move' | 'attack',
+    unit: Unit,
+    target: HexCoord,
+    targetUnit?: Unit
+  ) => {
+    pendingAction.begin({
+      kind,
+      unitId: unit.id,
+      target,
+      targetUnitId: targetUnit?.id,
+      fromPosition: unit.position,
+      actionsBefore: unit.actionsThisTurn,
+      targetHpBefore: targetUnit?.hp,
+    });
+  };
+
+  // 指令落定/回滚后收尾：落定就清掉选中，被拒绝时保留选中方便改主意重选
+  const prevPendingRef = useRef(pending);
+  useEffect(() => {
+    if (prevPendingRef.current && !pending) {
+      if (!usePendingStore.getState().rejectedUnitId) {
+        selectUnit(null);
+        setHighlightedHexes([]);
+      }
+    }
+    prevPendingRef.current = pending;
+  }, [pending, selectUnit]);
 
   // 消耗行动点但不触发自动回合切换（用于扇形攻击）
   const consumeActionPointNoAutoSwitch = (player: Player, count: number = 1) => {
@@ -305,12 +349,10 @@ export const GameBoard: React.FC = () => {
 
   // 开始部署阶段时掷骰子
   const handleRollDice = () => {
+    playSfx('dice');
     if (isOnlineMode) {
       // 在线模式：发送给服务器
       colyseusService.rollDice();
-    } else {
-      // 单机模式：本地处理
-      rollDice(currentPlayer);
     }
   };
 
@@ -325,6 +367,7 @@ export const GameBoard: React.FC = () => {
       if (unit.owner !== currentPlayer) return;
     }
 
+    playSfx('select');
     selectUnit(unitId);
     setActionMode(null);
 
@@ -348,6 +391,7 @@ export const GameBoard: React.FC = () => {
       if (isMachineUnit(deployUnitType)) {
         // 在线模式：发送部署机关单位命令到服务器
         const machineType = getMachineTypeStr(deployUnitType)!;
+        playSfx('place');
         colyseusService.shenjiDeployMachine(machineType, hex);
 
         const unitName = deployUnitType === UnitType.BALLISTA ? '弩车' :
@@ -362,6 +406,7 @@ export const GameBoard: React.FC = () => {
       }
 
       // 普通单位部署
+      playSfx('place');
       colyseusService.deployUnit({
         unitType: deployUnitType,
         position: hex,
@@ -376,34 +421,6 @@ export const GameBoard: React.FC = () => {
       return;
     }
 
-    // 单机模式的原有逻辑
-    if (actionMode === 'deploy' && deployUnitType) {
-      // 机关单位使用特殊部署逻辑
-      if (isMachineUnit(deployUnitType)) {
-        if (deployMachine(deployUnitType as UnitType.BALLISTA | UnitType.CHARIOT | UnitType.CATAPULT, hex)) {
-          const unitName = deployUnitType === UnitType.BALLISTA ? '弩车' :
-                          deployUnitType === UnitType.CHARIOT ? '战车' : '投石车';
-          addLog(`部署了${unitName}`, 'deploy');
-          // 保持部署模式，允许连续部署同类型单位
-          // setActionMode(null);
-          // setDeployUnitType(null);
-          // setHighlightedHexes([]);
-        }
-      } else {
-        // 普通单位部署
-        if (deployUnit(deployUnitType, hex)) {
-          const unitName = deployUnitType === UnitType.INFANTRY ? '步兵' :
-                          deployUnitType === UnitType.CAVALRY ? '骑兵' :
-                          deployUnitType === UnitType.ARCHER ? '弓箭手' : '将军';
-          addLog(`部署了${unitName}`, 'deploy');
-          // 保持部署模式，允许连续部署同类型单位
-          // setActionMode(null);
-          // setDeployUnitType(null);
-          // setHighlightedHexes([]);
-        }
-      }
-      return;
-    }
 
     if (actionMode === 'rotate') {
       // 点击射击路径选择方向
@@ -430,17 +447,6 @@ export const GameBoard: React.FC = () => {
           addLog(`仁德技能：转化接触单位`, 'ability');
           setActionMode(null);
           setHighlightedHexes([]);
-        } else {
-          // 单机模式：本地处理
-          if (rendeConvertAdjacent(selectedUnit, target)) {
-            if (target.type === UnitType.GENERAL && target.owner !== selectedUnit.owner) {
-              addLog(`仁德技能：对敌将使用，直接获胜！`, 'ability');
-            } else {
-              addLog(`仁德技能：转化了单位`, 'ability');
-            }
-            setActionMode(null);
-            setHighlightedHexes([]);
-          }
         }
       }
       return;
@@ -462,14 +468,6 @@ export const GameBoard: React.FC = () => {
           addLog(`转化中立标记为步兵（消耗${cost}点）`, 'ability');
           setActionMode(null);
           setHighlightedHexes([]);
-        } else {
-          // 单机模式：本地处理
-          if (rendeConvertToInfantry(selectedUnit, target)) {
-            const cost = (selectedUnit as any).convertInfantryCost || 1;
-            addLog(`转化中立标记为步兵（消耗${cost / 2}点）`, 'ability');
-            setActionMode(null);
-            setHighlightedHexes([]);
-          }
         }
       }
       return;
@@ -500,38 +498,23 @@ export const GameBoard: React.FC = () => {
       // 战车使用特殊移动逻辑
       if (selectedUnit.type === UnitType.CHARIOT) {
         if (isOnlineMode) {
-          // 在线模式：发送移动指令到服务器（战车也使用moveUnit）
+          // 在线模式：发指令 + 记为「待确认」。
+          // 不写战报（战报由服务端权威日志同步下来），
+          // 也不取消选中 —— 保留选中作为视觉锚点，落定后再清。
+          playSfx('move');
+          beginPending('move', selectedUnit, hex);
           colyseusService.moveUnit(selectedUnit.id, hex);
-          addLog(`战车碾压移动`, 'move');
           setActionMode(null);
           setHighlightedHexes([]);
-          selectUnit(null);
-        } else {
-          // 单机模式：使用本地战车移动逻辑
-          if (chariotMove(selectedUnit, hex)) {
-            addLog(`战车碾压移动`, 'move');
-            setActionMode(null);
-            setHighlightedHexes([]);
-            selectUnit(null);
-          }
         }
       } else {
         // 普通移动
         if (isOnlineMode) {
-          // 在线模式：发送移动指令到服务器
+          playSfx('move');
+          beginPending('move', selectedUnit, hex);
           colyseusService.moveUnit(selectedUnit.id, hex);
-          addLog(`${selectedUnit.type}移动`, 'move');
           setActionMode(null);
           setHighlightedHexes([]);
-          selectUnit(null);
-        } else {
-          // 单机模式：本地处理
-          if (moveUnit(selectedUnit, hex)) {
-            addLog(`${selectedUnit.type}移动`, 'move');
-            setActionMode(null);
-            setHighlightedHexes([]);
-            selectUnit(null);
-          }
         }
       }
     } else if (actionMode === 'attack') {
@@ -561,14 +544,10 @@ export const GameBoard: React.FC = () => {
 
           if (target) {
             if (isOnlineMode) {
-              // 在线模式：发送近战攻击指令到服务器
+              // 在线模式：发指令 + 记为待确认，战报交给服务端
+              playSfx('attack');
+              beginPending('attack', selectedUnit, hex, target);
               colyseusService.ballistaMeleeAttack(selectedUnit.id, target.id);
-              addLog(`弩车近战攻击`, 'attack');
-            } else {
-              // 单机模式：本地处理
-              if (ballistaMeleeAttack(selectedUnit, target)) {
-                addLog(`弩车近战攻击`, 'attack');
-              }
             }
             setActionMode(null);
             setHighlightedHexes([]);
@@ -577,20 +556,12 @@ export const GameBoard: React.FC = () => {
         } else {
           // 贯穿攻击
           if (isOnlineMode) {
-            // 在线模式：发送贯穿攻击指令到服务器
+            // 贯穿攻击命中谁由服务端决定，这里只记「原地动作待确认」
+            playSfx('attack');
+            beginPending('attack', selectedUnit, selectedUnit.position);
             colyseusService.ballistaPierceAttack(selectedUnit.id);
-            addLog(`弩车贯穿攻击`, 'attack');
             setActionMode(null);
             setHighlightedHexes([]);
-            selectUnit(null);
-          } else {
-            // 单机模式：本地处理
-            if (ballistaAttack(selectedUnit)) {
-              addLog(`弩车贯穿攻击`, 'attack');
-              setActionMode(null);
-              setHighlightedHexes([]);
-              selectUnit(null);
-            }
           }
         }
       } else {
@@ -609,38 +580,14 @@ export const GameBoard: React.FC = () => {
 
         if (target) {
           if (isOnlineMode) {
-            // 在线模式：发送攻击指令到服务器
+            // 在线模式：发指令 + 记为待确认
             // 注意：仁德将军的特殊逻辑目前不支持在线模式
+            playSfx('attack');
+            beginPending('attack', selectedUnit, hex, target);
             colyseusService.attackUnit(selectedUnit.id, target.id);
-            // 暂时显示攻击日志（实际结果由服务器决定）
-            addLog(`${selectedUnit.type}攻击${target.type}`, 'attack');
             setActionMode(null);
             setHighlightedHexes([]);
             selectUnit(null);
-          } else {
-            // 单机模式：本地处理
-            const result = attackUnit(selectedUnit, target);
-
-            // 检查是否是仁德击杀需要确认
-            if (result === 'rende_kill_confirm') {
-              // 显示确认对话框
-              setRendeKillConfirm({ attacker: selectedUnit, target });
-              setActionMode(null);
-              setHighlightedHexes([]);
-              return;
-            }
-
-            if (result) {
-              const targetNewHp = target.hp - 1;
-              if (targetNewHp <= 0) {
-                addLog(`${selectedUnit.type}击杀了${target.type}！`, 'kill');
-              } else {
-                addLog(`${selectedUnit.type}攻击${target.type}`, 'attack');
-              }
-              setActionMode(null);
-              setHighlightedHexes([]);
-              selectUnit(null);
-            }
           }
         }
       }
@@ -650,7 +597,10 @@ export const GameBoard: React.FC = () => {
   // 显示移动范围
   const handleShowMoves = () => {
     if (!selectedUnit) return;
-    const moves = getValidMoves(selectedUnit);
+    // 在线模式用服务端下发的合法落点：和服务端校验同一份判断，
+    // 不会再出现「高亮了却被拒绝」。单机模式暂时仍用本地引擎（阶段 4 会一起删）。
+    // 高亮只用服务端下发的合法落点（客户端那份规则实现已删除）
+    const moves = getServerMoves(selectedUnit.id);
     setHighlightedHexes(moves);
     setActionMode('move');
   };
@@ -659,48 +609,19 @@ export const GameBoard: React.FC = () => {
   const handleShowAttacks = () => {
     if (!selectedUnit) return;
 
-    // 弩车：显示贯穿射击路径 + 近战范围
-    if (selectedUnit.type === UnitType.BALLISTA) {
-      const isPlayerOne = selectedUnit.owner === Player.PLAYER1;
-      const shootingPath = getBallistaVerticalPath(selectedUnit.position, isPlayerOne, 5);
-
-      // 近战范围：相邻的所有格子
-      const meleeRange = hexNeighbors(selectedUnit.position);
-
-      // 合并显示贯穿路径和近战范围
-      setHighlightedHexes([...shootingPath, ...meleeRange]);
-      setActionMode('attack');
-      return;
-    }
-
-    // 投石车：显示射击路径 + 近战范围
-    if (selectedUnit.type === UnitType.CATAPULT) {
-      const shootingPath = getShootingPath(selectedUnit.position, selectedUnit.direction, 5);
-
-      // 计算近战范围：投石车所有占据格子的相邻格子
-      const catapultOccupiedHexes = getMachineOccupiedHexes(
-        selectedUnit.position,
-        'catapult',
-        selectedUnit.owner === Player.PLAYER1
-      );
-      const allNeighbors: HexCoord[] = [];
-
-      // 获取所有占用格子的相邻格子（去重）
-      catapultOccupiedHexes.forEach(occupiedHex => {
-        const neighbors = hexNeighbors(occupiedHex);
-        neighbors.forEach(neighbor => {
-          // 去重：检查是否已经在列表中，且不是投石车自己占用的格子
-          const isCatapultTile = catapultOccupiedHexes.some(h => hexEquals(h, neighbor));
-          const alreadyAdded = allNeighbors.some(h => hexEquals(h, neighbor));
-          if (!isCatapultTile && !alreadyAdded) {
-            allNeighbors.push(neighbor);
-          }
-        });
-      });
-
-      // 组合射击路径和近战范围
-      const combinedRange = [...shootingPath, ...allNeighbors];
-      setHighlightedHexes(combinedRange);
+    // 弩车 / 投石车：范围型攻击，高亮由服务端下发
+    //
+    // 这两条线（弩车垂直贯穿、投石车沿朝向射击）原来由客户端自己算，
+    // 而服务端那一侧根本没有射程判定 —— 实测投石车能隔着整张图打对角。
+    // 现在服务端补上了规则，并把覆盖格和可攻击目标一起推下来，
+    // 高亮与校验用的是同一套计算。
+    if (selectedUnit.type === UnitType.BALLISTA || selectedUnit.type === UnitType.CATAPULT) {
+      const rangeHexes = getServerAttackHexes(selectedUnit.id);
+      const meleeTargets = getServerAttackTargets(selectedUnit.id)
+        .map(id => units[id])
+        .filter(Boolean)
+        .map(u => u.position);
+      setHighlightedHexes([...rangeHexes, ...meleeTargets]);
       setActionMode('attack');
       return;
     }
@@ -747,10 +668,16 @@ export const GameBoard: React.FC = () => {
       return;
     }
 
-    // 弓箭手等其他单位：使用原有逻辑
-    const targets = getValidAttacks(selectedUnit);
+    // 弓箭手等其他单位
+    // 在线模式：服务端下发的可攻击目标 id，转成它们的位置来高亮。
+    // 和服务端 handleAttackUnit 共用 checkAttackLegality，所以点得中。
+    const targetPositions = getServerAttackTargets(selectedUnit.id)
+      .map(id => units[id])
+      .filter(Boolean)
+      .map(u => u.position);
+
     // 只高亮敌人的位置,不是整个范围
-    setHighlightedHexes(targets.map(t => t.position));
+    setHighlightedHexes(targetPositions);
     setActionMode('attack');
   };
 
@@ -896,19 +823,12 @@ export const GameBoard: React.FC = () => {
     if (!selectedUnit) return;
     if (isOnlineMode) {
       // 在线模式：发送旋转指令到服务器
+      playSfx('rotate');
       colyseusService.rotateUnit(selectedUnit.id, direction);
       addLog(`${selectedUnit.type}转向`, 'info');
       setActionMode(null);
       setHighlightedHexes([]);
       setRotationPaths(new Map());
-    } else {
-      // 单机模式：本地处理
-      if (rotateUnit(selectedUnit, direction)) {
-        addLog(`${selectedUnit.type}转向`, 'info');
-        setActionMode(null);
-        setHighlightedHexes([]);
-        setRotationPaths(new Map());
-      }
     }
   };
 
@@ -935,9 +855,6 @@ export const GameBoard: React.FC = () => {
       } else {
         colyseusService.endTurn();
       }
-    } else {
-      // 单机模式：本地处理
-      endTurn();
     }
 
     setActionMode(null);
@@ -953,13 +870,19 @@ export const GameBoard: React.FC = () => {
   };
 
   // 认输
-  const handleSurrender = () => {
+  const handleSurrender = async () => {
     if (!isOnlineMode) {
-      alert('单机模式不支持认输功能');
+      toast.warn('单机模式不支持认输');
       return;
     }
 
-    const confirmed = window.confirm('确定要认输吗？');
+    const confirmed = await askConfirm({
+      title: '认输',
+      message: '认输后本局立即判负，无法撤回。',
+      confirmText: '确认认输',
+      cancelText: '再想想',
+      danger: true,
+    });
     if (confirmed) {
       colyseusService.surrender();
     }
@@ -969,8 +892,6 @@ export const GameBoard: React.FC = () => {
   const handleTaipingFushuiConvert = (unitId: string) => {
     if (isOnlineMode) {
       colyseusService.taipingFushuiConvert(unitId);
-    } else {
-      storeTaipingFushuiConvert(currentPlayer, unitId);
     }
   };
 
@@ -978,8 +899,6 @@ export const GameBoard: React.FC = () => {
   const handleTaipingDoufan = () => {
     if (isOnlineMode) {
       colyseusService.taipingDoufan();
-    } else {
-      storeTaipingDoufan(currentPlayer);
     }
   };
 
@@ -987,8 +906,6 @@ export const GameBoard: React.FC = () => {
   const handleTaipingTianmingRoll = () => {
     if (isOnlineMode) {
       colyseusService.taipingTianmingRoll();
-    } else {
-      storeTaipingTianmingRoll(currentPlayer);
     }
   };
 
@@ -996,9 +913,6 @@ export const GameBoard: React.FC = () => {
   const handleTaipingTianmingConfirm = () => {
     if (isOnlineMode) {
       colyseusService.taipingTianmingConfirm();
-    } else {
-      // 单机模式：taipingTianmingActive 已为 true，调用 endTurn 会清除并切换
-      endTurn();
     }
     setActionMode(null);
     setHighlightedHexes([]);
@@ -1009,8 +923,6 @@ export const GameBoard: React.FC = () => {
   const handleTaipingDeployInit = () => {
     if (isOnlineMode) {
       colyseusService.taipingDeployInit();
-    } else {
-      storeTaipingDeployInit(currentPlayer);
     }
   };
 
@@ -1500,22 +1412,29 @@ export const GameBoard: React.FC = () => {
 
   if (phase === GamePhase.DEPLOY && currentActionPoints === 0 && !hasRolled && !hasDeployed) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 flex items-center justify-center">
-        <div className="bg-white rounded-lg shadow-xl p-8 text-center">
-          <h2 className="text-3xl font-bold mb-4">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'radial-gradient(ellipse at 50% 30%, #2a0a00 0%, #0d0500 50%, #050200 100%)' }}>
+        <div className="rounded-lg p-8 text-center" style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.95) 0%, rgba(13,5,0,0.98) 100%)', border: '1px solid rgba(201,162,39,0.3)', boxShadow: '0 0 60px rgba(201,162,39,0.12)' }}>
+          <h2 className="font-ancient text-3xl tracking-widest mb-4" style={{ color: '#C9A227', textShadow: '0 0 20px rgba(201,162,39,0.4)' }}>
             {currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 的回合
           </h2>
           {!isMyTurn && (
-            <p className="text-gray-600 mb-4">等待对手操作...</p>
+            <p className="font-chinese text-sm mb-4 gold-breathe" style={{ color: 'rgba(201,162,39,0.6)' }}>等待对手操作...</p>
           )}
           <button
             onClick={handleRollDice}
             disabled={!isMyTurn}
-            className={`px-8 py-4 rounded-lg font-bold text-xl ${
-              isMyTurn
-                ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-            }`}
+            className="px-8 py-4 rounded font-chinese tracking-widest text-lg"
+            style={isMyTurn ? {
+              border: '1px solid rgba(201,162,39,0.5)',
+              color: '#E8C84A',
+              background: 'linear-gradient(135deg, rgba(80,20,20,0.4) 0%, rgba(26,10,0,0.8) 100%)',
+              cursor: 'pointer',
+            } : {
+              border: '1px solid rgba(201,162,39,0.15)',
+              color: 'rgba(201,162,39,0.3)',
+              background: 'rgba(13,5,0,0.5)',
+              cursor: 'not-allowed',
+            }}
           >
             掷骰子开始
           </button>
@@ -1525,106 +1444,125 @@ export const GameBoard: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 p-4">
-      <div className="max-w-7xl mx-auto">
+    /* 整页一屏，不滚动：根是 flex column，棋盘那一行 flex:1 吃掉剩余高度。
+     * 原来是 min-h-screen + max-w-7xl —— 内容宽被锁在 1280，1920 和 1440 下
+     * 棋盘像素完全相同（744×664），而且页面在 1440×900 下要滚 221px。
+     * 见 docs/layout-spec.md §L1 §L4 §3.2 */
+    <div
+      className="h-screen p-3 md:p-4 flex flex-col overflow-hidden"
+      style={{ background: 'radial-gradient(ellipse at 50% 30%, #1a0800 0%, #0d0500 60%, #050200 100%)' }}
+    >
+      <div className="w-full mx-auto flex flex-col flex-1 min-h-0 gap-3 md:gap-4">
         {/* 非你回合提示 */}
         {!isMyTurn && isOnlineMode && (
-          <div className="bg-yellow-100 border-2 border-yellow-400 rounded-lg p-3 mb-4 text-center">
-            <p className="text-yellow-800 font-bold text-lg">
-              ⏳ 等待对手操作...
+          <div className="rounded-lg p-3 text-center flex-none" style={{ border: '1px solid rgba(201,162,39,0.35)', background: 'rgba(13,5,0,0.7)' }}>
+            <p className="font-chinese tracking-wider gold-breathe" style={{ color: 'rgba(245,230,200,0.7)' }}>
+              等待对手操作...
             </p>
           </div>
         )}
 
         {/* 顶部信息栏 */}
-        <div className="bg-white rounded-lg shadow-lg p-3 md:p-4 mb-4">
-          <div className="flex flex-wrap justify-between items-center gap-y-2 gap-x-3">
-            <div className="flex items-center gap-2 md:gap-4">
-              <div>
-                <h2 className={`${isMobile ? 'text-lg' : 'text-2xl'} font-bold`}>
-                  {currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 的回合
-                </h2>
-                <p className="text-xs text-gray-600">
-                  {phase === GamePhase.DEPLOY ? '部署阶段' : '行动阶段'}
-                </p>
-              </div>
+        <div className="rounded-lg px-3 py-2 md:px-4 flex-none" style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.95) 0%, rgba(13,5,0,0.98) 100%)', border: '1px solid rgba(201,162,39,0.25)', boxShadow: '0 0 20px rgba(201,162,39,0.08)' }}>
+          {/* 单行 HUD：每个子项都是一行高的盒子 + items-center，
+            * 这样"所有元素共享一条中心线"由布局本身保证，而不是靠手调。
+            * 旧实现里各块是 2–4 行的堆叠，七个元素落在五条不同的中心线上
+            * （实测 cy：行动阶段 101 / 规则 85 / 部署价值 61 / 行动点 41 / 基础 94 / 结束回合 85），
+            * 整条 HUD 吃掉 138px（手机上 236px = 29% 视口高）。
+            * 见 docs/layout-spec.md §L5 §3.2 */}
+          <div className="flex flex-wrap justify-between items-center gap-y-2 gap-x-3 sy-hud">
+            <div className="flex items-center gap-2 md:gap-3 min-w-0">
+              {/* 回合 + 阶段：同一行，阶段作为次要后缀 */}
+              <h2 className={`${isNarrow ? 'text-base' : 'text-xl'} font-ancient tracking-wider whitespace-nowrap`} style={{ color: '#C9A227' }}>
+                {currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 的回合
+                <span className="ml-2 text-xs font-chinese align-middle" style={{ color: 'rgba(201,162,39,0.45)' }}>
+                  {phase === GamePhase.DEPLOY ? '部署' : '行动'}
+                </span>
+              </h2>
 
-              {/* 将领显示 */}
-              <div className="flex items-center gap-2 ml-2 pl-2 md:ml-6 md:pl-6 border-l-2 border-gray-200">
-                {/* 玩家1将领 - 琥珀色/金色 */}
-                <div className="flex items-center gap-1 md:gap-2 bg-amber-50 px-2 py-1 md:px-3 md:py-2 rounded-lg border-2 border-amber-400">
-                  <img
-                    src={`/generals/${player1General}.svg`}
-                    alt={player1General || '未选择'}
-                    className="w-6 h-6 md:w-8 md:h-8 rounded-full border-2 border-amber-500"
-                    onError={(e) => {
-                      e.currentTarget.style.display = 'none'
-                    }}
-                  />
-                  <div className="text-left">
-                    <p className="text-xs text-gray-500">P1</p>
-                    <p className="text-xs font-bold text-amber-600">
-                      {player1General === 'wushuang' ? '无双' : player1General === 'shenji' ? '神机' : player1General === 'rende' ? '仁德' : player1General === 'taiping' ? '太平' : '未知'}
-                    </p>
-                  </div>
-                </div>
-
-                <span className="text-gray-400 font-bold text-xs">VS</span>
-
-                {/* 玩家2将领 - 浅蓝色 */}
-                <div className="flex items-center gap-1 md:gap-2 bg-blue-50 px-2 py-1 md:px-3 md:py-2 rounded-lg border-2 border-blue-400">
-                  <img
-                    src={`/generals/${player2General}.svg`}
-                    alt={player2General || '未选择'}
-                    className="w-6 h-6 md:w-8 md:h-8 rounded-full border-2 border-blue-500"
-                    onError={(e) => {
-                      e.currentTarget.style.display = 'none'
-                    }}
-                  />
-                  <div className="text-left">
-                    <p className="text-xs text-gray-500">P2</p>
-                    <p className="text-xs font-bold text-blue-600">
-                      {player2General === 'wushuang' ? '无双' : player2General === 'shenji' ? '神机' : player2General === 'rende' ? '仁德' : player2General === 'taiping' ? '太平' : '未知'}
-                    </p>
-                  </div>
-                </div>
+              {/* 将领：头像 + 名字同一行，阵营靠名字颜色区分，不再单独占一行 */}
+              <div className="flex items-center gap-1.5 md:gap-2 pl-2 md:pl-3 shrink-0" style={{ borderLeft: '1px solid rgba(201,162,39,0.2)' }}>
+                {([
+                  { g: player1General, side: '朱红', nameColor: '#E8C84A', bg: 'rgba(201,162,39,0.08)', border: 'rgba(201,162,39,0.4)', ring: 'rgba(201,162,39,0.5)' },
+                  { g: player2General, side: '青玉', nameColor: '#6FCFA4', bg: 'rgba(46,107,79,0.10)', border: 'rgba(63,138,102,0.4)', ring: 'rgba(63,138,102,0.5)' },
+                ] as const).map((p, i) => (
+                  <React.Fragment key={p.side}>
+                    {i === 1 && <span className="font-ancient text-xs shrink-0" style={{ color: 'rgba(201,162,39,0.35)' }}>VS</span>}
+                    <div
+                      className="flex items-center gap-1.5 px-2 py-1 rounded shrink-0"
+                      style={{ background: p.bg, border: `1px solid ${p.border}` }}
+                      title={`${p.side} · ${GENERAL_NAME[p.g ?? ''] ?? '未知'}`}
+                    >
+                      <img
+                        src={`/generals/${p.g}.svg`}
+                        alt=""
+                        className="w-5 h-5 md:w-6 md:h-6 rounded-full"
+                        style={{ border: `1px solid ${p.ring}` }}
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                      <span className="text-xs font-chinese font-bold whitespace-nowrap" style={{ color: p.nameColor }}>
+                        {GENERAL_NAME[p.g ?? ''] ?? '未知'}
+                      </span>
+                    </div>
+                  </React.Fragment>
+                ))}
               </div>
             </div>
 
-            <div className="flex items-center gap-3 md:gap-6">
-              {/* 帮助按钮 */}
+            {/* 这一组（规则/音效/部署价值/行动点/操作按钮）原来是 nowrap，
+                窄屏下内容总宽超过容器又不能换行，就把整页撑出横向滚动条。
+                允许换行后各块会自己排成多行。 */}
+            <div className="flex flex-wrap items-center justify-end gap-3 md:gap-6">
+              {/* 规则 / 音效：收成 32×32 的图标按钮。
+                * 它们不是回合动作，不该占 HUD 的横向预算 —— 带文字时两个按钮要 124px，
+                * 1024 宽下正是它们把 HUD 挤成两行。文字进 title（也是无障碍标签）。 */}
               <button
                 onClick={() => setRulesModalOpen(true)}
-                className="flex items-center gap-1 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors shadow-sm"
+                className="flex items-center justify-center w-8 h-8 rounded font-chinese transition-all shrink-0"
+                style={{ border: '1px solid rgba(201,162,39,0.35)', color: '#C9A227', background: 'rgba(13,5,0,0.6)' }}
                 title="查看游戏规则"
+                aria-label="查看游戏规则"
+                onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.7)')}
+                onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.35)')}
               >
-                <span className="text-lg">❓</span>
-                <span className="text-sm font-semibold">规则</span>
+                <span className="text-sm leading-none">规</span>
               </button>
 
-              {/* 部署价值显示 */}
-              <div className="text-center">
-                <p className="text-xs text-gray-600">部署价值</p>
-                <p className={`${isMobile ? 'text-lg' : 'text-2xl'} font-bold text-purple-600`}>
+              <button
+                onClick={toggleSound}
+                className="flex items-center justify-center w-8 h-8 rounded font-chinese transition-all shrink-0"
+                style={{
+                  border: '1px solid rgba(201,162,39,0.35)',
+                  color: soundEnabled ? '#C9A227' : 'rgba(201,162,39,0.35)',
+                  background: 'rgba(13,5,0,0.6)',
+                }}
+                title={soundEnabled ? '关闭音效' : '开启音效'}
+                aria-label={soundEnabled ? '关闭音效' : '开启音效'}
+                onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.7)')}
+                onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.35)')}
+              >
+                <span className="text-sm leading-none">{soundEnabled ? '音' : '静'}</span>
+              </button>
+
+              {/* 部署价值：label 与数值同一行。
+                * 原来是「标签 / 数值 / 骰子颗数」三行堆叠，骰子颗数这类派生信息
+                * 挪进 title，鼠标悬停可查，不占 HUD 高度。 */}
+              <div
+                className="flex items-baseline gap-1.5 shrink-0"
+                title={phase === GamePhase.DEPLOY
+                  ? (currentPlayer === Player.PLAYER2
+                      ? `骰子 ${1 + Math.floor(player1DeployedValue)} 颗（基于对方部署价值）`
+                      : '先手无限行动点')
+                  : `骰子 ${1 + Math.floor((currentPlayer === Player.PLAYER1 ? player1DeployedValue : player2DeployedValue) / 2)} 颗`}
+              >
+                <span className="text-xs font-chinese whitespace-nowrap" style={{ color: 'rgba(201,162,39,0.5)' }}>部署</span>
+                <span className={`${isNarrow ? 'text-base' : 'text-lg'} font-ancient leading-none`} style={{ color: '#E8C84A' }}>
                   {(currentPlayer === Player.PLAYER1 ? player1DeployedValue : player2DeployedValue).toFixed(1)}元
-                </p>
-                <p className="text-xs text-gray-500">
-                  {phase === GamePhase.DEPLOY ? (
-                    // 部署阶段：后手玩家的骰子数基于先手玩家的部署价值（每1元1颗）
-                    currentPlayer === Player.PLAYER2 ? (
-                      <>骰子: {1 + Math.floor(player1DeployedValue)}颗 (基于对方)</>
-                    ) : (
-                      <>先手无限行动点</>
-                    )
-                  ) : (
-                    // 行动阶段：骰子数基于自己的部署价值（每2元1颗）
-                    <>骰子: {1 + Math.floor((currentPlayer === Player.PLAYER1 ? player1DeployedValue : player2DeployedValue) / 2)}颗</>
-                  )}
-                </p>
+                </span>
               </div>
 
-              <div className="text-center">
-                <p className="text-xs text-gray-600">行动点</p>
+              <div className="flex items-baseline gap-1.5 shrink-0">
+                <span className="text-xs font-chinese whitespace-nowrap" style={{ color: 'rgba(201,162,39,0.5)' }}>行动点</span>
                 {(() => {
                   const tempMax = currentPlayer === Player.PLAYER1 ? player1TempMaxActionPoints : player2TempMaxActionPoints;
                   const diceSum = (currentPlayer === Player.PLAYER1 ? player1DiceResults : player2DiceResults)
@@ -1633,23 +1571,27 @@ export const GameBoard: React.FC = () => {
                   if (tempMax !== null) {
                     // 有临时上限,显示为 (当前/临时上限)
                     return (
-                      <p className={`${isMobile ? 'text-xl' : 'text-3xl'} font-bold text-blue-600`}>
+                      <span className={`${isNarrow ? 'text-lg' : 'text-xl'} font-ancient leading-none`} style={{ color: '#E8C84A' }}>
                         {currentActionPoints}
-                        <span className={`${isMobile ? 'text-sm' : 'text-lg'} text-gray-500`}>/{tempMax}</span>
-                      </p>
+                        <span className="text-sm" style={{ color: 'rgba(201,162,39,0.45)' }}>/{tempMax}</span>
+                      </span>
                     );
                   } else {
                     // 没有临时上限,显示为 (当前/骰子总和)
                     return (
-                      <p className={`${isMobile ? 'text-xl' : 'text-3xl'} font-bold text-blue-600`}>
+                      <span className={`${isNarrow ? 'text-lg' : 'text-xl'} font-ancient leading-none`} style={{ color: '#E8C84A' }}>
                         {currentActionPoints}
-                        <span className={`${isMobile ? 'text-sm' : 'text-lg'} text-gray-500`}>/{diceSum}</span>
-                      </p>
+                        <span className="text-sm" style={{ color: 'rgba(201,162,39,0.45)' }}>/{diceSum}</span>
+                      </span>
                     );
                   }
                 })()}
-                {/* 显示骰子结果 */}
-                {(() => {
+              </div>
+
+              {/* 骰子：自成一个单行内联组。
+                * 原来挂在「行动点」块下面，还顶着一行「基础:N个 / 击杀奖励 / 永久失去」说明，
+                * 所以行动点那一组比别的元素高出 44px。说明文字挪进 title。 */}
+              {(() => {
                   const diceResults = currentPlayer === Player.PLAYER1 ? player1DiceResults : player2DiceResults;
                   const killDice = currentPlayer === Player.PLAYER1 ? player1KillDice : player2KillDice;
                   const lostDice = currentPlayer === Player.PLAYER1 ? player1LostDice : player2LostDice;
@@ -1659,25 +1601,25 @@ export const GameBoard: React.FC = () => {
                     // 基础骰子数 = 总骰子数 - 击杀骰子数
                     const baseDice = totalDice - killDice;
 
+                    const breakdown = [
+                      `基础 ${baseDice} 个`,
+                      killDice > 0 ? `击杀奖励 +${killDice} 个` : '',
+                      lostDice > 0 ? `永久失去 ${lostDice} 个` : '',
+                    ].filter(Boolean).join(' · ');
+
                     return (
-                      <div>
-                        {/* 骰子数量说明 */}
-                        <div className="text-xs text-gray-600 mb-1 flex justify-center gap-3">
-                          <span className="text-blue-600">基础:{baseDice}个</span>
-                          {killDice > 0 && <span className="text-yellow-600">击杀奖励:+{killDice}个</span>}
-                          {lostDice > 0 && <span className="text-gray-500">永久失去:{lostDice}个</span>}
-                        </div>
-                        <div className="flex gap-1.5 justify-center flex-wrap">
+                      <div className="flex items-center gap-1.5 shrink-0" title={breakdown}>
                         {/* 基础骰子 - 蓝色边框 */}
                         {diceResults.slice(0, baseDice).map((result, index) => (
                           <span
                             key={`base-${index}`}
                             onClick={() => handleDiceClick(index, currentPlayer)}
-                            className={`inline-flex items-center justify-center w-8 h-8 bg-white border-2 rounded-md text-sm font-bold shadow-sm transition-all ${
-                              shenjiAbilityActive || rerollMode ? 'cursor-pointer hover:bg-blue-100 hover:scale-110' : ''
+                            className={`inline-flex items-center justify-center w-8 h-8 border-2 rounded-md text-sm font-bold shadow-sm transition-all ${
+                              shenjiAbilityActive || rerollMode ? 'cursor-pointer hover:scale-110' : ''
                             } ${
-                              selectedDiceIndex === index ? 'border-purple-500 bg-purple-100 scale-110' : rerollMode ? 'border-orange-500' : 'border-blue-500'
+                              selectedDiceIndex === index ? 'border-bronze scale-110' : rerollMode ? 'border-imperial-gold' : 'border-imperial-jade'
                             }`}
+                          style={{ background: selectedDiceIndex === index ? 'rgba(120,0,200,0.25)' : 'rgba(13,5,0,0.8)', color: '#E8C84A' }}
                           >
                             {result}
                           </span>
@@ -1689,11 +1631,12 @@ export const GameBoard: React.FC = () => {
                             <span
                               key={`kill-${index}`}
                               onClick={() => handleDiceClick(actualIndex, currentPlayer)}
-                              className={`inline-flex items-center justify-center w-8 h-8 bg-white border-2 rounded-md text-sm font-bold shadow-sm transition-all ${
-                                shenjiAbilityActive || rerollMode ? 'cursor-pointer hover:bg-yellow-100 hover:scale-110' : ''
+                              className={`inline-flex items-center justify-center w-8 h-8 border-2 rounded-md text-sm font-bold shadow-sm transition-all ${
+                                shenjiAbilityActive || rerollMode ? 'cursor-pointer hover:scale-110' : ''
                               } ${
-                                selectedDiceIndex === actualIndex ? 'border-purple-500 bg-purple-100 scale-110' : rerollMode ? 'border-orange-500' : 'border-yellow-500'
+                                selectedDiceIndex === actualIndex ? 'border-bronze scale-110' : rerollMode ? 'border-imperial-gold' : 'border-imperial-gold'
                               }`}
+                              style={{ background: selectedDiceIndex === actualIndex ? 'rgba(120,0,200,0.25)' : 'rgba(13,5,0,0.8)', color: '#E8C84A' }}
                             >
                               {result}
                             </span>
@@ -1703,18 +1646,17 @@ export const GameBoard: React.FC = () => {
                         {Array.from({ length: lostDice }).map((_, index) => (
                           <span
                             key={`lost-${index}`}
-                            className="inline-flex items-center justify-center w-8 h-8 bg-gray-200 border-2 border-gray-400 rounded-md text-sm font-bold opacity-50 shadow-sm"
+                            className="inline-flex items-center justify-center w-8 h-8 border-2 border-imperial-gold-dark rounded-md text-sm font-bold opacity-40 shadow-sm"
+                            style={{ background: 'rgba(13,5,0,0.5)', color: 'rgba(201,162,39,0.3)' }}
                           >
                             ✕
                           </span>
                         ))}
                       </div>
-                      </div>
                     );
                   }
                   return null;
                 })()}
-              </div>
               {/* 太平将军天命结算结果面板 */}
               {(() => {
                 const currentGeneral = currentPlayer === Player.PLAYER1 ? player1General : player2General;
@@ -1722,22 +1664,22 @@ export const GameBoard: React.FC = () => {
                 if (!isTaipingTurn || !taipingTianmingActive) return null;
                 const currentDestiny = currentPlayer === Player.PLAYER1 ? player1DestinyValue : player2DestinyValue;
                 return (
-                  <div className="mb-3 p-3 bg-yellow-50 rounded-lg border-2 border-yellow-400">
-                    <h4 className="text-sm font-bold text-yellow-800 mb-2">🌟 天命结算结果</h4>
-                    <div className="text-xs space-y-1 text-yellow-900">
+                  <div className="mb-3 p-3 rounded-lg" style={{ background: 'rgba(13,5,0,0.6)', border: '1px solid rgba(201,162,39,0.4)' }}>
+                    <h4 className="text-sm font-chinese font-bold mb-2" style={{ color: '#C9A227' }}>天命结算结果</h4>
+                    <div className="text-xs space-y-1 font-chinese" style={{ color: 'rgba(245,230,200,0.7)' }}>
                       <div className="flex justify-between">
-                        <span>苍天骰：</span><span className="font-bold text-blue-600">{taipingTianmingCangtiandi}</span>
+                        <span>苍天骰：</span><span className="font-bold text-imperial-jade-light">{taipingTianmingCangtiandi}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span>黄天骰：</span><span className="font-bold text-yellow-600">{taipingTianmingHuangtian}</span>
+                        <span>黄天骰：</span><span className="font-bold text-imperial-gold-light">{taipingTianmingHuangtian}</span>
                       </div>
-                      <div className="flex justify-between border-t border-yellow-300 pt-1">
+                      <div className="flex justify-between pt-1" style={{ borderTop: '1px solid rgba(201,162,39,0.2)' }}>
                         <span>天命值：</span>
-                        <span className="font-bold">{taipingTianmingOldDestiny} + {taipingTianmingHuangtian} - {taipingTianmingCangtiandi} = <span className="text-purple-700">{currentDestiny}</span></span>
+                        <span className="font-bold">{taipingTianmingOldDestiny} + {taipingTianmingHuangtian} - {taipingTianmingCangtiandi} = <span className="text-bronze-light">{currentDestiny}</span></span>
                       </div>
                       <div className="flex justify-between">
                         <span>承载伤害：</span>
-                        <span className={`font-bold ${taipingTianmingDamage > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        <span className={`font-bold ${taipingTianmingDamage > 0 ? 'text-imperial-red-light' : 'text-imperial-jade-light'}`}>
                           {taipingTianmingDamage > 0 ? `扣${taipingTianmingDamage}血（力士过多）` : '无伤害'}
                         </span>
                       </div>
@@ -1746,7 +1688,9 @@ export const GameBoard: React.FC = () => {
                 );
               })()}
 
-              <div className="flex gap-3">
+              {/* 窄屏下让这排操作按钮独占一行：
+                  和信息块挤在同一行时会被压到换行（「结\束\回\合」）或撑出横向滚动条 */}
+              <div className={isNarrow ? "flex gap-2 w-full" : "flex gap-3"}>
                 {/* 部署阶段太平将军：苍天已死黄天当立初始化按钮 */}
                 {phase === GamePhase.DEPLOY && isMyTurn && (() => {
                   const hasTaiping = currentPlayer === Player.PLAYER1
@@ -1761,12 +1705,12 @@ export const GameBoard: React.FC = () => {
                       {!initDone ? (
                         <button
                           onClick={handleTaipingDeployInit}
-                          className="w-full px-6 py-3 rounded-lg font-bold shadow-md bg-gradient-to-r from-yellow-600 to-orange-600 text-white hover:from-yellow-700 hover:to-orange-700 hover:shadow-lg cursor-pointer transition-all"
+ className="btn-sy btn-sy-gold w-full px-6 py-3 rounded-lg font-bold whitespace-nowrap"
                         >
                           ⚡ 结算天命值（苍天已死，黄天当立）
                         </button>
                       ) : (
-                        <p className="text-center text-sm text-green-700 font-bold">✅ 初始天命已结算（+3点）</p>
+                        <p className="text-center text-sm panel-sy-title font-bold">✅ 初始天命已结算（+3点）</p>
                       )}
                     </div>
                   );
@@ -1786,7 +1730,7 @@ export const GameBoard: React.FC = () => {
                       <button
                         onClick={handleTaipingTianmingRoll}
                         disabled={taipingFushuiActive && taipingFushuiPlayer === currentPlayer}
-                        className="flex-1 px-6 py-3 rounded-lg font-bold shadow-md transition-all bg-gradient-to-r from-yellow-500 to-orange-500 text-white hover:from-yellow-600 hover:to-orange-600 hover:shadow-lg cursor-pointer disabled:bg-gray-300 disabled:cursor-not-allowed"
+ className="btn-sy btn-sy-gold flex-1 px-6 py-3 rounded-lg font-bold whitespace-nowrap"
                       >
                         结算天命
                       </button>
@@ -1796,7 +1740,7 @@ export const GameBoard: React.FC = () => {
                     return (
                       <button
                         onClick={handleTaipingTianmingConfirm}
-                        className="flex-1 px-6 py-3 rounded-lg font-bold shadow-md transition-all bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 hover:shadow-lg cursor-pointer"
+ className="btn-sy btn-sy-red flex-1 px-6 py-3 rounded-lg font-bold whitespace-nowrap"
                       >
                         结束回合
                       </button>
@@ -1807,11 +1751,7 @@ export const GameBoard: React.FC = () => {
                       <button
                         onClick={handleEndTurn}
                         disabled={!isMyTurn}
-                        className={`flex-1 px-6 py-3 rounded-lg font-bold shadow-md transition-all ${
-                          isMyTurn
-                            ? 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 hover:shadow-lg cursor-pointer'
-                            : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                        }`}
+                        className="btn-sy btn-sy-red flex-1 px-6 py-3 rounded-lg font-bold whitespace-nowrap"
                       >
                         结束回合
                       </button>
@@ -1821,7 +1761,7 @@ export const GameBoard: React.FC = () => {
                 {isOnlineMode && (
                   <button
                     onClick={handleSurrender}
-                    className="px-6 py-3 rounded-lg font-bold shadow-md bg-gradient-to-r from-gray-600 to-gray-700 text-white hover:from-gray-700 hover:to-gray-800 hover:shadow-lg cursor-pointer transition-all"
+ className="btn-sy btn-sy-ghost px-6 py-3 rounded-lg font-bold whitespace-nowrap"
                   >
                     认输
                   </button>
@@ -1831,47 +1771,44 @@ export const GameBoard: React.FC = () => {
           </div>
         </div>
 
-        <div className={isMobile ? "flex flex-col gap-4" : "grid grid-cols-4 gap-4"}>
-          {/* 地图区域 */}
+        <div
+          className={hasSideRail ? "flex gap-4 flex-1 min-h-0" : "flex flex-col gap-3 flex-1 min-h-0"}
+        >
+          {/* 棋盘区
+           *
+           * 尺寸公式见 docs/layout-spec.md §3.1：容器量自身尺寸（container-type: size），
+           * 棋盘取 min(可用宽, 可用高 × 长宽比)，既吃满空间又永不溢出。
+           * 旧实现是宽屏固定 height:700px、窄屏 aspectRatio '9.66/8.5' + maxHeight 62vh，
+           * 前者让棋盘在任何宽度下都一样大，后者的比值还和真实 viewBox 不符。 */}
           <div
-            className={isMobile ? "bg-white rounded-lg shadow-lg p-2" : "col-span-3 bg-white rounded-lg shadow-lg p-4"}
+            className={hasSideRail
+              ? "sy-board-wrap rounded-lg p-2 md:p-3 flex-1 min-h-0 min-w-0"
+              : "sy-board-wrap sy-board-wrap--width rounded-lg p-2 flex-none min-w-0"}
             style={{
-              height: isMobile ? '400px' : '700px',
-              position: 'relative',
-              touchAction: 'none' // 防止移动端滚动干扰
+              touchAction: 'none', // 防止移动端滚动干扰
+              background: 'rgba(13,5,0,0.6)',
+              border: '1px solid rgba(201,162,39,0.2)',
             }}
           >
-            <HexMap
-              radius={5}
-              hexSize={isMobile ? 30 : 40}
-              onHexClick={handleHexClick}
-              highlightedHexes={highlightedHexes}
-            />
-            {/* 渲染所有单位 */}
-            <svg
-              width="100%"
-              height="100%"
-              viewBox={(() => {
-                const radius = 5;
-                const hexSize = isMobile ? 30 : 40;
-                const maxX = hexSize * Math.sqrt(3) * radius;
-                const maxY = hexSize * 1.5 * radius;
-                const padding = hexSize;
-                const minX = -maxX - padding;
-                const minY = -maxY - padding;
-                const width = (maxX + padding) * 2;
-                const height = (maxY + padding) * 2;
-                return `${minX} ${minY} ${width} ${height}`;
-              })()}
-              style={{
-                position: 'absolute',
-                top: isMobile ? '0.5rem' : '1rem',
-                left: isMobile ? '0.5rem' : '1rem',
-                width: isMobile ? 'calc(100% - 1rem)' : 'calc(100% - 2rem)',
-                height: isMobile ? 'calc(100% - 1rem)' : 'calc(100% - 2rem)',
-                pointerEvents: 'none'
-              }}
-            >
+            <div className="sy-board">
+              <HexMap
+                radius={5}
+                hexSize={isNarrow ? 30 : 40}
+                onHexClick={handleHexClick}
+                highlightedHexes={highlightedHexes}
+                /* 攻击类的高亮走朱色，移动走青色。
+                 * 原来两者共用同一套填充，攻击范围显示成"可移动"的青色，是实打实的误导。 */
+                highlightKind={actionMode === 'attack' || actionMode === 'rende-convert' ? 'attack' : 'move'}
+                /* 范围内真有敌军的格子加深 + 挂矛尖。
+                 * 「可攻击 vs 可击杀」（空心/实心矛尖）要等服务端下发 lethal，见 §7 */
+                threatHexes={
+                  actionMode === 'attack'
+                    ? highlightedHexes.filter(h =>
+                        Object.values(units).some(u =>
+                          u.owner !== currentPlayer && hexEquals(u.position, h)))
+                    : []
+                }
+              >
               {/* 渲染射击路径 */}
               {actionMode === 'rotate' && rotationPaths.size > 0 && (() => {
                 const pathColors = [
@@ -1898,13 +1835,13 @@ export const GameBoard: React.FC = () => {
                   return (
                     <g key={dir}>
                       {path.map((hex, i) => {
-                        const pixel = hexToPixel(hex, isMobile ? 30 : 40);
+                        const pixel = hexToPixel(hex, isNarrow ? 30 : 40);
                         return (
                           <circle
                             key={`${hex.q}-${hex.r}-${hex.s}`}
                             cx={pixel.x}
                             cy={pixel.y}
-                            r={isMobile ? 11 : 15}
+                            r={isNarrow ? 11 : 15}
                             fill={pathColors[index]}
                             opacity={0.4}
                             style={{ pointerEvents: 'auto', cursor: 'pointer' }}
@@ -1922,13 +1859,15 @@ export const GameBoard: React.FC = () => {
 
               {/* 渲染机关单位占用的格子 */}
               {Object.values(units).filter(u => u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT).map(unit => {
-                const hexSize = isMobile ? 30 : 40;
+                const hexSize = isNarrow ? 30 : 40;
                 const machineTypeStr = unit.type === UnitType.BALLISTA ? 'ballista' : unit.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
                 const isPlayerOne = unit.owner === Player.PLAYER1;
                 const occupiedHexes = getMachineOccupiedHexes(unit.position, machineTypeStr, isPlayerOne);
 
                 return (
-                  <g key={`machine-${unit.id}`} opacity={0.3}>
+                  // pointerEvents none：以前外层 svg 整体不收事件，现在棋子和热区同在一个
+                  // SVG 里，这层装饰若不让开就会挡住它覆盖的格子
+                  <g key={`machine-${unit.id}`} opacity={0.3} pointerEvents="none">
                     {/* 渲染除中心位置外的所有占用格子 */}
                     {occupiedHexes.slice(1).map((hex, index) => {
                       const pixel = hexToPixel(hex, hexSize);
@@ -1937,8 +1876,8 @@ export const GameBoard: React.FC = () => {
                           key={`${unit.id}-hex-${index}`}
                           cx={pixel.x}
                           cy={pixel.y}
-                          r={isMobile ? 9 : 12}
-                          fill={unit.owner === Player.PLAYER1 ? '#fbbf24' : '#60a5fa'}
+                          r={isNarrow ? 9 : 12}
+                          fill={unit.owner === Player.PLAYER1 ? IMPERIAL.redLight : '#3F8A66'}
                           className="machine-hex-indicator"
                         />
                       );
@@ -1947,30 +1886,93 @@ export const GameBoard: React.FC = () => {
                 );
               })}
 
-              {Object.values(units).map(unit => (
-                <g key={unit.id} style={{ pointerEvents: 'auto' }}>
-                  <UnitPiece
-                    unit={unit}
-                    hexSize={isMobile ? 30 : 40}
-                    onClick={() => handleUnitClick(unit.id)}
-                    isSelected={unit.id === selectedUnitId}
+              {Object.values(units).map(unit => {
+                /* 棋子上的「移动力下弧」与「已行动」都从服务端下发的 validActions 推出，
+                 * 不在客户端按兵种硬编码一张移动力表 —— 那份数值住在服务端，两边会漂移。
+                 * 见 docs/board-art-spec.md §7 */
+                const moves = getServerMoves(unit.id);
+                const moveSteps = moves.length
+                  ? Math.max(...moves.map(m => m.steps ?? 1))
+                  : undefined;
+                const hasAttack =
+                  getServerAttackTargets(unit.id).length > 0 ||
+                  getServerAttackHexes(unit.id).length > 0;
+                return (
+                  <g key={unit.id} style={{ pointerEvents: 'auto' }}>
+                    <UnitPiece
+                      unit={unit}
+                      hexSize={isNarrow ? 30 : 40}
+                      onClick={() => handleUnitClick(unit.id)}
+                      isSelected={unit.id === selectedUnitId}
+                      isPending={pending?.unitId === unit.id}
+                      isRejected={rejectedUnitId === unit.id}
+                      moveSteps={moveSteps}
+                      isSpent={unit.actionsThisTurn > 0 && !moveSteps && !hasAttack}
+                    />
+                  </g>
+                );
+              })}
+
+              {/* 移动指令待确认：在目标格画半透明幽灵棋子，点下去就有反应 */}
+              {pending?.kind === 'move' && units[pending.unitId] && (
+                <UnitPiece
+                  unit={{ ...units[pending.unitId], position: pending.target }}
+                  hexSize={isNarrow ? 30 : 40}
+                  isGhost
+                />
+              )}
+
+              {/* 攻击指令待确认：目标格上画朱红脉冲环 */}
+              {pending?.kind === 'attack' && (() => {
+                const c = hexToPixel(pending.target, isNarrow ? 30 : 40);
+                return (
+                  <circle
+                    className="attack-pending-ring"
+                    cx={c.x}
+                    cy={c.y}
+                    r={(isNarrow ? 30 : 40) * 0.55}
+                    fill="none"
+                    stroke={IMPERIAL.redLight}
+                    strokeWidth={3}
+                    strokeDasharray="6 4"
                   />
-                </g>
-              ))}
-            </svg>
+                );
+              })()}
+              </HexMap>
+            </div>
           </div>
 
-          {/* 右侧操作面板 */}
-          <div className="space-y-4 overflow-y-auto" style={{ maxHeight: isMobile ? 'none' : '700px' }}>
+          {/* 右侧操作面板
+           * 旧实现是 maxHeight:700px + overflow-y-auto —— 820×1180 这类高视口下
+           * 视口有 1180 高、面板却硬截到 700，将军技能按钮被切掉一半，要在面板内二次滚动。
+           * 现在跟着行高走，内部自己滚。见 docs/layout-spec.md §L6 */}
+          <div
+            className="space-y-3 overflow-y-auto min-h-0"
+            style={hasSideRail
+              ? { flex: '0 0 clamp(264px, 22%, 400px)' }
+              // 堆叠时：棋盘按宽度定高后，剩下的高度全给操作面板，面板自己滚
+              : { flex: '1 1 auto' }}
+          >
             {/* 选中单位信息 */}
             {selectedUnit && (
-              <div className="bg-white rounded-lg shadow-lg p-4">
-                <h3 className="text-lg font-bold mb-2">选中单位</h3>
+              <div className="rounded-lg p-4" style={{ background: 'rgba(13,5,0,0.7)', border: '1px solid rgba(201,162,39,0.2)' }}>
+                <h3 className="text-lg font-ancient tracking-wider mb-2" style={{ color: '#C9A227' }}>选中单位</h3>
                 <div className="space-y-2">
-                  <p><strong>类型:</strong> {selectedUnit.type}</p>
-                  <p><strong>生命:</strong> {selectedUnit.hp}/{selectedUnit.maxHp}</p>
-                  <p>
-                    <strong>行动:</strong> {selectedUnit.actionsThisTurn}/
+                  {/* 这三行原来没有任何颜色类，继承浏览器默认 rgb(0,0,0)，
+                    * 写在 rgba(13,5,0,0.7) 的面板上实测对比度 1.04:1（AA 要求 4.5:1），
+                    * 等于不可见；而且「类型」直接把枚举值 archer / general 显示给玩家。
+                    * 见 docs/layout-spec.md §6 验收项 8 */}
+                  <p style={{ color: 'rgba(245,230,200,0.85)' }}>
+                    <strong style={{ color: 'rgba(201,162,39,0.85)' }}>类型:</strong>{' '}
+                    {UNIT_NAME[selectedUnit.type] ?? selectedUnit.type}
+                  </p>
+                  <p style={{ color: 'rgba(245,230,200,0.85)' }}>
+                    <strong style={{ color: 'rgba(201,162,39,0.85)' }}>生命:</strong>{' '}
+                    {selectedUnit.hp}/{selectedUnit.maxHp}
+                  </p>
+                  <p style={{ color: 'rgba(245,230,200,0.85)' }}>
+                    <strong style={{ color: 'rgba(201,162,39,0.85)' }}>行动:</strong>{' '}
+                    {selectedUnit.actionsThisTurn}/
                     {(() => {
                       // 弩车特殊处理：行动次数上限为1
                       if (selectedUnit.type === UnitType.BALLISTA) {
@@ -2052,7 +2054,7 @@ export const GameBoard: React.FC = () => {
                         return false;
                       })()
                     }
-                    className="w-full px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg shadow-md hover:from-green-600 hover:to-green-700 hover:shadow-lg disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-semibold transition-all"
+ className="btn-sy btn-sy-jade w-full px-4 py-2 rounded-lg text-sm font-semibold"
                   >
                     移动 {!isMyTurn ? '(非你的回合)' : ('cannotMoveNextTurn' in selectedUnit && selectedUnit.cannotMoveNextTurn) ? '(被定身)' : phase === GamePhase.DEPLOY && currentPlayer === Player.PLAYER1 ? '(部署阶段不可用)' : ''}
                   </button>
@@ -2082,7 +2084,7 @@ export const GameBoard: React.FC = () => {
 
                           return false;
                         })()}
-                        className="w-full px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-lg shadow-md hover:from-orange-600 hover:to-orange-700 hover:shadow-lg disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-bold transition-all"
+ className="btn-sy btn-sy-red w-full px-4 py-2 rounded-lg text-sm font-bold"
                       >
                         扇形攻击（消耗3点）
                         {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可用)' : ''}
@@ -2107,13 +2109,13 @@ export const GameBoard: React.FC = () => {
 
                       {/* 无双扇形攻击控制面板 */}
                       {wushuangFanAttackActive && (
-                        <div className="mt-3 p-3 bg-orange-50 rounded-lg border-2 border-orange-300">
-                          <h4 className="text-sm font-bold mb-2 text-orange-700">扇形攻击进行中</h4>
+                        <div className="mt-3 p-3 panel-sy rounded-lg">
+                          <h4 className="text-sm font-bold mb-2 panel-sy-title">扇形攻击进行中</h4>
 
                           {/* 第一阶段：选择方向 */}
                           {wushuangAttackPhase === 'select-direction' && (
                             <div className="space-y-2">
-                              <p className="text-xs text-gray-700 text-center">
+                              <p className="text-xs panel-sy-text text-center">
                                 选择攻击方向（120°扇形，消耗3点行动值）
                               </p>
 
@@ -2122,48 +2124,48 @@ export const GameBoard: React.FC = () => {
                                 <button onClick={() => handleWushuangSelectDirection(Direction.NORTH_WEST)}
                                   className={`absolute left-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${
                                     wushuangSelectedDirection === Direction.NORTH_WEST
-                                      ? 'bg-orange-600 text-white shadow-lg'
-                                      : 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+                                      ? 'btn-sy-dir btn-sy-dir-on'
+                                      : 'btn-sy-dir'
                                   }`}>
                                   ↖
                                 </button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.NORTH_EAST)}
                                   className={`absolute right-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${
                                     wushuangSelectedDirection === Direction.NORTH_EAST
-                                      ? 'bg-orange-600 text-white shadow-lg'
-                                      : 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+                                      ? 'btn-sy-dir btn-sy-dir-on'
+                                      : 'btn-sy-dir'
                                   }`}>
                                   ↗
                                 </button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.WEST)}
                                   className={`absolute left-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${
                                     wushuangSelectedDirection === Direction.WEST
-                                      ? 'bg-orange-600 text-white shadow-lg'
-                                      : 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+                                      ? 'btn-sy-dir btn-sy-dir-on'
+                                      : 'btn-sy-dir'
                                   }`}>
                                   ←
                                 </button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.EAST)}
                                   className={`absolute right-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${
                                     wushuangSelectedDirection === Direction.EAST
-                                      ? 'bg-orange-600 text-white shadow-lg'
-                                      : 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+                                      ? 'btn-sy-dir btn-sy-dir-on'
+                                      : 'btn-sy-dir'
                                   }`}>
                                   →
                                 </button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.SOUTH_WEST)}
                                   className={`absolute left-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${
                                     wushuangSelectedDirection === Direction.SOUTH_WEST
-                                      ? 'bg-orange-600 text-white shadow-lg'
-                                      : 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+                                      ? 'btn-sy-dir btn-sy-dir-on'
+                                      : 'btn-sy-dir'
                                   }`}>
                                   ↙
                                 </button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.SOUTH_EAST)}
                                   className={`absolute right-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${
                                     wushuangSelectedDirection === Direction.SOUTH_EAST
-                                      ? 'bg-orange-600 text-white shadow-lg'
-                                      : 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+                                      ? 'btn-sy-dir btn-sy-dir-on'
+                                      : 'btn-sy-dir'
                                   }`}>
                                   ↘
                                 </button>
@@ -2173,13 +2175,13 @@ export const GameBoard: React.FC = () => {
                                 <button
                                   onClick={executeWushuangFanAttack}
                                   disabled={wushuangSelectedDirection === null}
-                                  className="flex-1 px-2 py-1 bg-orange-500 text-white rounded font-bold hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-xs"
+                                  className="flex-1 px-2 py-1 btn-sy btn-sy-gold rounded text-xs"
                                 >
                                   确认攻击
                                 </button>
                                 <button
                                   onClick={cancelWushuangFanAttack}
-                                  className="px-2 py-1 bg-gray-500 text-white rounded font-bold hover:bg-gray-600 transition-colors text-xs"
+                                  className="px-2 py-1 btn-sy btn-sy-ghost rounded text-xs"
                                 >
                                   取消
                                 </button>
@@ -2190,23 +2192,23 @@ export const GameBoard: React.FC = () => {
                           {/* 第二阶段：消耗2点行动值掷骰 */}
                           {wushuangAttackPhase === 'second-roll' && (
                             <div className="space-y-2">
-                              <div className="p-2 bg-white rounded border border-orange-300">
-                                <p className="text-xs font-bold text-orange-800">✓ 第一次攻击完成</p>
+                              <div className="p-2 rounded" style={{ background: 'rgba(200,80,0,0.1)', border: '1px solid rgba(200,80,0,0.3)' }}>
+                                <p className="text-xs font-bold text-imperial-gold">✓ 第一次攻击完成</p>
                                 {wushuangDiceRolls.length > 0 && (
                                   <div className="flex items-center gap-1 mt-1">
-                                    <span className="text-xs text-gray-600">已掷骰：</span>
+                                    <span className="text-xs" style={{ color: 'rgba(201,162,39,0.5)' }}>已掷骰：</span>
                                     {wushuangDiceRolls.map((roll, i) => (
-                                      <span key={i} className="inline-flex items-center justify-center w-6 h-6 bg-white border-2 border-orange-400 rounded text-xs font-bold text-orange-600">
+                                      <span key={i} className="inline-flex items-center justify-center w-6 h-6 border-2 border-imperial-gold rounded text-xs font-bold text-imperial-gold" style={{ background: 'rgba(13,5,0,0.8)' }}>
                                         {roll}
                                       </span>
                                     ))}
                                   </div>
                                 )}
-                                <p className="text-xs text-orange-700 mt-1">
+                                <p className="text-xs panel-sy-title mt-1">
                                   消耗<span className="font-bold">2点</span>掷骰，≤2可再攻击
                                 </p>
                                 {currentActionPoints < 2 && (
-                                  <p className="text-xs text-red-600 mt-1 font-semibold">
+                                  <p className="text-xs text-imperial-red-light mt-1 font-semibold">
                                     ⚠️ 行动值不足
                                   </p>
                                 )}
@@ -2216,13 +2218,13 @@ export const GameBoard: React.FC = () => {
                                 <button
                                   onClick={executeWushuangSecondRoll}
                                   disabled={currentActionPoints < 2 || wushuangDiceRolls.length > 0}
-                                  className="flex-1 px-2 py-1 bg-blue-500 text-white rounded font-bold hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-xs"
+                                  className="flex-1 px-2 py-1 btn-sy btn-sy-jade rounded text-xs"
                                 >
                                   {wushuangDiceRolls.length > 0 ? '已掷骰' : (currentActionPoints < 2 ? '行动值不足' : '掷骰(消耗2点)')}
                                 </button>
                                 <button
                                   onClick={cancelWushuangFanAttack}
-                                  className="px-2 py-1 bg-gray-500 text-white rounded font-bold hover:bg-gray-600 transition-colors text-xs"
+                                  className="px-2 py-1 btn-sy btn-sy-ghost rounded text-xs"
                                 >
                                   结束
                                 </button>
@@ -2233,36 +2235,36 @@ export const GameBoard: React.FC = () => {
                           {/* 第二阶段：选择第二次攻击方向 */}
                           {wushuangAttackPhase === 'second-attack' && (
                             <div className="space-y-2">
-                              <p className="text-xs text-gray-700 text-center">
+                              <p className="text-xs panel-sy-text text-center">
                                 选择第二次攻击方向
                               </p>
 
                               <div className="relative" style={{ height: '120px' }}>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.NORTH_WEST)}
-                                  className={`absolute left-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.NORTH_WEST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>↖</button>
+                                  className={`absolute left-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.NORTH_WEST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>↖</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.NORTH_EAST)}
-                                  className={`absolute right-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.NORTH_EAST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>↗</button>
+                                  className={`absolute right-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.NORTH_EAST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>↗</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.WEST)}
-                                  className={`absolute left-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.WEST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>←</button>
+                                  className={`absolute left-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.WEST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>←</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.EAST)}
-                                  className={`absolute right-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.EAST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>→</button>
+                                  className={`absolute right-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.EAST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>→</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.SOUTH_WEST)}
-                                  className={`absolute left-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.SOUTH_WEST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>↙</button>
+                                  className={`absolute left-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.SOUTH_WEST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>↙</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.SOUTH_EAST)}
-                                  className={`absolute right-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.SOUTH_EAST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>↘</button>
+                                  className={`absolute right-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.SOUTH_EAST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>↘</button>
                               </div>
 
                               <div className="flex gap-2">
                                 <button
                                   onClick={executeSecondFanAttack}
                                   disabled={wushuangSelectedDirection === null}
-                                  className="flex-1 px-2 py-1 bg-orange-500 text-white rounded font-bold hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-xs"
+                                  className="flex-1 px-2 py-1 btn-sy btn-sy-gold rounded text-xs"
                                 >
                                   确认第二次攻击
                                 </button>
                                 <button
                                   onClick={cancelWushuangFanAttack}
-                                  className="px-2 py-1 bg-gray-500 text-white rounded font-bold hover:bg-gray-600 transition-colors text-xs"
+                                  className="px-2 py-1 btn-sy btn-sy-ghost rounded text-xs"
                                 >
                                   取消
                                 </button>
@@ -2273,19 +2275,19 @@ export const GameBoard: React.FC = () => {
                           {/* 第三阶段：消耗1点行动值掷骰 */}
                           {wushuangAttackPhase === 'third-roll' && (
                             <div className="space-y-2">
-                              <div className="p-2 bg-white rounded border border-orange-300">
-                                <p className="text-xs font-bold text-orange-800">✓ 第二阶段完成</p>
+                              <div className="p-2 rounded" style={{ background: 'rgba(200,80,0,0.1)', border: '1px solid rgba(200,80,0,0.3)' }}>
+                                <p className="text-xs font-bold text-imperial-gold">✓ 第二阶段完成</p>
                                 {wushuangDiceRolls.length > 0 && (
                                   <div className="flex items-center gap-1 mt-1">
-                                    <span className="text-xs text-gray-600">之前：</span>
+                                    <span className="text-xs" style={{ color: 'rgba(201,162,39,0.5)' }}>之前：</span>
                                     {wushuangDiceRolls.map((roll, i) => (
-                                      <span key={i} className="inline-flex items-center justify-center w-5 h-5 bg-white border-2 border-orange-400 rounded text-xs font-bold text-orange-600">
+                                      <span key={i} className="inline-flex items-center justify-center w-5 h-5 border-2 border-imperial-gold rounded text-xs font-bold text-imperial-gold" style={{ background: 'rgba(13,5,0,0.8)' }}>
                                         {roll}
                                       </span>
                                     ))}
                                   </div>
                                 )}
-                                <p className="text-xs text-orange-700 mt-1">
+                                <p className="text-xs panel-sy-title mt-1">
                                   消耗<span className="font-bold">1点</span>掷骰，=1可再攻击
                                 </p>
                               </div>
@@ -2294,13 +2296,13 @@ export const GameBoard: React.FC = () => {
                                 <button
                                   onClick={executeWushuangThirdRoll}
                                   disabled={currentActionPoints < 1 || wushuangDiceRolls.length > 1}
-                                  className="flex-1 px-2 py-1 bg-purple-500 text-white rounded font-bold hover:bg-purple-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-xs"
+                                  className="flex-1 px-2 py-1 btn-sy btn-sy-bronze rounded text-xs"
                                 >
                                   {wushuangDiceRolls.length > 1 ? '已掷骰' : (currentActionPoints < 1 ? '行动值不足' : '掷骰(消耗1点)')}
                                 </button>
                                 <button
                                   onClick={cancelWushuangFanAttack}
-                                  className="px-2 py-1 bg-gray-500 text-white rounded font-bold hover:bg-gray-600 transition-colors text-xs"
+                                  className="px-2 py-1 btn-sy btn-sy-ghost rounded text-xs"
                                 >
                                   结束
                                 </button>
@@ -2311,36 +2313,36 @@ export const GameBoard: React.FC = () => {
                           {/* 第三阶段：选择第三次攻击方向 */}
                           {wushuangAttackPhase === 'third-attack' && (
                             <div className="space-y-2">
-                              <p className="text-xs text-gray-700 text-center">
+                              <p className="text-xs panel-sy-text text-center">
                                 选择第三次攻击方向
                               </p>
 
                               <div className="relative" style={{ height: '120px' }}>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.NORTH_WEST)}
-                                  className={`absolute left-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.NORTH_WEST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>↖</button>
+                                  className={`absolute left-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.NORTH_WEST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>↖</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.NORTH_EAST)}
-                                  className={`absolute right-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.NORTH_EAST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>↗</button>
+                                  className={`absolute right-1 top-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.NORTH_EAST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>↗</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.WEST)}
-                                  className={`absolute left-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.WEST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>←</button>
+                                  className={`absolute left-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.WEST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>←</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.EAST)}
-                                  className={`absolute right-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.EAST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>→</button>
+                                  className={`absolute right-1 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.EAST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>→</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.SOUTH_WEST)}
-                                  className={`absolute left-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.SOUTH_WEST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>↙</button>
+                                  className={`absolute left-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.SOUTH_WEST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>↙</button>
                                 <button onClick={() => handleWushuangSelectDirection(Direction.SOUTH_EAST)}
-                                  className={`absolute right-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.SOUTH_EAST ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-800 hover:bg-orange-200'}`}>↘</button>
+                                  className={`absolute right-1 bottom-1 px-2 py-1 text-xs rounded font-semibold transition-all ${wushuangSelectedDirection === Direction.SOUTH_EAST ? 'btn-sy-dir btn-sy-dir-on' : 'btn-sy-dir'}`}>↘</button>
                               </div>
 
                               <div className="flex gap-2">
                                 <button
                                   onClick={executeThirdFanAttack}
                                   disabled={wushuangSelectedDirection === null}
-                                  className="flex-1 px-2 py-1 bg-orange-500 text-white rounded font-bold hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-xs"
+                                  className="flex-1 px-2 py-1 btn-sy btn-sy-gold rounded text-xs"
                                 >
                                   确认第三次攻击
                                 </button>
                                 <button
                                   onClick={cancelWushuangFanAttack}
-                                  className="px-2 py-1 bg-gray-500 text-white rounded font-bold hover:bg-gray-600 transition-colors text-xs"
+                                  className="px-2 py-1 btn-sy btn-sy-ghost rounded text-xs"
                                 >
                                   取消
                                 </button>
@@ -2356,14 +2358,12 @@ export const GameBoard: React.FC = () => {
                       <button
                         onClick={() => {
                           if (!selectedUnit) return;
-                          // 贯穿攻击：显示射击路径
-                          const isPlayerOne = selectedUnit.owner === Player.PLAYER1;
-                          const shootingPath = getBallistaVerticalPath(selectedUnit.position, isPlayerOne, 5);
-                          setHighlightedHexes(shootingPath);
+                          // 贯穿路径由服务端下发，与校验同一套计算
+                          setHighlightedHexes(getServerAttackHexes(selectedUnit.id));
                           setActionMode('attack');
                         }}
                         disabled={!isMyTurn || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1}
-                        className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+ className="btn-sy btn-sy-red w-full px-4 py-2 rounded-lg text-sm"
                       >
                         贯穿攻击 (射击) {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可攻击)' : ''}
                       </button>
@@ -2411,14 +2411,14 @@ export const GameBoard: React.FC = () => {
                           setActionMode('attack');
                         }}
                         disabled={!isMyTurn || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1}
-                        className="w-full px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+ className="btn-sy btn-sy-red w-full px-4 py-2 rounded-lg text-sm"
                       >
                         近战攻击 {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可攻击)' : ''}
                       </button>
                     </div>
                   ) : selectedUnit.type === UnitType.CHARIOT ? (
                     /* 战车：只能移动碾压，没有攻击按钮 */
-                    <div className="text-sm text-gray-600 text-center py-2">
+                    <div className="text-sm text-imperial-parchment-dark text-center py-2">
                       战车通过移动碾压敌人
                     </div>
                   ) : selectedUnit.type === UnitType.CATAPULT ? (
@@ -2432,22 +2432,10 @@ export const GameBoard: React.FC = () => {
                           if (isOnlineMode) {
                             colyseusService.catapultCharge(selectedUnit.id);
                             addLog('投石车蓄力', 'ability');
-                          } else {
-                            // 单机模式：本地处理蓄力
-                            const currentCharge = (selectedUnit as any).chargeLevel || 0;
-                            if (currentCharge < 2) {
-                              updateUnit(selectedUnit.id, {
-                                chargeLevel: currentCharge + 1,
-                                hasActedThisTurn: true,
-                                actionsThisTurn: selectedUnit.actionsThisTurn + 1,
-                              } as any);
-                              consumeActionPoint(currentPlayer);
-                              addLog(`投石车蓄力 (层数: ${currentCharge + 1}/2)`, 'ability');
-                            }
                           }
                         }}
                         disabled={!isMyTurn || currentActionPoints < 1 || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1 || ((selectedUnit as any).chargeLevel >= 2)}
-                        className="w-full px-4 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white rounded-lg shadow-md hover:from-yellow-600 hover:to-yellow-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+ className="btn-sy btn-sy-gold btn-sy-ability w-full px-4 py-2 rounded-lg text-sm"
                       >
                         蓄力 {`(${(selectedUnit as any).chargeLevel || 0}/2)`} {!isMyTurn ? '(非你的回合)' : ''}
                       </button>
@@ -2455,13 +2443,12 @@ export const GameBoard: React.FC = () => {
                       <button
                         onClick={() => {
                           if (!selectedUnit) return;
-                          // 显示射击路径
-                          const shootingPath = getShootingPath(selectedUnit.position, selectedUnit.direction, 5);
-                          setHighlightedHexes(shootingPath);
+                          // 射击路径由服务端下发，与校验同一套计算
+                          setHighlightedHexes(getServerAttackHexes(selectedUnit.id));
                           setActionMode('attack');
                         }}
                         disabled={!isMyTurn || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1}
-                        className="w-full px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+ className="btn-sy btn-sy-red w-full px-4 py-2 rounded-lg text-sm"
                       >
                         投射攻击 {`(蓄力${(selectedUnit as any).chargeLevel || 0}层)`} {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可攻击)' : ''}
                       </button>
@@ -2475,7 +2462,7 @@ export const GameBoard: React.FC = () => {
                           selectedUnit.actionsThisTurn >= 1 ||
                           ('cannotRotateNextTurn' in selectedUnit && selectedUnit.cannotRotateNextTurn === true)
                         }
-                        className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+ className="btn-sy btn-sy-bronze w-full px-4 py-2 rounded-lg text-sm"
                       >
                         转向 {!isMyTurn ? '(非你的回合)' : ('cannotRotateNextTurn' in selectedUnit && selectedUnit.cannotRotateNextTurn) ? '(被定身)' : phase === GamePhase.DEPLOY ? '(部署阶段不可用)' : ''}
                       </button>
@@ -2485,7 +2472,7 @@ export const GameBoard: React.FC = () => {
                     <button
                       onClick={handleShowAttacks}
                       disabled={!isMyTurn || currentActionPoints < 1 || phase === GamePhase.DEPLOY || selectedUnit.hasAttacked || selectedUnit.actionsThisTurn >= 2}
-                      className="w-full px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+ className="btn-sy btn-sy-red w-full px-4 py-2 rounded-lg text-sm"
                     >
                       攻击 {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可攻击)' : ''}
                     </button>
@@ -2503,7 +2490,7 @@ export const GameBoard: React.FC = () => {
                         selectedUnit.actionsThisTurn >= 2 ||
                         ('cannotRotateNextTurn' in selectedUnit && selectedUnit.cannotRotateNextTurn === true)
                       }
-                      className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+ className="btn-sy btn-sy-gold w-full px-4 py-2 rounded-lg text-sm"
                     >
                       {actionMode === 'rotate' ? '选择射击方向' : '转向 (显示射程)'}
                       {!isMyTurn
@@ -2523,19 +2510,36 @@ export const GameBoard: React.FC = () => {
               </div>
             )}
 
-            {/* 部署面板 - 所有阶段都可以部署 */}
-            <div className="bg-white rounded-lg shadow-lg p-4">
-              <h3 className="text-lg font-bold mb-2">部署单位</h3>
-              <p className="text-xs text-gray-600 mb-3">
-                {actionMode === 'deploy'
-                  ? '点击起始区部署单位'
-                  : '选择要部署的单位类型'}
-              </p>
+            {/* 部署面板
+              *
+              * 中局补兵是**真机制**（handleStartDeploy 由行动点闸控），所以行动阶段不能把它藏掉。
+              * 改成可折叠：部署阶段默认展开，行动阶段默认收起并在标题上带剩余兵力摘要；
+              * 全部兵力部署完就整块不渲染。既不占右栏高度，也没动功能。 */}
+            {(remainingCounts.general + remainingCounts.infantry + remainingCounts.cavalry + remainingCounts.archer > 0) && (
+            <details
+              className="rounded-lg p-4 sy-collapse"
+              open={phase === GamePhase.DEPLOY || actionMode === 'deploy'}
+              style={{ background: 'rgba(13,5,0,0.7)', border: '1px solid rgba(201,162,39,0.2)' }}
+            >
+              <summary className="cursor-pointer list-none flex items-baseline gap-2">
+                <span className="text-lg font-ancient tracking-wider" style={{ color: '#C9A227' }}>部署单位</span>
+                <span className="text-xs font-chinese" style={{ color: 'rgba(201,162,39,0.45)' }}>
+                  {actionMode === 'deploy'
+                    ? '点击起始区放置'
+                    : [
+                        remainingCounts.general > 0 ? `将${remainingCounts.general}` : '',
+                        remainingCounts.infantry > 0 ? `步${remainingCounts.infantry}` : '',
+                        remainingCounts.cavalry > 0 ? `骑${remainingCounts.cavalry}` : '',
+                        remainingCounts.archer > 0 ? `弓${remainingCounts.archer}` : '',
+                      ].filter(Boolean).join(' · ')}
+                </span>
+              </summary>
+              <div className="mt-3">
 
               {actionMode === 'deploy' && (
                 <button
                   onClick={handleCancelDeploy}
-                  className="w-full px-4 py-2 mb-3 bg-gradient-to-r from-gray-500 to-gray-600 text-white rounded-lg shadow-md hover:from-gray-600 hover:to-gray-700 hover:shadow-lg text-sm font-semibold transition-all"
+ className="btn-sy btn-sy-ghost w-full px-4 py-2 mb-3 rounded-lg text-sm font-semibold"
                 >
                   取消部署
                 </button>
@@ -2544,7 +2548,7 @@ export const GameBoard: React.FC = () => {
               <div className="space-y-2">
                 {/* 将军按钮 - 优先推荐 */}
                 <button
-                  className="w-full px-4 py-2 bg-gradient-to-r from-yellow-500 via-amber-500 to-orange-500 text-white rounded-lg shadow-lg hover:from-yellow-600 hover:via-amber-600 hover:to-orange-600 hover:shadow-xl text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all relative overflow-hidden"
+ className="btn-sy btn-sy-gold w-full px-4 py-2 rounded-lg text-sm font-bold relative overflow-hidden"
                   onClick={() => handleStartDeploy(UnitType.GENERAL)}
                   disabled={!isMyTurn || remainingCounts.general <= 0 || currentActionPoints < 1}
                 >
@@ -2557,28 +2561,30 @@ export const GameBoard: React.FC = () => {
                 </button>
 
                 <button
-                  className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 hover:shadow-lg text-sm font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
+ className="btn-sy btn-sy-jade w-full px-4 py-2 rounded-lg text-sm font-semibold"
                   onClick={() => handleStartDeploy(UnitType.INFANTRY)}
                   disabled={!isMyTurn || remainingCounts.infantry <= 0 || currentActionPoints < 1}
                 >
                   步兵 ({remainingCounts.infantry}/{army.infantry}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
-                  className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 hover:shadow-lg text-sm font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
+ className="btn-sy btn-sy-jade w-full px-4 py-2 rounded-lg text-sm font-semibold"
                   onClick={() => handleStartDeploy(UnitType.CAVALRY)}
                   disabled={!isMyTurn || remainingCounts.cavalry <= 0 || currentActionPoints < 1}
                 >
                   骑兵 ({remainingCounts.cavalry}/{army.cavalry}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
                 <button
-                  className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 hover:shadow-lg text-sm font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
+ className="btn-sy btn-sy-jade w-full px-4 py-2 rounded-lg text-sm font-semibold"
                   onClick={() => handleStartDeploy(UnitType.ARCHER)}
                   disabled={!isMyTurn || remainingCounts.archer <= 0 || currentActionPoints < 1}
                 >
                   弓箭手 ({remainingCounts.archer}/{army.archer}) {!isMyTurn ? '(非你的回合)' : ''}
                 </button>
               </div>
-            </div>
+              </div>
+            </details>
+            )}
 
             {/* 将军技能面板 */}
             {(() => {
@@ -2590,32 +2596,32 @@ export const GameBoard: React.FC = () => {
               if (!currentGeneral || !generalUnit) return null;
 
               return (
-                <div className="bg-white rounded-lg shadow-lg p-4">
-                  <h3 className="text-lg font-bold mb-2">将军技能</h3>
+                <div className="rounded-lg p-4" style={{ background: 'rgba(13,5,0,0.7)', border: '1px solid rgba(201,162,39,0.2)' }}>
+                  <h3 className="text-lg font-ancient tracking-wider mb-2" style={{ color: '#C9A227' }}>将军技能</h3>
 
                   {/* 神机技能 */}
                   {currentGeneral === 'shenji' && (
                     <>
                       {/* 部署机关区域 */}
-                      <div className="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-200">
-                        <h4 className="text-sm font-bold text-purple-700 mb-2">部署机关单位</h4>
+                      <div className="mb-4 p-3 rounded-lg" style={{ background: 'rgba(60,0,90,0.2)', border: '1px solid rgba(150,0,220,0.3)' }}>
+                        <h4 className="text-sm font-chinese font-bold mb-2" style={{ color: 'rgba(180,100,255,0.9)' }}>部署机关单位</h4>
                         <div className="space-y-2">
                           <button
-                            className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
+ className="btn-sy btn-sy-bronze w-full px-4 py-2 rounded-lg text-sm font-bold"
                             onClick={() => handleStartDeploy(UnitType.BALLISTA)}
                             disabled={!isMyTurn || currentActionPoints < 3}
                           >
                             弩车 (2步+1弓) - 3点 {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
                           <button
-                            className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
+ className="btn-sy btn-sy-bronze w-full px-4 py-2 rounded-lg text-sm font-bold"
                             onClick={() => handleStartDeploy(UnitType.CHARIOT)}
                             disabled={!isMyTurn || currentActionPoints < 4}
                           >
                             战车 (4步) - 4点 {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
                           <button
-                            className="w-full px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:from-purple-600 hover:to-purple-700 hover:shadow-lg text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
+ className="btn-sy btn-sy-bronze w-full px-4 py-2 rounded-lg text-sm font-bold"
                             onClick={() => handleStartDeploy(UnitType.CATAPULT)}
                             disabled={!isMyTurn || currentActionPoints < 3}
                           >
@@ -2626,15 +2632,15 @@ export const GameBoard: React.FC = () => {
                       </div>
 
                       {/* 神机技能区域 */}
-                      <div className="mb-4 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
-                        <h4 className="text-sm font-bold text-indigo-700 mb-2">神机技能</h4>
+                      <div className="mb-4 p-3 panel-sy rounded-lg">
+                        <h4 className="text-sm font-bold panel-sy-title mb-2">神机技能</h4>
 
                         {/* 被动技能：改骰 */}
                         {!shenjiAbilityActive && (
                           <button
                             onClick={handleShenjiAbility}
                             disabled={!isMyTurn}
-                            className="w-full px-4 py-2 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white rounded-lg shadow-md hover:from-indigo-600 hover:to-indigo-700 hover:shadow-lg transition-all text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+ className="btn-sy btn-sy-gold btn-sy-ability w-full px-4 py-2 rounded-lg text-sm font-bold"
                           >
                             修改骰子 {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
@@ -2642,7 +2648,7 @@ export const GameBoard: React.FC = () => {
 
                         {shenjiAbilityActive && (
                           <div className="space-y-2">
-                            <p className="text-xs text-indigo-600 font-semibold">
+                            <p className="text-xs text-imperial-gold font-semibold">
                               {selectedDiceIndex !== null ? '选择新的点数（1-6）' : '点击要修改的骰子'}
                             </p>
 
@@ -2652,7 +2658,7 @@ export const GameBoard: React.FC = () => {
                                   <button
                                     key={value}
                                     onClick={() => handleModifyDice(value)}
-                                    className="px-3 py-2 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white rounded-lg shadow-md hover:from-indigo-600 hover:to-indigo-700 hover:shadow-lg transition-all text-sm font-bold"
+ className="btn-sy btn-sy-gold px-3 py-2 rounded-lg text-sm font-bold"
                                   >
                                     {value}
                                   </button>
@@ -2662,7 +2668,7 @@ export const GameBoard: React.FC = () => {
 
                             <button
                               onClick={cancelShenjiAbility}
-                              className="w-full px-4 py-2 bg-gradient-to-r from-gray-500 to-gray-600 text-white rounded-lg shadow-md hover:from-gray-600 hover:to-gray-700 hover:shadow-lg transition-all text-sm"
+ className="btn-sy btn-sy-ghost w-full px-4 py-2 rounded-lg text-sm"
                             >
                               取消
                             </button>
@@ -2670,7 +2676,7 @@ export const GameBoard: React.FC = () => {
                         )}
 
                         {('abilityUsed' in generalUnit && generalUnit.abilityUsed) ? (
-                          <p className="text-xs text-gray-500 italic mt-2">技能已使用</p>
+                          <p className="text-xs text-imperial-parchment-dark italic mt-2">技能已使用</p>
                         ) : null}
                       </div>
 
@@ -2678,10 +2684,10 @@ export const GameBoard: React.FC = () => {
                       {(() => {
                         const rerollTokens = currentPlayer === Player.PLAYER1 ? player1RerollTokens : player2RerollTokens;
                         return (
-                          <div className="p-3 bg-orange-50 rounded-lg border border-orange-200">
+                          <div className="p-3 panel-sy rounded-lg">
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-bold text-orange-700">机关崩毁奖励</span>
-                              <span className="text-xs bg-orange-200 text-orange-800 px-2 py-1 rounded font-bold">
+                              <span className="text-sm font-bold panel-sy-title">机关崩毁奖励</span>
+                              <span className="text-xs panel-sy panel-sy-text px-2 py-1 rounded font-bold">
                                 重投次数: {rerollTokens}
                               </span>
                             </div>
@@ -2692,14 +2698,14 @@ export const GameBoard: React.FC = () => {
                                   addLog('选择要重投的骰子', 'info');
                                 }}
                                 disabled={!isMyTurn}
-                                className="w-full px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                className="w-full px-4 py-2 btn-sy btn-sy-gold btn-sy-ability rounded text-sm"
                               >
                                 重投骰子 {!isMyTurn ? '(非你的回合)' : ''}
                               </button>
                             )}
                             {rerollMode && (
                               <div className="space-y-2">
-                                <p className="text-xs text-orange-600 font-semibold">
+                                <p className="text-xs text-imperial-gold font-semibold">
                                   点击要重投的骰子
                                 </p>
                                 <button
@@ -2707,7 +2713,7 @@ export const GameBoard: React.FC = () => {
                                     setRerollMode(false);
                                     addLog('取消重投', 'info');
                                   }}
-                                  className="w-full px-4 py-2 bg-gradient-to-r from-gray-500 to-gray-600 text-white rounded-lg shadow-md hover:from-gray-600 hover:to-gray-700 hover:shadow-lg transition-all text-sm"
+ className="btn-sy btn-sy-ghost w-full px-4 py-2 rounded-lg text-sm"
                                 >
                                   取消
                                 </button>
@@ -2721,28 +2727,28 @@ export const GameBoard: React.FC = () => {
 
                   {/* 无双技能 */}
                   {currentGeneral === 'wushuang' && (
-                    <div className="p-3 bg-red-50 rounded-lg border border-red-200">
-                      <h4 className="text-sm font-bold text-red-700 mb-2">无双技能</h4>
+                    <div className="p-3 panel-sy rounded-lg">
+                      <h4 className="text-sm font-bold panel-sy-title mb-2">无双技能</h4>
 
                       {/* 一次性技能：获得已损失体力值的行动值 */}
                       {!('abilityUsed' in generalUnit && generalUnit.abilityUsed) ? (
                         <button
                           onClick={handleWushuangInvincibility}
                           disabled={!isMyTurn}
-                          className="w-full px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+ className="btn-sy btn-sy-gold btn-sy-ability w-full px-4 py-2 rounded-lg text-sm font-bold"
                         >
                           获得已损失体力值的行动值 {!isMyTurn ? '(非你的回合)' : ''}
                         </button>
                       ) : (
-                        <p className="text-xs text-gray-500 italic">一次性技能已使用</p>
+                        <p className="text-xs text-imperial-parchment-dark italic">一次性技能已使用</p>
                       )}
                     </div>
                   )}
 
                   {/* 太平将军技能 */}
                   {currentGeneral === 'taiping' && (
-                    <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-300">
-                      <h4 className="text-sm font-bold text-yellow-800 mb-2">太平技能</h4>
+                    <div className="p-3 rounded-lg" style={{ background: 'rgba(13,5,0,0.6)', border: '1px solid rgba(201,162,39,0.35)' }}>
+                      <h4 className="text-sm font-chinese font-bold mb-2" style={{ color: '#C9A227' }}>太平技能</h4>
 
                       {/* 天命值显示 */}
                       {((): React.ReactNode => {
@@ -2754,17 +2760,17 @@ export const GameBoard: React.FC = () => {
                         const zeiCount = Object.values(units).filter((u: any) => u.type === UnitType.HUANGJIN_ZEI).length;
                         const doufanUsed = currentPlayer === Player.PLAYER1 ? player1DoufanUsedThisTurn : player2DoufanUsedThisTurn;
                         return (
-                          <div className="mb-3 text-xs space-y-1 text-yellow-900 bg-yellow-100 rounded p-2">
+                          <div className="mb-3 text-xs space-y-1 font-chinese rounded p-2" style={{ background: 'rgba(201,162,39,0.06)', color: 'rgba(245,230,200,0.7)' }}>
                             {bothTaiping && (
-                              <div className="flex justify-between text-orange-700 font-bold">
+                              <div className="flex justify-between font-bold" style={{ color: 'rgba(255,140,60,0.9)' }}>
                                 <span>共享血池：</span><span>{taipingSharedHp}/{taipingSharedMaxHp}</span>
                               </div>
                             )}
-                            <div className="flex justify-between"><span>天命值：</span><span className="font-bold text-purple-700">{destinyVal}</span></div>
-                            <div className="flex justify-between"><span>黄巾力士：</span><span className="font-bold text-amber-700">{lishiCount}</span></div>
-                            <div className="flex justify-between"><span>黄巾贼：</span><span className="font-bold text-red-700">{zeiCount}</span></div>
-                            <div className="text-xs text-gray-500">{lishiCount > destinyVal ? '⚠️ 力士过多，回合结束将扣1血' : '✅ 承载正常'}</div>
-                            {doufanUsed && <div className="text-xs text-orange-500">豆饭本回合已使用</div>}
+                            <div className="flex justify-between"><span>天命值：</span><span className="font-bold text-bronze-light">{destinyVal}</span></div>
+                            <div className="flex justify-between"><span>黄巾力士：</span><span className="font-bold text-imperial-gold-light">{lishiCount}</span></div>
+                            <div className="flex justify-between"><span>黄巾贼：</span><span className="font-bold text-imperial-red-light">{zeiCount}</span></div>
+                            <div className="text-xs" style={{ color: 'rgba(201,162,39,0.4)' }}>{lishiCount > destinyVal ? '⚠️ 力士过多，回合结束将扣1血' : '✅ 承载正常'}</div>
+                            {doufanUsed && <div className="text-xs text-imperial-gold">豆饭本回合已使用</div>}
                           </div>
                         );
                       })()}
@@ -2776,7 +2782,7 @@ export const GameBoard: React.FC = () => {
                           <button
                             onClick={handleTaipingDoufan}
                             disabled={!isMyTurn || currentActionPoints < 3 || doufanUsed || (taipingFushuiActive && taipingFushuiPlayer === currentPlayer)}
-                            className="w-full px-4 py-2 bg-gradient-to-r from-yellow-500 to-amber-500 text-white rounded-lg shadow-md hover:from-yellow-600 hover:to-amber-600 hover:shadow-lg transition-all text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed mb-2"
+ className="btn-sy btn-sy-gold btn-sy-ability w-full px-4 py-2 rounded-lg text-sm font-bold mb-2"
                           >
                             豆饭（3点→召唤d6黄巾力士）{doufanUsed ? ' [本回合已用]' : ''}{!isMyTurn ? '(非你的回合)' : ''}
                           </button>
@@ -2785,7 +2791,7 @@ export const GameBoard: React.FC = () => {
 
                       {/* 符水粥提示 */}
                       {taipingFushuiActive && taipingFushuiPlayer === currentPlayer && (
-                        <p className="text-xs text-orange-600 font-semibold">
+                        <p className="text-xs text-imperial-gold font-semibold">
                           ⚠️ 符水粥模式进行中，请先完成转化
                         </p>
                       )}
@@ -2796,8 +2802,8 @@ export const GameBoard: React.FC = () => {
                   {currentGeneral === 'rende' && (
                     <>
                       {/* 一次性技能：转化接触单位 */}
-                      <div className="mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
-                        <h4 className="text-sm font-bold text-green-700 mb-2">仁德技能（一次性）</h4>
+                      <div className="mb-4 p-3 panel-sy rounded-lg">
+                        <h4 className="text-sm font-bold panel-sy-title mb-2">仁德技能（一次性）</h4>
 
                         {!('abilityUsed' in generalUnit && generalUnit.abilityUsed) ? (
                           <button
@@ -2811,18 +2817,18 @@ export const GameBoard: React.FC = () => {
                               console.log('已设置 pendingRendeSkill=convert 和 selectUnit');
                             }}
                             disabled={!isMyTurn || currentActionPoints < 2}
-                            className="w-full px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            className="w-full px-4 py-2 btn-sy btn-sy-gold btn-sy-ability rounded text-sm"
                           >
                             转化接触单位（2点） {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
                         ) : (
-                          <p className="text-xs text-gray-500 italic">一次性技能已使用</p>
+                          <p className="text-xs text-imperial-parchment-dark italic">一次性技能已使用</p>
                         )}
                       </div>
 
                       {/* 转化为步兵技能（无限次） */}
-                      <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200">
-                        <h4 className="text-sm font-bold text-emerald-700 mb-2">转化中立标记</h4>
+                      <div className="p-3 panel-sy rounded-lg">
+                        <h4 className="text-sm font-bold panel-sy-title mb-2">转化中立标记</h4>
 
                         {((): React.ReactNode => {
                           const convertCost = ('convertInfantryCost' in generalUnit && typeof generalUnit.convertInfantryCost === 'number')
@@ -2837,7 +2843,7 @@ export const GameBoard: React.FC = () => {
                                 selectUnit(generalUnit.id);
                               }}
                               disabled={!isMyTurn || currentActionPoints < convertCost}
-                              className="w-full px-4 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-lg shadow-md hover:from-emerald-600 hover:to-emerald-700 hover:shadow-lg transition-all text-sm font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+ className="btn-sy btn-sy-gold btn-sy-ability w-full px-4 py-2 rounded-lg text-sm font-bold"
                             >
                               转化为步兵（{convertCost}点） {!isMyTurn ? '(非你的回合)' : ''}
                             </button>
@@ -2849,23 +2855,43 @@ export const GameBoard: React.FC = () => {
                 </div>
               );
             })()}
-          </div>
-        </div>
 
-        {/* 战斗日志 - 放在地图下方 */}
-        <div className="mt-4">
-          <BattleLog logs={battleLogs} maxEntries={8} />
+            {/* 记号图例：盘面不出现文字的代价是得有一张图例。默认收起，不占高度。 */}
+            <details
+              className="rounded-lg p-3 sy-collapse"
+              style={{ background: 'rgba(13,5,0,0.7)', border: '1px solid rgba(201,162,39,0.2)' }}
+            >
+              <summary className="cursor-pointer list-none flex items-baseline gap-2">
+                <span className="text-base font-ancient tracking-wider" style={{ color: '#C9A227' }}>记号图例</span>
+                <span className="text-xs font-chinese" style={{ color: 'rgba(201,162,39,0.45)' }}>颜色与记号的含义</span>
+              </summary>
+              <div className="mt-2">
+                <LegendPanel compact />
+              </div>
+            </details>
+
+            {/* 战报：从棋盘下方搬进右栏。
+              * 放在下方时它要和棋盘抢同一屏的高度 —— 实测 1440×900 下战报占 218px，
+              * 棋盘被压到 543×478，比改动前还小。搬进右栏后棋盘能吃掉整行高度，
+              * 而且战报本来就在首屏内可见（原来它在首屏外 221px 处）。
+              * 见 docs/layout-spec.md §3.2 */}
+            <BattleLog
+              logs={battleLogs}
+              maxEntries={8}
+              serverLogs={isOnlineMode ? serverBattleLog : undefined}
+            />
+          </div>
         </div>
       </div>
 
       {/* 太平将军·符水粥强制交互面板 */}
       {taipingFushuiActive && taipingFushuiPlayer === currentPlayer && isMyTurn && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 shadow-xl max-w-sm w-full mx-4">
-            <h3 className="text-xl font-bold mb-1 text-yellow-700">☯ 符水粥</h3>
-            <p className="text-sm text-gray-600 mb-4">
+          <div className="rounded-lg p-6 max-w-sm w-full mx-4" style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.98) 0%, rgba(13,5,0,0.99) 100%)', border: '1px solid rgba(201,162,39,0.3)', boxShadow: '0 0 40px rgba(201,162,39,0.1)' }}>
+            <h3 className="font-ancient text-xl tracking-widest mb-1" style={{ color: '#C9A227' }}>符水粥</h3>
+            <p className="text-sm font-chinese mb-4" style={{ color: 'rgba(245,230,200,0.7)' }}>
               将残血步兵饮下符水粥，升为力士（消耗1点行动值）。<br/>
-              剩余行动点：<span className="font-bold text-blue-600">
+              剩余行动点：<span className="font-bold" style={{ color: '#E8C84A' }}>
                 {currentPlayer === Player.PLAYER1 ? player1ActionPoints : player2ActionPoints}
               </span>
             </p>
@@ -2893,11 +2919,16 @@ export const GameBoard: React.FC = () => {
                     <button
                       key={u.id}
                       onClick={() => handleTaipingFushuiConvert(u.id)}
-                      className={`w-full text-left px-3 py-2 rounded-lg border-2 text-sm font-semibold transition-all ${
-                        idx === 0
-                          ? 'border-yellow-500 bg-yellow-50 hover:bg-yellow-100'
-                          : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
-                      }`}
+                      className="w-full text-left px-3 py-2 rounded text-sm font-chinese transition-all"
+                      style={idx === 0 ? {
+                        border: '1px solid rgba(201,162,39,0.5)',
+                        background: 'rgba(201,162,39,0.1)',
+                        color: '#E8C84A',
+                      } : {
+                        border: '1px solid rgba(201,162,39,0.2)',
+                        background: 'rgba(13,5,0,0.5)',
+                        color: 'rgba(245,230,200,0.6)',
+                      }}
                     >
                       步兵 ({pos.q},{pos.r},{pos.s}) {idx === 0 ? '← 推荐' : ''}
                     </button>
@@ -2905,7 +2936,7 @@ export const GameBoard: React.FC = () => {
                 })}
             </div>
 
-            <p className="text-xs text-gray-500 text-center">
+            <p className="text-xs font-chinese text-center" style={{ color: 'rgba(201,162,39,0.35)' }}>
               耗尽行动点或无候选步兵时自动退出
             </p>
           </div>
@@ -2915,9 +2946,9 @@ export const GameBoard: React.FC = () => {
       {/* 仁德击杀确认对话框 */}
       {rendeKillConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 shadow-xl max-w-md">
-            <h3 className="text-xl font-bold mb-4">仁德将军击杀</h3>
-            <p className="mb-6 text-gray-700">
+          <div className="rounded-lg p-6 max-w-md" style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.98) 0%, rgba(13,5,0,0.99) 100%)', border: '1px solid rgba(201,162,39,0.3)', boxShadow: '0 0 40px rgba(201,162,39,0.1)' }}>
+            <h3 className="font-ancient text-xl tracking-widest mb-4" style={{ color: '#C9A227' }}>仁德将军击杀</h3>
+            <p className="mb-6 font-chinese" style={{ color: 'rgba(245,230,200,0.8)' }}>
               你的仁��将军即将击杀敌方{rendeKillConfirm.target.type}，请选择：
             </p>
             <div className="flex gap-4">
@@ -2926,15 +2957,12 @@ export const GameBoard: React.FC = () => {
                   if (isOnlineMode) {
                     // 在线模式：发送击杀确认到服务器
                     colyseusService.rendeCompleteKill(rendeKillConfirm.target.id);
-                  } else {
-                    // 单机模式：本地处理
-                    rendeCompleteKill(rendeKillConfirm.target.id);
                   }
                   addLog(`仁德击杀了${rendeKillConfirm.target.type}`, 'kill');
                   setRendeKillConfirm(null);
                   selectUnit(null);
                 }}
-                className="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg shadow-md hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all font-bold"
+ className="btn-sy btn-sy-red flex-1 px-4 py-3 rounded-lg font-bold"
               >
                 直接击杀
               </button>
@@ -2943,9 +2971,6 @@ export const GameBoard: React.FC = () => {
                   if (isOnlineMode) {
                     // 在线模式：发送转为中立标记到服务器
                     colyseusService.rendeSpareAsNeutral(rendeKillConfirm.target.id);
-                  } else {
-                    // 单机模式：本地处理
-                    rendeSpareAsNeutral(rendeKillConfirm.attacker.id, rendeKillConfirm.target.id);
                   }
                   addLog(`仁德将${rendeKillConfirm.target.type}转为中立标记`, 'ability');
                   setRendeKillConfirm(null);
@@ -2962,7 +2987,7 @@ export const GameBoard: React.FC = () => {
                   }
                   return currentActionPoints < requiredPoints;
                 })()}
-                className="flex-1 px-4 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg shadow-md hover:from-green-600 hover:to-green-700 hover:shadow-lg transition-all font-bold disabled:bg-gray-300 disabled:cursor-not-allowed"
+ className="btn-sy btn-sy-gold btn-sy-ability flex-1 px-4 py-3 rounded-lg font-bold"
               >
                 转为中立标记（消耗{(() => {
                   let requiredPoints = 1;

@@ -73,7 +73,7 @@ export default function RulesModal({ isOpen, onClose }: RulesModalProps) {
         return (
           <div key={index} className="my-3 rounded-lg border-l-4 border-orange-500 bg-gradient-to-r from-orange-950/50 to-transparent p-3">
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-orange-500/30 text-orange-300 uppercase tracking-wide">⚡ 主动</span>
+              <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-imperial-gold/25 text-imperial-gold-light uppercase tracking-wide">⚡ 主动</span>
               <span className="text-orange-200 font-bold text-sm">{name}</span>
             </div>
             {desc && <div className="text-gray-200 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: formatInlineStyles(desc) }} />}
@@ -90,7 +90,7 @@ export default function RulesModal({ isOpen, onClose }: RulesModalProps) {
         return (
           <div key={index} className="my-3 rounded-lg border-l-4 border-blue-500 bg-gradient-to-r from-blue-950/50 to-transparent p-3">
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-500/30 text-blue-300 uppercase tracking-wide">🔵 被动</span>
+              <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-imperial-jade/30 text-imperial-jade-light uppercase tracking-wide">🔵 被动</span>
               <span className="text-blue-200 font-bold text-sm">{name}</span>
             </div>
             {desc && <div className="text-gray-200 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: formatInlineStyles(desc) }} />}
@@ -136,8 +136,8 @@ export default function RulesModal({ isOpen, onClose }: RulesModalProps) {
 
       // 列表项 • 或 -
       if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
-        const text = line.replace(/^[•\-]\s*/, '')
-        const indent = line.search(/[•\-]/)
+        const text = line.replace(/^[•-]\s*/, '')
+        const indent = line.search(/[•-]/)
         return (
           <div key={index} className="text-gray-200 mb-1.5 flex items-start leading-relaxed" style={{ paddingLeft: `${indent * 8}px` }}>
             <span className="text-amber-500 mr-2 flex-shrink-0 font-bold">•</span>

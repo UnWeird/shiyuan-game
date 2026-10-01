@@ -6,7 +6,7 @@ import { HexTile } from './HexTile';
 import { WorldLayer, WorldDefs } from './WorldLayer';
 import { useGameStore } from '../../stores/gameStore';
 import { INFO, INFO_FILL, PIECE } from '../../theme/boardTheme';
-import { Banner, Blade, Barb } from '../../theme/glyphs';
+import { Banner, Blade, Barb, Shield } from '../../theme/glyphs';
 
 /**
  * 棋盘：整个对局**唯一**的 SVG，分五层。
@@ -46,6 +46,14 @@ interface HexMapProps {
    * 由服务端的 lethal 字段推出，不在客户端判血量。
    */
   lethalHexes?: HexCoord[];
+  /**
+   * 敌方下回合能打到的格子，铺朱色斜纹。
+   * 我方能打的用**实色**、我方会被打的用**斜纹** ——
+   * 同一个色相靠填充方式区分，不额外占一个信息色。
+   */
+  enemyThreatHexes?: HexCoord[];
+  /** 被纵深抗击保护着的单位位置，画一个盾 */
+  shieldedHexes?: HexCoord[];
   /** 棋子与其它随对局变化的叠加层，由 GameBoard 提供 */
   children?: React.ReactNode;
 }
@@ -58,6 +66,8 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
   highlightKind = 'move',
   threatHexes = [],
   lethalHexes = [],
+  enemyThreatHexes = [],
+  shieldedHexes = [],
   children,
 }) => {
   const { player1Base, player2Base, selectedUnitId, units } = useGameStore();
@@ -125,12 +135,26 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
       {/* 全局 defs：只在这里定义一次，id 用稳定常量 */}
       <defs>
         <WorldDefs />
+        {/* 敌方威胁区的斜纹。45° 让它和六边形的边都不平行，不会被误读成格线 */}
+        <pattern
+          id="sy-threat-hatch"
+          width={7}
+          height={7}
+          patternTransform="rotate(45)"
+          patternUnits="userSpaceOnUse"
+        >
+          <line x1={0} y1={0} x2={0} y2={7} stroke={INFO.threat} strokeWidth={2.2} opacity={0.4} />
+        </pattern>
       </defs>
 
       <WorldLayer radius={radius} size={hexSize} />
 
       {/* ── 信息层：范围填充 ── */}
       <g id="info-area" pointerEvents="none">
+        {/* 威胁区铺在可行动范围**之下**：范围是「我要做什么」，威胁是「背景风险」 */}
+        {enemyThreatHexes.map((h) => (
+          <path key={`th-${h.q},${h.r}`} d={hexPath(h, hexSize)} fill="url(#sy-threat-hatch)" />
+        ))}
         {highlightedHexes.map((h) => {
           const c = tileColor(h);
           const isHovered = hovered === `${h.q},${h.r}`;
@@ -174,6 +198,16 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
             <g key={`bl-${h.q},${h.r}`} transform={`translate(${c.x + hexSize * 0.58}, ${c.y - hexSize * 0.52})`}>
               {/* 空心 = 打得到，实心 = 这一下能杀。同一个字根，一个修饰 */}
               <Blade u={hexSize * 0.4} solid={isLethalHex(h)} />
+            </g>
+          );
+        })}
+
+        {/* 纵深抗击的盾：画在格子上沿，表示「这个方向背后有人顶着」 */}
+        {shieldedHexes.map((h) => {
+          const c = hexToPixel(h, hexSize);
+          return (
+            <g key={`sh-${h.q},${h.r}`} transform={`translate(${c.x - hexSize * 0.58}, ${c.y - hexSize * 0.52})`}>
+              <Shield u={hexSize * 0.42} />
             </g>
           );
         })}

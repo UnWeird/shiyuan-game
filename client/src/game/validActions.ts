@@ -36,6 +36,14 @@ export interface ValidActionsPayload {
    */
   lethal?: Record<string, string[]>;
   /**
+   * 敌方（非行动方）下回合能打到的格子。客户端铺朱色斜纹。
+   * 由服务端委派 checkAttackLegality 算出，**不含战车碾压** ——
+   * 所以这张图偏保守：少报不多报，不会骗玩家说某格安全。
+   */
+  threatHexes?: Array<[number, number]>;
+  /** 当前被纵深抗击保护着的单位 id（队首亮盾） */
+  depthDefended?: string[];
+  /**
    * 机关的「范围型」攻击覆盖格（弩车垂直贯穿、投石车沿朝向射击）。
    * 这类攻击不是选一个目标，而是覆盖一条线，所以和 attacks 分开表达。
    */
@@ -60,6 +68,10 @@ interface ValidActionsState {
   attacks: Record<string, string[]>;
   /** unitId -> 其中能被一击杀死的目标 unitId */
   lethal: Record<string, string[]>;
+  /** 敌方下回合能打到的格子 */
+  threatHexes: HexCoord[];
+  /** 被纵深抗击保护着的单位 id */
+  depthDefended: Set<string>;
   /** unitId -> 范围型攻击覆盖格 */
   attackHexes: Record<string, HexCoord[]>;
 
@@ -72,6 +84,8 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
   moves: {},
   attacks: {},
   lethal: {},
+  threatHexes: [],
+  depthDefended: new Set<string>(),
   attackHexes: {},
 
   apply: (payload) => {
@@ -92,11 +106,16 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
       moves,
       attacks: payload.attacks ?? {},
       lethal: payload.lethal ?? {},
+      threatHexes: (payload.threatHexes ?? []).map(([q, r]) => ({ q, r, s: -q - r })),
+      depthDefended: new Set(payload.depthDefended ?? []),
       attackHexes,
     });
   },
 
-  clear: () => set({ forPlayer: null, moves: {}, attacks: {}, lethal: {}, attackHexes: {} }),
+  clear: () => set({
+    forPlayer: null, moves: {}, attacks: {}, lethal: {},
+    threatHexes: [], depthDefended: new Set<string>(), attackHexes: {},
+  }),
 }));
 
 /** 供 React 之外使用（ColyseusService 是单例） */
@@ -118,6 +137,16 @@ export function getServerAttackTargets(unitId: string): string[] {
 /** 读取某个单位能一击击杀的目标 id（attacks 的子集） */
 export function getServerLethalTargets(unitId: string): string[] {
   return useValidActionsStore.getState().lethal[unitId] ?? [];
+}
+
+/** 敌方下回合能打到的格子 */
+export function getServerThreatHexes(): HexCoord[] {
+  return useValidActionsStore.getState().threatHexes;
+}
+
+/** 这个单位此刻是否被纵深抗击保护着 */
+export function isDepthDefendedUnit(unitId: string): boolean {
+  return useValidActionsStore.getState().depthDefended.has(unitId);
 }
 
 /** 读取某个单位的范围型攻击覆盖格（弩车贯穿线、投石车射击线） */

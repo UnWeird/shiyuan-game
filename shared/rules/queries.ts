@@ -1,6 +1,7 @@
 import { Direction } from '../types';
 import type { HexCoord } from '../types';
 import {
+  generateHexMap,
   getAxisLineFromTarget,
   getDistanceToBaseline,
   getMachineOccupiedHexes,
@@ -318,6 +319,120 @@ units: readonly UnitLike[]
  * 列出某个单位当前可以攻击的所有目标 id。
  * 与对应的 handle* 共用同一个谓词，所以不会和校验结果不一致。
  */
+/* ══════════════════ 威胁预测 ══════════════════
+ *
+ * 「敌方下回合能打到哪些格子」。客户端用它铺朱色斜纹，让玩家在落子前
+ * 就看见站位失误，而不是走过去才发现。
+ *
+ * 实现上刻意**不新写一份射程推导**：候选格由这里枚举，但「能不能打到」
+ * 的答案全部交给 checkAttackLegality —— 也就是服务端校验用的那一份。
+ * 自己再写一遍「近战 1 格 / 弓手 3+基线 / 投石车朝向 5 格」就又多了一份会漂移的实现，
+ * 而且威胁提示一旦算错是**比没有更糟**的（它会骗玩家）。
+ *
+ * 代价是每个单位要对全图逐格问一次。半径 5 = 91 格，20 个敌方单位 ≈ 1800 次调用，
+ * 只在 validActionsFingerprint 变化时重算，实测开销可以忽略。
+ */
+
+/**
+ * 把单位「刷新」成下回合开始的状态。
+ *
+ * checkAttackLegality 的头几行闸的是本回合状态（hasAttacked / actionsThisTurn），
+ * 而威胁预测问的是「下回合他能打到哪」—— 这些标记那时已经清空了。
+ * 不刷新的话，刚攻击过的敌人会被算成零威胁。
+ */
+function asNextTurn(u: UnitLike): UnitLike {
+  return { ...u, hasAttacked: false, actionsThisTurn: 0, hasActedThisTurn: false };
+}
+
+/**
+ * 单个单位在下回合能威胁到的格子。
+ *
+ * **不包含战车碾压**：战车没有攻击动作，它是靠移动把路上的单位直接击杀，
+ * 威胁范围等于它的可达移动路径 —— 那需要新推导一套规则，这里不做。
+ * 画出来的威胁区因此是**偏保守的**（少报不多报），不会骗玩家说某格安全。
+ */
+export function getThreatHexes(
+  threatener: UnitLike,
+  units: readonly UnitLike[],
+  radius: number = MAP_RADIUS
+): HexCoord[] {
+  const fresh = asNextTurn(threatener);
+  const own = occupiedHexesOf(threatener);
+  const out: HexCoord[] = [];
+
+  // 弩车走专用的贯穿 / 近战指令，checkAttackLegality 对它直接返回 false
+  if (threatener.type === 'ballista') {
+    for (const hex of getBallistaVerticalPath(fresh, fresh.owner === 'player1')) {
+      if (isInMapRange(hex, radius)) out.push(hex);
+    }
+    for (const hex of own.flatMap(h => hexNeighbors(h))) {
+      if (isInMapRange(hex, radius) && !own.some(o => hexEquals(o, hex))) out.push(hex);
+    }
+    return dedupeHexes(out);
+  }
+
+  for (const hex of generateHexMap(radius)) {
+    if (own.some(o => hexEquals(o, hex))) continue; // 自己占的格不算威胁
+    // 假想一个占一格的普通单位站在这里，问真正的规则「打得到吗」
+    const probe: UnitLike = {
+      ...fresh,
+      id: '__probe__',
+      type: 'infantry',
+      owner: fresh.owner === 'player1' ? 'player2' : 'player1',
+      q: hex.q, r: hex.r, s: hex.s,
+      hp: 1,
+    };
+    if (checkAttackLegality(fresh, probe, units).ok) out.push(hex);
+  }
+  return dedupeHexes(out);
+}
+
+function dedupeHexes(list: readonly HexCoord[]): HexCoord[] {
+  const seen = new Set<string>();
+  const out: HexCoord[] = [];
+  for (const h of list) {
+    const k = `${h.q},${h.r}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(h);
+  }
+  return out;
+}
+
+/** 某一方所有单位的威胁格并集 */
+export function getThreatHexesForOwner(
+  owner: string,
+  units: readonly UnitLike[],
+  radius: number = MAP_RADIUS
+): HexCoord[] {
+  const all: HexCoord[] = [];
+  for (const u of units) {
+    if (u.owner !== owner) continue;
+    all.push(...getThreatHexes(u, units, radius));
+  }
+  return dedupeHexes(all);
+}
+
+/**
+ * 当前处于纵深抗击保护下的单位 id。
+ *
+ * 「在方阵里」本身不是一个绝对属性 —— 纵深抗击只在**特定方向**被弓箭手打时触发。
+ * 所以这里不发一个含糊的 inFormation 布尔值，而是回答一个具体问题：
+ * 「场上是否真有某个敌方弓箭手，打这个单位时会被纵深抗击免掉伤害」。
+ * 客户端据此给队首亮盾，含义是「那个方向有人顶着」。
+ */
+export function getDepthDefendedUnitIds(units: readonly UnitLike[]): string[] {
+  const out: string[] = [];
+  for (const target of units) {
+    if (target.type !== 'infantry') continue;
+    const defended = units.some(a =>
+      a.type === 'archer' && a.owner !== target.owner && isDepthDefended(a, target, units)
+    );
+    if (defended) out.push(target.id);
+  }
+  return out;
+}
+
 /* ══════════════════ 伤害预测 ══════════════════
  *
  * 这三个函数是**纯查询**，从 handleAttack 里抽出来的，目的是让

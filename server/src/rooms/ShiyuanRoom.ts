@@ -1258,7 +1258,31 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
     });
 
-    return { forPlayer, phase: this.state.phase, moves, attacks, lethal, attackHexes };
+    /**
+     * 敌方（= 非行动方）下回合能打到的格子，客户端铺朱色斜纹。
+     *
+     * 答案由 Rules.getThreatHexes 委派给 checkAttackLegality —— 和校验同一份规则。
+     * 不含战车碾压（它靠移动杀人，不是攻击动作），所以这张图是**偏保守的**：
+     * 少报不多报，不会骗玩家说某格安全。
+     *
+     * 开销：每个敌方单位对全图 91 格各问一次。只在 validActionsFingerprint
+     * 变化时重算，而该指纹已覆盖所有单位的位置 / 朝向 / 体力。
+     */
+    const foe = forPlayer === 'player1' ? 'player2' : 'player1';
+    const threatHexes = Rules.getThreatHexesForOwner(foe, this.unitList)
+      .map(h => [h.q, h.r] as [number, number]);
+
+    /**
+     * 当前被纵深抗击保护着的单位 id（客户端给队首亮盾）。
+     * 不是含糊的「在方阵里」—— 而是「场上真有某个敌方弓箭手，打它会被免伤」。
+     */
+    const depthDefended = Rules.getDepthDefendedUnitIds(this.unitList);
+
+    return {
+      forPlayer, phase: this.state.phase,
+      moves, attacks, lethal, attackHexes,
+      threatHexes, depthDefended,
+    };
   }
 
   /** 机关的范围型攻击覆盖格。规则实现见 shared/rules/queries.ts */

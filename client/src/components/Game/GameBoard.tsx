@@ -13,7 +13,7 @@ import { colyseusService } from '../../services/ColyseusService';
 import { toast, askConfirm, useUIStore } from '../../stores/uiStore';
 import { IMPERIAL, UNIT_NAME } from '../../theme/boardTheme';
 import { pendingAction, usePendingStore } from '../../game/pendingAction';
-import { getServerAttackHexes, getServerAttackTargets, getServerLethalTargets, getServerMoves } from '../../game/validActions';
+import { getServerAttackHexes, getServerAttackTargets, getServerLethalTargets, getServerMoves, useValidActionsStore } from '../../game/validActions';
 import { playSfx } from '../../audio/sfx';
 
 interface BattleLogEntry {
@@ -153,6 +153,16 @@ export const GameBoard: React.FC = () => {
   /* 摆不摆得下右侧栏，是和 isNarrow 不同的一个断点（1024）。
    * 820×1180 这类视口 isNarrow=false 但侧栏放不下，见 docs/layout-spec.md §3.4 */
   const hasSideRail = useHasSideRail();
+
+  /**
+   * 威胁区与方阵盾是在 **render 期间**读的，所以必须订阅 store。
+   *
+   * 其余 getServer* 是不订阅的普通函数 —— 它们只在事件处理里调用（点「移动」时取一次
+   * 落点），那里拿当次最新值就够了。但 render 期间用不订阅的 getter 会漏更新：
+   * validActions 到达时若没有别的状态同时变化，组件不会重渲染，威胁区就会晚一帧。
+   */
+  const enemyThreatHexes = useValidActionsStore(state => state.threatHexes);
+  const depthDefended = useValidActionsStore(state => state.depthDefended);
   // 扇形攻击本地状态（单机模式使用）
   const [localWushuangFanAttackActive, setLocalWushuangFanAttackActive] = useState(false);
   const [localWushuangSelectedDirection, setLocalWushuangSelectedDirection] = useState<Direction | null>(null);
@@ -1862,6 +1872,15 @@ export const GameBoard: React.FC = () => {
                         .filter((p): p is HexCoord => !!p)
                     : []
                 }
+                /* 敌方下回合能打到的格子：常驻铺朱色斜纹，让站位失误在落子前就看得见。
+                 * 由服务端委派 checkAttackLegality 算出，不含战车碾压 → 偏保守。 */
+                enemyThreatHexes={enemyThreatHexes}
+                /* 被纵深抗击保护的单位：队首亮盾。
+                 * 这条规则（弓箭手打步兵、背后有连续步兵则免伤）谁都发现不了，
+                 * 画出来等于把一条隐藏规则变成一种可用的玩法。 */
+                shieldedHexes={Object.values(units)
+                  .filter(un => depthDefended.has(un.id))
+                  .map(un => un.position)}
               >
               {/* 渲染射击路径 */}
               {actionMode === 'rotate' && rotationPaths.size > 0 && (() => {

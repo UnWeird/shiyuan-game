@@ -4,11 +4,28 @@ import { useGameStore } from '../../stores/gameStore';
 import { HexMap } from '../Map/HexMap';
 import { isInStartZone } from '../../utils/hexUtils';
 import { colyseusService } from '../../services/ColyseusService';
-import { useIsNarrowScreen } from '../../hooks/useMobile';
+import { useIsNarrowScreen, useIsPortrait } from '../../hooks/useMobile';
 
 export const BaseSetup: React.FC = () => {
   // 窄屏布局：只看视口宽度，不看设备类型
   const isNarrow = useIsNarrowScreen();
+  /** 竖屏棋盘转 90°，与对局界面保持一致（见 docs/layout-spec.md §3.6） */
+  const boardRotate: 0 | 90 = useIsPortrait() ? 90 : 0;
+  /**
+   * 起始区在屏幕上的方位。
+   *
+   * ⚠️ 这里修掉了一个一直存在的文案错误：`isInStartZone` 的 'top' 指的是
+   * **r >= 3**（见 shared/utils/hexUtils.ts），而 hexToPixel 是 `y = 1.5·size·r`，
+   * SVG 的 y 向下增长 —— 所以 r >= 3 渲染在**屏幕下方**。
+   * 原来的文案写的是「玩家一 · 在**上方**起始区选择」，而合法格全在下方，
+   * 等于把玩家往反方向指。两方都反了。
+   *
+   * 另外 rotate(90) 把 (x,y) 映射到 (-y, x)：下方（+y）变成左侧（-x）。
+   */
+  const zoneWord = (zone: 'top' | 'bottom') =>
+    boardRotate === 90
+      ? (zone === 'top' ? '左侧起始区' : '右侧起始区')
+      : (zone === 'top' ? '下方起始区' : '上方起始区');
   const {
     currentPlayer,
     player1Base,
@@ -120,8 +137,8 @@ export const BaseSetup: React.FC = () => {
           </div>
           <p className="font-chinese text-xs tracking-widest" style={{ color: 'rgba(201,162,39,0.55)' }}>
             {isOnlineMode
-              ? `${myPlayerRole === 'player1' ? '玩家一' : '玩家二'} · 在${myZone === 'top' ? '上方起始区' : '下方起始区'}选择大本营位置`
-              : `${currentPlayer === Player.PLAYER1 ? '玩家一' : '玩家二'} · 在${currentPlayer === Player.PLAYER1 ? '上方起始区' : '下方起始区'}选择位置`
+              ? `${myPlayerRole === 'player1' ? '玩家一' : '玩家二'} · 在${zoneWord(myZone)}选择大本营位置`
+              : `${currentPlayer === Player.PLAYER1 ? '玩家一' : '玩家二'} · 在${zoneWord(currentPlayer === Player.PLAYER1 ? 'top' : 'bottom')}选择位置`
             }
           </p>
           <p className="font-chinese text-xs mt-1" style={{ color: 'rgba(245,230,200,0.3)' }}>
@@ -146,6 +163,7 @@ export const BaseSetup: React.FC = () => {
           <HexMap
             radius={5}
             hexSize={isNarrow ? 25 : 40}
+            rotate={boardRotate}
             onHexClick={handleHexClick}
             highlightedHexes={highlightedHexes}
           />

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { UnitType, Direction, GamePhase, Player } from '../../types';
 import type { Unit, HexCoord } from '../../types';
 import { useGameStore } from '../../stores/gameStore';
-import { useIsNarrowScreen, useHasSideRail } from '../../hooks/useMobile';
+import { useIsNarrowScreen, useHasSideRail, useIsPortrait } from '../../hooks/useMobile';
 import { HexMap } from '../Map/HexMap';
 import { UnitPiece } from '../Unit/UnitPiece';
 import { BattleLog } from '../UI/BattleLog';
@@ -11,8 +11,9 @@ import RulesModal from '../UI/RulesModal';
 import { hexEquals, hexToPixel, generateHexMap, isInStartZone, getShootingPath, getFanShapedHexes, getMachineOccupiedHexes, hexDistance, hexNeighbors, getDistanceToBaseline } from '../../utils/hexUtils';
 import { colyseusService } from '../../services/ColyseusService';
 import { toast, askConfirm, useUIStore } from '../../stores/uiStore';
-import { IMPERIAL, UNIT_NAME } from '../../theme/boardTheme';
+import { BOARD_ASPECT, IMPERIAL, UNIT_NAME } from '../../theme/boardTheme';
 import { pendingAction, usePendingStore } from '../../game/pendingAction';
+import { useDamageFeed } from '../../game/damageFeed';
 import { getServerAttackHexes, getServerAttackTargets, getServerLethalTargets, getServerMoves, useValidActionsStore } from '../../game/validActions';
 import { playSfx } from '../../audio/sfx';
 
@@ -153,6 +154,17 @@ export const GameBoard: React.FC = () => {
   /* 摆不摆得下右侧栏，是和 isNarrow 不同的一个断点（1024）。
    * 820×1180 这类视口 isNarrow=false 但侧栏放不下，见 docs/layout-spec.md §3.4 */
   const hasSideRail = useHasSideRail();
+  /**
+   * 竖屏把棋盘整盘转 90°。棋盘 viewBox 宽大于高（772.8 × 680），
+   * 竖屏下只能按宽度缩、高度大量浪费；转过来长宽比 1.137 → 0.88 正好贴合。
+   * 只在没有侧栏（堆叠布局）时才转 —— 有侧栏说明是横向视口，不该转。
+   * 见 docs/layout-spec.md §3.6
+   */
+  // Hook 必须无条件调用：写成 `!hasSideRail && useIsPortrait()` 会因为短路求值
+  // 让 useIsPortrait 在某些渲染里根本不执行，Hook 顺序一变组件就崩
+  // （实测把视口从手机拖到桌面时触发 "change in the order of Hooks"）
+  const isPortrait = useIsPortrait();
+  const boardRotate: 0 | 90 = !hasSideRail && isPortrait ? 90 : 0;
 
   /**
    * 威胁区与方阵盾是在 **render 期间**读的，所以必须订阅 store。
@@ -161,6 +173,13 @@ export const GameBoard: React.FC = () => {
    * 落点），那里拿当次最新值就够了。但 render 期间用不订阅的 getter 会漏更新：
    * validActions 到达时若没有别的状态同时变化，组件不会重渲染，威胁区就会晚一帧。
    */
+  /**
+   * 伤害飘字与受击抖动。
+   * 用差分单位体力实现，所以所有伤害来源（普通攻击、弩车贯穿、投石车溅射、
+   * 无双扇形、太平承载…）都自动覆盖，不需要在服务端 8 处 `hp -=` 各加一次广播。
+   */
+  const { flashes: damageFlashes, hitUnitIds } = useDamageFeed();
+
   const enemyThreatHexes = useValidActionsStore(state => state.threatHexes);
   const depthDefended = useValidActionsStore(state => state.depthDefended);
   // 扇形攻击本地状态（单机模式使用）
@@ -1845,10 +1864,15 @@ export const GameBoard: React.FC = () => {
               border: '1px solid rgba(201,162,39,0.2)',
             }}
           >
-            <div className="sy-board">
+            {/* 转 90° 后棋盘长宽比取倒数，容器尺寸公式要跟着换 */}
+            <div
+              className="sy-board"
+              style={boardRotate ? ({ '--sy-board-ar': 1 / BOARD_ASPECT } as React.CSSProperties) : undefined}
+            >
               <HexMap
                 radius={5}
                 hexSize={isNarrow ? 30 : 40}
+                rotate={boardRotate}
                 onHexClick={handleHexClick}
                 highlightedHexes={highlightedHexes}
                 /* 攻击类的高亮走朱色，移动走青色。
@@ -1881,6 +1905,7 @@ export const GameBoard: React.FC = () => {
                 shieldedHexes={Object.values(units)
                   .filter(un => depthDefended.has(un.id))
                   .map(un => un.position)}
+                damageFlashes={damageFlashes}
               >
               {/* 渲染射击路径 */}
               {actionMode === 'rotate' && rotationPaths.size > 0 && (() => {
@@ -1981,6 +2006,8 @@ export const GameBoard: React.FC = () => {
                       isRejected={rejectedUnitId === unit.id}
                       moveSteps={moveSteps}
                       isSpent={unit.actionsThisTurn > 0 && !moveSteps && !hasAttack}
+                      isHit={hitUnitIds.has(unit.id)}
+                      boardRotate={boardRotate}
                     />
                   </g>
                 );
@@ -1992,6 +2019,7 @@ export const GameBoard: React.FC = () => {
                   unit={{ ...units[pending.unitId], position: pending.target }}
                   hexSize={isNarrow ? 30 : 40}
                   isGhost
+                  boardRotate={boardRotate}
                 />
               )}
 

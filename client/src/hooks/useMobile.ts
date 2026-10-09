@@ -53,6 +53,37 @@ export function useHasSideRail(): boolean {
 }
 
 /**
+ * 竖屏：视口高大于宽。
+ *
+ * 用来决定棋盘是否旋转 90°（见 docs/layout-spec.md §3.6）。
+ * 棋盘 viewBox 是 772.8 × 680，**宽大于高** —— 放在竖屏上只能按宽度缩，
+ * 高度方向大量浪费。转 90° 之后长宽比从 1.137 变成 0.88，正好贴合竖屏。
+ * 实测 375×812 下棋盘面积 +29%（359×316 → 359×408）。
+ */
+export function useIsPortrait(): boolean {
+  const [portrait, setPortrait] = useState(
+    () => typeof window !== 'undefined' && window.innerHeight > window.innerWidth
+  );
+
+  useEffect(() => {
+    // 直接比视口宽高，不用 `(orientation: portrait)` 媒体特性 ——
+    // 它在桌面浏览器的视口模拟下不随模拟尺寸更新（实测把 375×812 改回 1440×900
+    // 之后 mql.matches 仍是 true，棋盘卡在旋转状态）。
+    // 而且这里要的本来就是「视口是不是竖的」，和设备朝向无关。
+    const update = () => setPortrait(window.innerHeight > window.innerWidth);
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('orientationchange', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('orientationchange', update);
+    };
+  }, []);
+
+  return portrait;
+}
+
+/**
  * 兼容旧名字。语义已改为「视口是否窄」，与设备类型无关。
  * @deprecated 请直接用 useIsNarrowScreen，名字更准确
  */

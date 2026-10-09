@@ -184,6 +184,45 @@ button:disabled {
   color: #22c55e;
 }
 
+/* ========== 伤害反馈（SVG 安全版） ==========
+ *
+ * animations.css 里原有 @keyframes damage-float 与 shake，但它们是给 DOM 写的
+ * （damage-number 用 position:absolute），而棋盘是 SVG，一直没人用。
+ *
+ * 两个 SVG 专属的坑：
+ *
+ * 1. CSS `transform` 会**覆盖** SVG 的 transform **属性**。棋子根节点上挂着
+ *    transform="translate(x,y)"，直接给它加 CSS 动画会让棋子跳回原点。
+ *    所以抖动与飘字都必须作用在**内层** <g> 上，外层只管定位。
+ * 2. 需要 transform-box: fill-box + transform-origin: center，否则 SVG 元素的
+ *    变换原点是用户坐标系原点（棋盘中心），棋子会绕着棋盘中心甩出去。
+ */
+
+@keyframes sy-damage-float {
+  0%   { opacity: 1; transform: translateY(0)     scale(0.9); }
+  25%  { opacity: 1; transform: translateY(-10px) scale(1.15); }
+  100% { opacity: 0; transform: translateY(-34px) scale(0.95); }
+}
+
+.sy-damage-float {
+  animation: sy-damage-float 1s ease-out forwards;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes sy-unit-hit {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-3.5px); }
+  45%      { transform: translateX(3.5px); }
+  70%      { transform: translateX(-2px); }
+}
+
+.sy-unit-hit {
+  animation: sy-unit-hit 0.32s ease-in-out;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
 /* ========== 模态框动画 ========== */
 
 /* 模态框淡入缩放 */

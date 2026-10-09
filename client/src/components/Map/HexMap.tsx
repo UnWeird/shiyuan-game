@@ -5,7 +5,7 @@ import { hexPath, boardViewBox } from '../../utils/boardGeometry';
 import { HexTile } from './HexTile';
 import { WorldLayer, WorldDefs } from './WorldLayer';
 import { useGameStore } from '../../stores/gameStore';
-import { INFO, INFO_FILL, PIECE } from '../../theme/boardTheme';
+import { INFO, INFO_FILL, PIECE, PIECE_FONT } from '../../theme/boardTheme';
 import { Banner, Blade, Barb, Shield } from '../../theme/glyphs';
 
 /**
@@ -54,6 +54,20 @@ interface HexMapProps {
   enemyThreatHexes?: HexCoord[];
   /** 被纵深抗击保护着的单位位置，画一个盾 */
   shieldedHexes?: HexCoord[];
+  /** 伤害飘字。由 useDamageFeed 差分单位体力得到 */
+  damageFlashes?: ReadonlyArray<{
+    key: string;
+    position: HexCoord;
+    amount: number;
+    kind: 'damage' | 'death';
+  }>;
+  /**
+   * 整盘旋转的角度，目前只用 0 或 90（竖屏）。
+   *
+   * 这是**纯渲染旋转** —— 六边形坐标、方向枚举、起始区判定、机关占位
+   * 一行都没改。实现见组件内的说明。
+   */
+  rotate?: 0 | 90;
   /** 棋子与其它随对局变化的叠加层，由 GameBoard 提供 */
   children?: React.ReactNode;
 }
@@ -68,12 +82,21 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
   lethalHexes = [],
   enemyThreatHexes = [],
   shieldedHexes = [],
+  damageFlashes = [],
+  rotate = 0,
   children,
 }) => {
   const { player1Base, player2Base, selectedUnitId, units } = useGameStore();
 
   const hexes = useMemo(() => generateHexMap(radius), [radius]);
-  const vb = useMemo(() => boardViewBox(radius, hexSize), [radius, hexSize]);
+  const vb = useMemo(() => {
+    const box = boardViewBox(radius, hexSize);
+    // 棋盘以原点为中心，旋转 90° 后外接框只是长宽互换
+    if (rotate === 90) {
+      return { minX: box.minY, minY: box.minX, width: box.height, height: box.width };
+    }
+    return box;
+  }, [radius, hexSize, rotate]);
 
   const selectedUnit = selectedUnitId ? units[selectedUnitId] : null;
   const rangeColor = highlightKind === 'attack' ? INFO.threat : INFO.move;
@@ -92,6 +115,15 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
    *   冷白 本回合不可攻击（代价，所以是失色的一档）
    * 距离本身不画 —— 玩家看格子就能数。
    */
+  /**
+   * 竖屏时整盘转 90°，但有些东西必须保持**屏幕朝上**：汉字、体力弧、
+   * 各种记号、飘字。做法是整盘套一个 rotate(R)，这些元素各自再 rotate(-R) 抵消。
+   *
+   * 这样做的好处是六边形坐标、Direction 枚举、起始区判定、机关占位
+   * **一行都不用改** —— 朝向尖不抵消，它跟着棋盘转才是对的（朝向本身是六边形方向）。
+   */
+  const upright = rotate ? ` rotate(${-rotate})` : '';
+
   const isLethalHex = (h: HexCoord) =>
     lethalHexes.some(l => l.q === h.q && l.r === h.r);
 
@@ -117,7 +149,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
         <path d={hexPath(base, hexSize, 1)} fill={color} opacity={0.14} />
         <path d={hexPath(base, hexSize, 0.99)} fill="none" stroke={color} strokeWidth={2.4} />
         <path d={hexPath(base, hexSize, 0.8)} fill="none" stroke={color} strokeWidth={1} opacity={0.75} />
-        <g transform={`translate(${c.x}, ${c.y + hexSize * 0.58})`}>
+        <g transform={`translate(${c.x}, ${c.y + hexSize * 0.58})${upright}`}>
           <Banner u={hexSize * 0.42} color={color} />
         </g>
       </g>
@@ -147,6 +179,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
         </pattern>
       </defs>
 
+      <g transform={rotate ? `rotate(${rotate})` : undefined}>
       <WorldLayer radius={radius} size={hexSize} />
 
       {/* ── 信息层：范围填充 ── */}
@@ -195,7 +228,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
         {threatHexes.map((h) => {
           const c = hexToPixel(h, hexSize);
           return (
-            <g key={`bl-${h.q},${h.r}`} transform={`translate(${c.x + hexSize * 0.58}, ${c.y - hexSize * 0.52})`}>
+            <g key={`bl-${h.q},${h.r}`} transform={`translate(${c.x + hexSize * 0.58}, ${c.y - hexSize * 0.52})${upright}`}>
               {/* 空心 = 打得到，实心 = 这一下能杀。同一个字根，一个修饰 */}
               <Blade u={hexSize * 0.4} solid={isLethalHex(h)} />
             </g>
@@ -206,7 +239,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
         {shieldedHexes.map((h) => {
           const c = hexToPixel(h, hexSize);
           return (
-            <g key={`sh-${h.q},${h.r}`} transform={`translate(${c.x - hexSize * 0.58}, ${c.y - hexSize * 0.52})`}>
+            <g key={`sh-${h.q},${h.r}`} transform={`translate(${c.x - hexSize * 0.58}, ${c.y - hexSize * 0.52})${upright}`}>
               <Shield u={hexSize * 0.42} />
             </g>
           );
@@ -219,7 +252,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
           if (!h.damageUp && !h.noAttack) return null;
           const c = hexToPixel(h, hexSize);
           return (
-            <g key={`hv-${h.q},${h.r}`} transform={`translate(${c.x}, ${c.y + hexSize * 0.5})`}>
+            <g key={`hv-${h.q},${h.r}`} transform={`translate(${c.x}, ${c.y + hexSize * 0.5})${upright}`}>
               {h.noAttack
                 ? <Blade u={hexSize * 0.5} color={INFO.muted} forbid />
                 : <Barb u={hexSize * 0.5} />}
@@ -266,8 +299,34 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
       {/* ── 棋子层 ── */}
       <g id="pieces">{children}</g>
 
-      {/* ── 最上层：选中框。不填色，棋子不被吃掉 ── */}
+      {/* ── 最上层：选中框 + 伤害飘字。不填色，棋子不被吃掉 ── */}
       <g id="info-top" pointerEvents="none">
+        {/* 飘字：外层属性定位，内层做 CSS 动画 —— CSS transform 会覆盖
+            SVG 的 transform 属性，两者混在一个节点上飘字会从棋盘原点飞出去 */}
+        {damageFlashes.map((f) => {
+          const c = hexToPixel(f.position, hexSize);
+          const lethal = f.kind === 'death';
+          return (
+            <g key={f.key} transform={`translate(${c.x}, ${c.y - hexSize * 0.3})${upright}`}>
+              <g className="sy-damage-float">
+                <text
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize={hexSize * (lethal ? 0.58 : 0.48)}
+                  fontFamily={PIECE_FONT}
+                  fontWeight={700}
+                  fill={INFO.threat}
+                  stroke="rgba(0,0,0,0.65)"
+                  strokeWidth={hexSize * 0.055}
+                  paintOrder="stroke"
+                >
+                  {lethal ? '✕' : `−${f.amount}`}
+                </text>
+              </g>
+            </g>
+          );
+        })}
+
         {selectedUnit && (
           <>
             <path
@@ -285,6 +344,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
             />
           </>
         )}
+      </g>
       </g>
     </svg>
   );

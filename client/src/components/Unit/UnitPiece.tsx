@@ -51,6 +51,16 @@ interface UnitPieceProps {
   moveSteps?: number;
   /** 已行动：同样由 validActions 推出（无合法移动也无合法攻击） */
   isSpent?: boolean;
+  /** 刚刚掉血，抖一下。由 useDamageFeed 差分出来 */
+  isHit?: boolean;
+  /**
+   * 棋盘整体旋转的角度（竖屏为 90）。
+   *
+   * 棋子要分两半处理：
+   *   朝向尖**跟着棋盘转** —— 朝向本身是六边形方向，转盘就该一起转
+   *   其余（汉字、体力弧、移动弧、斜杠）**反向抵消** —— 它们的"上"是屏幕的上
+   */
+  boardRotate?: 0 | 90;
 }
 
 /** 极坐标取点 */
@@ -98,6 +108,8 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
   isRejected = false,
   moveSteps,
   isSpent = false,
+  isHit = false,
+  boardRotate = 0,
 }) => {
   const center = hexToPixel(unit.position, hexSize);
   const rr = hexSize * 0.45;
@@ -182,6 +194,9 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
         touchAction: 'none',
       }}
     >
+      {/* 受击抖动必须作用在**内层** —— 根节点的 transform 是属性，
+          CSS transform 会把它整个覆盖掉，棋子会跳回棋盘原点 */}
+      <g className={isHit ? 'sy-unit-hit' : undefined}>
       {/* 朝向尖：画在体力/移动弧之外（弧半径 1.3rr），否则会被弧盖住、几乎看不见 */}
       {hasFacing && (
         <g
@@ -200,6 +215,9 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
           />
         </g>
       )}
+
+      {/* 以下都是「上」由屏幕定义的元素，整盘旋转时要反向抵消 */}
+      <g transform={boardRotate ? `rotate(${-boardRotate})` : undefined}>
 
       {/* 玉片本体 + 金错内边。平涂，无渐变、无投影 */}
       <circle r={rr} fill={skin.face} />
@@ -267,6 +285,8 @@ export const UnitPiece: React.FC<UnitPieceProps> = ({
           strokeWidth={rr * 0.1}
         />
       )}
+      </g>
+      </g>
     </g>
   );
 };

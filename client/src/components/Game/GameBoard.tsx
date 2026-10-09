@@ -7,11 +7,13 @@ import { HexMap } from '../Map/HexMap';
 import { UnitPiece } from '../Unit/UnitPiece';
 import { BattleLog } from '../UI/BattleLog';
 import { LegendPanel } from '../UI/LegendPanel';
+import { Die } from '../UI/Die';
 import RulesModal from '../UI/RulesModal';
 import { hexEquals, hexToPixel, generateHexMap, isInStartZone, getShootingPath, getFanShapedHexes, getMachineOccupiedHexes, hexDistance, hexNeighbors, getDistanceToBaseline } from '../../utils/hexUtils';
 import { colyseusService } from '../../services/ColyseusService';
 import { toast, askConfirm, useUIStore } from '../../stores/uiStore';
 import { BOARD_ASPECT, IMPERIAL, UNIT_NAME } from '../../theme/boardTheme';
+import { boardViewBox } from '../../utils/boardGeometry';
 import { pendingAction, usePendingStore } from '../../game/pendingAction';
 import { useDamageFeed } from '../../game/damageFeed';
 import { getServerAttackHexes, getServerAttackTargets, getServerLethalTargets, getServerMoves, useValidActionsStore } from '../../game/validActions';
@@ -179,6 +181,45 @@ export const GameBoard: React.FC = () => {
    * 无双扇形、太平承载…）都自动覆盖，不需要在服务端 8 处 `hp -=` 各加一次广播。
    */
   const { flashes: damageFlashes, hitUnitIds } = useDamageFeed();
+
+  /**
+   * 机关的占位格。规则实现在 shared（getMachineOccupiedHexes），这里只做展示映射。
+   * 占位本身是「这块地被一台器械占着」的地形信息，所以交给 HexMap 的信息层画，
+   * 不再作为棋子层的装饰小圆点。
+   */
+  const machineFootprints = useMemo(
+    () => Object.values(units)
+      .filter(u => isMachineUnit(u.type))
+      .map(u => ({
+        key: `mf-${u.id}`,
+        hexes: getMachineOccupiedHexes(
+          u.position,
+          getMachineTypeStr(u.type)!,
+          u.owner === Player.PLAYER1
+        ),
+        side: (u.owner === Player.PLAYER1 ? 'p1' : 'p2') as 'p1' | 'p2',
+      })),
+    [units]
+  );
+
+  /**
+   * 选中棋子在棋盘容器内的百分比位置，用来把动作浮层贴到它旁边。
+   *
+   * 能用线性映射是因为 `.sy-board` 的长宽比**恰好等于 viewBox 的长宽比**
+   * （index.css 里用 aspect-ratio 保证），所以 SVG 没有额外的留白，
+   * viewBox 坐标到容器百分比是一条直线。
+   */
+  const actionAnchor = useMemo(() => {
+    if (!selectedUnit) return null;
+    const size = isNarrow ? 30 : 40;
+    const p = hexToPixel(selectedUnit.position, size);
+    // 棋盘旋转 90° 时 (x,y) → (-y, x)
+    const [x, y] = boardRotate === 90 ? [-p.y, p.x] : [p.x, p.y];
+    const vb = boardViewBox(5, size);
+    const w = boardRotate === 90 ? vb.height : vb.width;
+    const h = boardRotate === 90 ? vb.width : vb.height;
+    return { left: ((x + w / 2) / w) * 100, top: ((y + h / 2) / h) * 100 };
+  }, [selectedUnit, isNarrow, boardRotate]);
 
   const enemyThreatHexes = useValidActionsStore(state => state.threatHexes);
   const depthDefended = useValidActionsStore(state => state.depthDefended);
@@ -1513,589 +1554,22 @@ export const GameBoard: React.FC = () => {
     );
   }
 
-  return (
-    /* 整页一屏，不滚动：根是 flex column，棋盘那一行 flex:1 吃掉剩余高度。
-     * 原来是 min-h-screen + max-w-7xl —— 内容宽被锁在 1280，1920 和 1440 下
-     * 棋盘像素完全相同（744×664），而且页面在 1440×900 下要滚 221px。
-     * 见 docs/layout-spec.md §L1 §L4 §3.2 */
-    <div
-      className="h-screen p-3 md:p-4 flex flex-col overflow-hidden"
-      style={{ background: 'radial-gradient(ellipse at 50% 30%, #1a0800 0%, #0d0500 60%, #050200 100%)' }}
-    >
-      <div className="w-full mx-auto flex flex-col flex-1 min-h-0 gap-3 md:gap-4">
-        {/* 非你回合提示 */}
-        {!isMyTurn && isOnlineMode && (
-          <div className="rounded-lg p-3 text-center flex-none" style={{ border: '1px solid rgba(201,162,39,0.35)', background: 'rgba(13,5,0,0.7)' }}>
-            <p className="font-chinese tracking-wider gold-breathe" style={{ color: 'rgba(245,230,200,0.7)' }}>
-              等待对手操作...
-            </p>
-          </div>
-        )}
-
-        {/* 顶部信息栏 */}
-        <div className={`rounded-lg px-3 py-2 md:px-4 flex-none${turnFlash ? ' turn-transition' : ''}`} style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.95) 0%, rgba(13,5,0,0.98) 100%)', border: '1px solid rgba(201,162,39,0.25)', boxShadow: '0 0 20px rgba(201,162,39,0.08)' }}>
-          {/* 单行 HUD：每个子项都是一行高的盒子 + items-center，
-            * 这样"所有元素共享一条中心线"由布局本身保证，而不是靠手调。
-            * 旧实现里各块是 2–4 行的堆叠，七个元素落在五条不同的中心线上
-            * （实测 cy：行动阶段 101 / 规则 85 / 部署价值 61 / 行动点 41 / 基础 94 / 结束回合 85），
-            * 整条 HUD 吃掉 138px（手机上 236px = 29% 视口高）。
-            * 见 docs/layout-spec.md §L5 §3.2 */}
-          <div className="flex flex-wrap justify-between items-center gap-y-2 gap-x-3 sy-hud">
-            <div className="flex items-center gap-2 md:gap-3 min-w-0">
-              {/* 回合 + 阶段：同一行，阶段作为次要后缀 */}
-              <h2 className={`${isNarrow ? 'text-base' : 'text-xl'} font-ancient tracking-wider whitespace-nowrap`} style={{ color: '#C9A227' }}>
-                {currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 的回合
-                <span className="ml-2 text-xs font-chinese align-middle" style={{ color: 'rgba(201,162,39,0.45)' }}>
-                  {phase === GamePhase.DEPLOY ? '部署' : '行动'}
-                </span>
-              </h2>
-
-              {/* 将领：头像 + 名字同一行，阵营靠名字颜色区分，不再单独占一行 */}
-              <div className="flex items-center gap-1.5 md:gap-2 pl-2 md:pl-3 shrink-0" style={{ borderLeft: '1px solid rgba(201,162,39,0.2)' }}>
-                {([
-                  { g: player1General, side: '朱红', nameColor: '#E8C84A', bg: 'rgba(201,162,39,0.08)', border: 'rgba(201,162,39,0.4)', ring: 'rgba(201,162,39,0.5)' },
-                  { g: player2General, side: '青玉', nameColor: '#6FCFA4', bg: 'rgba(46,107,79,0.10)', border: 'rgba(63,138,102,0.4)', ring: 'rgba(63,138,102,0.5)' },
-                ] as const).map((p, i) => (
-                  <React.Fragment key={p.side}>
-                    {i === 1 && <span className="font-ancient text-xs shrink-0" style={{ color: 'rgba(201,162,39,0.35)' }}>VS</span>}
-                    <div
-                      className="flex items-center gap-1.5 px-2 py-1 rounded shrink-0"
-                      style={{ background: p.bg, border: `1px solid ${p.border}` }}
-                      title={`${p.side} · ${GENERAL_NAME[p.g ?? ''] ?? '未知'}`}
-                    >
-                      <img
-                        src={`/generals/${p.g}.svg`}
-                        alt=""
-                        className="w-5 h-5 md:w-6 md:h-6 rounded-full"
-                        style={{ border: `1px solid ${p.ring}` }}
-                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                      />
-                      <span className="text-xs font-chinese font-bold whitespace-nowrap" style={{ color: p.nameColor }}>
-                        {GENERAL_NAME[p.g ?? ''] ?? '未知'}
-                      </span>
-                    </div>
-                  </React.Fragment>
-                ))}
-              </div>
-            </div>
-
-            {/* 这一组（规则/音效/部署价值/行动点/操作按钮）原来是 nowrap，
-                窄屏下内容总宽超过容器又不能换行，就把整页撑出横向滚动条。
-                允许换行后各块会自己排成多行。 */}
-            <div className="flex flex-wrap items-center justify-end gap-3 md:gap-6">
-              {/* 规则 / 音效：收成 32×32 的图标按钮。
-                * 它们不是回合动作，不该占 HUD 的横向预算 —— 带文字时两个按钮要 124px，
-                * 1024 宽下正是它们把 HUD 挤成两行。文字进 title（也是无障碍标签）。 */}
-              <button
-                onClick={() => setRulesModalOpen(true)}
-                className="flex items-center justify-center w-8 h-8 rounded font-chinese transition-all shrink-0"
-                style={{ border: '1px solid rgba(201,162,39,0.35)', color: '#C9A227', background: 'rgba(13,5,0,0.6)' }}
-                title="查看游戏规则"
-                aria-label="查看游戏规则"
-                onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.7)')}
-                onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.35)')}
-              >
-                <span className="text-sm leading-none">规</span>
-              </button>
-
-              <button
-                onClick={toggleSound}
-                className="flex items-center justify-center w-8 h-8 rounded font-chinese transition-all shrink-0"
-                style={{
-                  border: '1px solid rgba(201,162,39,0.35)',
-                  color: soundEnabled ? '#C9A227' : 'rgba(201,162,39,0.35)',
-                  background: 'rgba(13,5,0,0.6)',
-                }}
-                title={soundEnabled ? '关闭音效' : '开启音效'}
-                aria-label={soundEnabled ? '关闭音效' : '开启音效'}
-                onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.7)')}
-                onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.35)')}
-              >
-                <span className="text-sm leading-none">{soundEnabled ? '音' : '静'}</span>
-              </button>
-
-              {/* 部署价值：label 与数值同一行。
-                * 原来是「标签 / 数值 / 骰子颗数」三行堆叠，骰子颗数这类派生信息
-                * 挪进 title，鼠标悬停可查，不占 HUD 高度。 */}
-              <div
-                className="flex items-baseline gap-1.5 shrink-0"
-                title={phase === GamePhase.DEPLOY
-                  ? (currentPlayer === Player.PLAYER2
-                      ? `骰子 ${1 + Math.floor(player1DeployedValue)} 颗（基于对方部署价值）`
-                      : '先手无限行动点')
-                  : `骰子 ${1 + Math.floor((currentPlayer === Player.PLAYER1 ? player1DeployedValue : player2DeployedValue) / 2)} 颗`}
-              >
-                <span className="text-xs font-chinese whitespace-nowrap" style={{ color: 'rgba(201,162,39,0.5)' }}>部署</span>
-                <span className={`${isNarrow ? 'text-base' : 'text-lg'} font-ancient leading-none`} style={{ color: '#E8C84A' }}>
-                  {(currentPlayer === Player.PLAYER1 ? player1DeployedValue : player2DeployedValue).toFixed(1)}元
-                </span>
-              </div>
-
-              <div className="flex items-baseline gap-1.5 shrink-0">
-                <span className="text-xs font-chinese whitespace-nowrap" style={{ color: 'rgba(201,162,39,0.5)' }}>行动点</span>
-                {(() => {
-                  const tempMax = currentPlayer === Player.PLAYER1 ? player1TempMaxActionPoints : player2TempMaxActionPoints;
-                  const diceSum = (currentPlayer === Player.PLAYER1 ? player1DiceResults : player2DiceResults)
-                    .reduce((sum, val) => sum + val, 0);
-
-                  if (tempMax !== null) {
-                    // 有临时上限,显示为 (当前/临时上限)
-                    return (
-                      <span className={`${isNarrow ? 'text-lg' : 'text-xl'} font-ancient leading-none`} style={{ color: '#E8C84A' }}>
-                        {currentActionPoints}
-                        <span className="text-sm" style={{ color: 'rgba(201,162,39,0.45)' }}>/{tempMax}</span>
-                      </span>
-                    );
-                  } else {
-                    // 没有临时上限,显示为 (当前/骰子总和)
-                    return (
-                      <span className={`${isNarrow ? 'text-lg' : 'text-xl'} font-ancient leading-none`} style={{ color: '#E8C84A' }}>
-                        {currentActionPoints}
-                        <span className="text-sm" style={{ color: 'rgba(201,162,39,0.45)' }}>/{diceSum}</span>
-                      </span>
-                    );
-                  }
-                })()}
-              </div>
-
-              {/* 骰子：自成一个单行内联组。
-                * 原来挂在「行动点」块下面，还顶着一行「基础:N个 / 击杀奖励 / 永久失去」说明，
-                * 所以行动点那一组比别的元素高出 44px。说明文字挪进 title。 */}
-              {(() => {
-                  const diceResults = currentPlayer === Player.PLAYER1 ? player1DiceResults : player2DiceResults;
-                  const killDice = currentPlayer === Player.PLAYER1 ? player1KillDice : player2KillDice;
-                  const lostDice = currentPlayer === Player.PLAYER1 ? player1LostDice : player2LostDice;
-                  const totalDice = currentPlayer === Player.PLAYER1 ? player1Dice : player2Dice;
-
-                  if (diceResults && diceResults.length > 0) {
-                    // 基础骰子数 = 总骰子数 - 击杀骰子数
-                    const baseDice = totalDice - killDice;
-
-                    const breakdown = [
-                      `基础 ${baseDice} 个`,
-                      killDice > 0 ? `击杀奖励 +${killDice} 个` : '',
-                      lostDice > 0 ? `永久失去 ${lostDice} 个` : '',
-                    ].filter(Boolean).join(' · ');
-
-                    return (
-                      <div className="flex items-center gap-1.5 shrink-0" title={breakdown}>
-                        {/* 基础骰子 - 蓝色边框 */}
-                        {diceResults.slice(0, baseDice).map((result, index) => (
-                          <span
-                            key={`base-${index}`}
-                            onClick={() => handleDiceClick(index, currentPlayer)}
-                            className={`inline-flex items-center justify-center w-8 h-8 border-2 rounded-md text-sm font-bold shadow-sm transition-all ${
-                              diceRolling ? 'dice-rolling' : ''
-                            } ${
-                              shenjiAbilityActive || rerollMode ? 'cursor-pointer hover:scale-110' : ''
-                            } ${
-                              selectedDiceIndex === index ? 'border-bronze scale-110' : rerollMode ? 'border-imperial-gold' : 'border-imperial-jade'
-                            }`}
-                          style={{ background: selectedDiceIndex === index ? 'rgba(120,0,200,0.25)' : 'rgba(13,5,0,0.8)', color: '#E8C84A' }}
-                          >
-                            {result}
-                          </span>
-                        ))}
-                        {/* 击杀骰子 - 金色边框 */}
-                        {diceResults.slice(baseDice, baseDice + killDice).map((result, index) => {
-                          const actualIndex = baseDice + index;
-                          return (
-                            <span
-                              key={`kill-${index}`}
-                              onClick={() => handleDiceClick(actualIndex, currentPlayer)}
-                              className={`inline-flex items-center justify-center w-8 h-8 border-2 rounded-md text-sm font-bold shadow-sm transition-all ${
-                                diceRolling ? 'dice-rolling' : ''
-                              } ${
-                                shenjiAbilityActive || rerollMode ? 'cursor-pointer hover:scale-110' : ''
-                              } ${
-                                selectedDiceIndex === actualIndex ? 'border-bronze scale-110' : rerollMode ? 'border-imperial-gold' : 'border-imperial-gold'
-                              }`}
-                              style={{ background: selectedDiceIndex === actualIndex ? 'rgba(120,0,200,0.25)' : 'rgba(13,5,0,0.8)', color: '#E8C84A' }}
-                            >
-                              {result}
-                            </span>
-                          );
-                        })}
-                        {/* 失去的骰子 - 灰色边框，无数字 */}
-                        {Array.from({ length: lostDice }).map((_, index) => (
-                          <span
-                            key={`lost-${index}`}
-                            className="inline-flex items-center justify-center w-8 h-8 border-2 border-imperial-gold-dark rounded-md text-sm font-bold opacity-40 shadow-sm"
-                            style={{ background: 'rgba(13,5,0,0.5)', color: 'rgba(201,162,39,0.3)' }}
-                          >
-                            ✕
-                          </span>
-                        ))}
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
-              {/* 太平将军天命结算结果面板 */}
-              {(() => {
-                const currentGeneral = currentPlayer === Player.PLAYER1 ? player1General : player2General;
-                const isTaipingTurn = currentGeneral === 'taiping' && isMyTurn;
-                if (!isTaipingTurn || !taipingTianmingActive) return null;
-                const currentDestiny = currentPlayer === Player.PLAYER1 ? player1DestinyValue : player2DestinyValue;
-                return (
-                  <div className="mb-3 p-3 rounded-lg" style={{ background: 'rgba(13,5,0,0.6)', border: '1px solid rgba(201,162,39,0.4)' }}>
-                    <h4 className="text-sm font-chinese font-bold mb-2" style={{ color: '#C9A227' }}>天命结算结果</h4>
-                    <div className="text-xs space-y-1 font-chinese" style={{ color: 'rgba(245,230,200,0.7)' }}>
-                      <div className="flex justify-between">
-                        <span>苍天骰：</span><span className="font-bold text-imperial-jade-light">{taipingTianmingCangtiandi}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>黄天骰：</span><span className="font-bold text-imperial-gold-light">{taipingTianmingHuangtian}</span>
-                      </div>
-                      <div className="flex justify-between pt-1" style={{ borderTop: '1px solid rgba(201,162,39,0.2)' }}>
-                        <span>天命值：</span>
-                        <span className="font-bold">{taipingTianmingOldDestiny} + {taipingTianmingHuangtian} - {taipingTianmingCangtiandi} = <span className="text-bronze-light">{currentDestiny}</span></span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>承载伤害：</span>
-                        <span className={`font-bold ${taipingTianmingDamage > 0 ? 'text-imperial-red-light' : 'text-imperial-jade-light'}`}>
-                          {taipingTianmingDamage > 0 ? `扣${taipingTianmingDamage}血（力士过多）` : '无伤害'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* 窄屏下让这排操作按钮独占一行：
-                  和信息块挤在同一行时会被压到换行（「结\束\回\合」）或撑出横向滚动条 */}
-              <div className={isNarrow ? "flex gap-2 w-full" : "flex gap-3"}>
-                {/* 部署阶段太平将军：苍天已死黄天当立初始化按钮 */}
-                {phase === GamePhase.DEPLOY && isMyTurn && (() => {
-                  const hasTaiping = currentPlayer === Player.PLAYER1
-                    ? player1General === 'taiping'
-                    : player2General === 'taiping';
-                  const initDone = currentPlayer === Player.PLAYER1
-                    ? player1TaipingDeployInitDone
-                    : player2TaipingDeployInitDone;
-                  if (!hasTaiping) return null;
-                  return (
-                    <div className="w-full mb-2">
-                      {!initDone ? (
-                        <button
-                          onClick={handleTaipingDeployInit}
- className="btn-sy btn-sy-gold w-full px-6 py-3 rounded-lg font-bold whitespace-nowrap"
-                        >
-                          ⚡ 结算天命值（苍天已死，黄天当立）
-                        </button>
-                      ) : (
-                        <p className="text-center text-sm panel-sy-title font-bold">✅ 初始天命已结算（+3点）</p>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                {/* 太平将军：结算天命按钮 or 正常结束回合 */}
-                {(() => {
-                  const currentGeneral = currentPlayer === Player.PLAYER1 ? player1General : player2General;
-                  const isTaipingTurn = currentGeneral === 'taiping' && isMyTurn && phase !== GamePhase.DEPLOY;
-                  const taipingAlive = Object.values(units).some(u =>
-                    u.owner === currentPlayer && u.type === UnitType.GENERAL && (u as any).generalType === 'taiping'
-                  );
-
-                  if (isTaipingTurn && taipingAlive && !taipingTianmingActive) {
-                    // 未结算天命：显示「结算天命」按钮
-                    return (
-                      <button
-                        onClick={handleTaipingTianmingRoll}
-                        disabled={taipingFushuiActive && taipingFushuiPlayer === currentPlayer}
- className="btn-sy btn-sy-gold flex-1 px-6 py-3 rounded-lg font-bold whitespace-nowrap"
-                      >
-                        结算天命
-                      </button>
-                    );
-                  } else if (isTaipingTurn && taipingAlive && taipingTianmingActive) {
-                    // 已结算天命：显示「结束回合」确认按钮
-                    return (
-                      <button
-                        onClick={handleTaipingTianmingConfirm}
- className="btn-sy btn-sy-red flex-1 px-6 py-3 rounded-lg font-bold whitespace-nowrap"
-                      >
-                        结束回合
-                      </button>
-                    );
-                  } else {
-                    // 非太平将军或将军已死：正常结束回合
-                    return (
-                      <button
-                        onClick={handleEndTurn}
-                        disabled={!isMyTurn}
-                        className="btn-sy btn-sy-red flex-1 px-6 py-3 rounded-lg font-bold whitespace-nowrap"
-                      >
-                        结束回合
-                      </button>
-                    );
-                  }
-                })()}
-                {isOnlineMode && (
-                  <button
-                    onClick={handleSurrender}
- className="btn-sy btn-sy-ghost px-6 py-3 rounded-lg font-bold whitespace-nowrap"
-                  >
-                    认输
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div
-          className={hasSideRail ? "flex gap-4 flex-1 min-h-0" : "flex flex-col gap-3 flex-1 min-h-0"}
-        >
-          {/* 棋盘区
-           *
-           * 尺寸公式见 docs/layout-spec.md §3.1：容器量自身尺寸（container-type: size），
-           * 棋盘取 min(可用宽, 可用高 × 长宽比)，既吃满空间又永不溢出。
-           * 旧实现是宽屏固定 height:700px、窄屏 aspectRatio '9.66/8.5' + maxHeight 62vh，
-           * 前者让棋盘在任何宽度下都一样大，后者的比值还和真实 viewBox 不符。 */}
-          <div
-            className={hasSideRail
-              ? "sy-board-wrap rounded-lg p-2 md:p-3 flex-1 min-h-0 min-w-0"
-              : "sy-board-wrap sy-board-wrap--width rounded-lg p-2 flex-none min-w-0"}
-            style={{
-              touchAction: 'none', // 防止移动端滚动干扰
-              background: 'rgba(13,5,0,0.6)',
-              border: '1px solid rgba(201,162,39,0.2)',
-            }}
-          >
-            {/* 转 90° 后棋盘长宽比取倒数，容器尺寸公式要跟着换 */}
-            <div
-              className="sy-board"
-              style={boardRotate ? ({ '--sy-board-ar': 1 / BOARD_ASPECT } as React.CSSProperties) : undefined}
-            >
-              <HexMap
-                radius={5}
-                hexSize={isNarrow ? 30 : 40}
-                rotate={boardRotate}
-                onHexClick={handleHexClick}
-                highlightedHexes={highlightedHexes}
-                /* 攻击类的高亮走朱色，移动走青色。
-                 * 原来两者共用同一套填充，攻击范围显示成"可移动"的青色，是实打实的误导。 */
-                highlightKind={actionMode === 'attack' || actionMode === 'rende-convert' ? 'attack' : 'move'}
-                /* 范围内真有敌军的格子加深 + 挂矛尖。
-                 * 「可攻击 vs 可击杀」（空心/实心矛尖）要等服务端下发 lethal，见 §7 */
-                threatHexes={
-                  actionMode === 'attack'
-                    ? highlightedHexes.filter(h =>
-                        Object.values(units).some(u =>
-                          u.owner !== currentPlayer && hexEquals(u.position, h)))
-                    : []
-                }
-                /* 实心矛尖 = 这一下能杀。lethal 由服务端用与实际结算同一份
-                 * Rules.predictDamage 算出来，客户端不自己判血量。 */
-                lethalHexes={
-                  actionMode === 'attack' && selectedUnit
-                    ? getServerLethalTargets(selectedUnit.id)
-                        .map(id => units[id]?.position)
-                        .filter((p): p is HexCoord => !!p)
-                    : []
-                }
-                /* 敌方下回合能打到的格子：常驻铺朱色斜纹，让站位失误在落子前就看得见。
-                 * 由服务端委派 checkAttackLegality 算出，不含战车碾压 → 偏保守。 */
-                enemyThreatHexes={enemyThreatHexes}
-                /* 被纵深抗击保护的单位：队首亮盾。
-                 * 这条规则（弓箭手打步兵、背后有连续步兵则免伤）谁都发现不了，
-                 * 画出来等于把一条隐藏规则变成一种可用的玩法。 */
-                shieldedHexes={Object.values(units)
-                  .filter(un => depthDefended.has(un.id))
-                  .map(un => un.position)}
-                damageFlashes={damageFlashes}
-              >
-              {/* 渲染射击路径 */}
-              {actionMode === 'rotate' && rotationPaths.size > 0 && (() => {
-                const pathColors = [
-                  '#ef4444', // 红色 - EAST (东)
-                  '#f97316', // 橙色 - NORTH_EAST (东北)
-                  '#eab308', // 黄色 - NORTH_WEST (西北)
-                  '#22c55e', // 绿色 - WEST (西)
-                  '#3b82f6', // 蓝色 - SOUTH_WEST (西南)
-                  '#a855f7', // 紫色 - SOUTH_EAST (东南)
-                ];
-                const directions = [
-                  Direction.EAST,
-                  Direction.NORTH_EAST,
-                  Direction.NORTH_WEST,
-                  Direction.WEST,
-                  Direction.SOUTH_WEST,
-                  Direction.SOUTH_EAST,
-                ];
-
-                return directions.map((dir, index) => {
-                  const path = rotationPaths.get(dir);
-                  if (!path || path.length === 0) return null;
-
-                  return (
-                    <g key={dir}>
-                      {path.map((hex, i) => {
-                        const pixel = hexToPixel(hex, isNarrow ? 30 : 40);
-                        return (
-                          <circle
-                            key={`${hex.q}-${hex.r}-${hex.s}`}
-                            cx={pixel.x}
-                            cy={pixel.y}
-                            r={isNarrow ? 11 : 15}
-                            fill={pathColors[index]}
-                            opacity={0.4}
-                            style={{ pointerEvents: 'auto', cursor: 'pointer' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRotationPathClick(hex);
-                            }}
-                          />
-                        );
-                      })}
-                    </g>
-                  );
-                });
-              })()}
-
-              {/* 渲染机关单位占用的格子 */}
-              {Object.values(units).filter(u => u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT).map(unit => {
-                const hexSize = isNarrow ? 30 : 40;
-                const machineTypeStr = unit.type === UnitType.BALLISTA ? 'ballista' : unit.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
-                const isPlayerOne = unit.owner === Player.PLAYER1;
-                const occupiedHexes = getMachineOccupiedHexes(unit.position, machineTypeStr, isPlayerOne);
-
-                return (
-                  // pointerEvents none：以前外层 svg 整体不收事件，现在棋子和热区同在一个
-                  // SVG 里，这层装饰若不让开就会挡住它覆盖的格子
-                  <g key={`machine-${unit.id}`} opacity={0.3} pointerEvents="none">
-                    {/* 渲染除中心位置外的所有占用格子 */}
-                    {occupiedHexes.slice(1).map((hex, index) => {
-                      const pixel = hexToPixel(hex, hexSize);
-                      return (
-                        <circle
-                          key={`${unit.id}-hex-${index}`}
-                          cx={pixel.x}
-                          cy={pixel.y}
-                          r={isNarrow ? 9 : 12}
-                          fill={unit.owner === Player.PLAYER1 ? IMPERIAL.redLight : '#3F8A66'}
-                          className="machine-hex-indicator"
-                        />
-                      );
-                    })}
-                  </g>
-                );
-              })}
-
-              {Object.values(units).map(unit => {
-                /* 棋子上的「移动力下弧」与「已行动」都从服务端下发的 validActions 推出，
-                 * 不在客户端按兵种硬编码一张移动力表 —— 那份数值住在服务端，两边会漂移。
-                 * 见 docs/board-art-spec.md §7 */
-                const moves = getServerMoves(unit.id);
-                const moveSteps = moves.length
-                  ? Math.max(...moves.map(m => m.steps ?? 1))
-                  : undefined;
-                const hasAttack =
-                  getServerAttackTargets(unit.id).length > 0 ||
-                  getServerAttackHexes(unit.id).length > 0;
-                return (
-                  <g key={unit.id} style={{ pointerEvents: 'auto' }}>
-                    <UnitPiece
-                      unit={unit}
-                      hexSize={isNarrow ? 30 : 40}
-                      onClick={() => handleUnitClick(unit.id)}
-                      isSelected={unit.id === selectedUnitId}
-                      isPending={pending?.unitId === unit.id}
-                      isRejected={rejectedUnitId === unit.id}
-                      moveSteps={moveSteps}
-                      isSpent={unit.actionsThisTurn > 0 && !moveSteps && !hasAttack}
-                      isHit={hitUnitIds.has(unit.id)}
-                      boardRotate={boardRotate}
-                    />
-                  </g>
-                );
-              })}
-
-              {/* 移动指令待确认：在目标格画半透明幽灵棋子，点下去就有反应 */}
-              {pending?.kind === 'move' && units[pending.unitId] && (
-                <UnitPiece
-                  unit={{ ...units[pending.unitId], position: pending.target }}
-                  hexSize={isNarrow ? 30 : 40}
-                  isGhost
-                  boardRotate={boardRotate}
-                />
-              )}
-
-              {/* 攻击指令待确认：目标格上画朱红脉冲环 */}
-              {pending?.kind === 'attack' && (() => {
-                const c = hexToPixel(pending.target, isNarrow ? 30 : 40);
-                return (
-                  <circle
-                    className="attack-pending-ring"
-                    cx={c.x}
-                    cy={c.y}
-                    r={(isNarrow ? 30 : 40) * 0.55}
-                    fill="none"
-                    stroke={IMPERIAL.redLight}
-                    strokeWidth={3}
-                    strokeDasharray="6 4"
-                  />
-                );
-              })()}
-              </HexMap>
-            </div>
-          </div>
-
-          {/* 右侧操作面板
-           * 旧实现是 maxHeight:700px + overflow-y-auto —— 820×1180 这类高视口下
-           * 视口有 1180 高、面板却硬截到 700，将军技能按钮被切掉一半，要在面板内二次滚动。
-           * 现在跟着行高走，内部自己滚。见 docs/layout-spec.md §L6 */}
-          <div
-            className="space-y-3 overflow-y-auto min-h-0"
-            style={hasSideRail
-              ? { flex: '0 0 clamp(264px, 22%, 400px)' }
-              // 堆叠时：棋盘按宽度定高后，剩下的高度全给操作面板，面板自己滚
-              : { flex: '1 1 auto' }}
-          >
-            {/* 选中单位信息 */}
-            {selectedUnit && (
-              <div className="rounded-lg p-4" style={{ background: 'rgba(13,5,0,0.7)', border: '1px solid rgba(201,162,39,0.2)' }}>
-                <h3 className="text-lg font-ancient tracking-wider mb-2" style={{ color: '#C9A227' }}>选中单位</h3>
-                <div className="space-y-2">
-                  {/* 这三行原来没有任何颜色类，继承浏览器默认 rgb(0,0,0)，
-                    * 写在 rgba(13,5,0,0.7) 的面板上实测对比度 1.04:1（AA 要求 4.5:1），
-                    * 等于不可见；而且「类型」直接把枚举值 archer / general 显示给玩家。
-                    * 见 docs/layout-spec.md §6 验收项 8 */}
-                  <p style={{ color: 'rgba(245,230,200,0.85)' }}>
-                    <strong style={{ color: 'rgba(201,162,39,0.85)' }}>类型:</strong>{' '}
-                    {UNIT_NAME[selectedUnit.type] ?? selectedUnit.type}
-                  </p>
-                  <p style={{ color: 'rgba(245,230,200,0.85)' }}>
-                    <strong style={{ color: 'rgba(201,162,39,0.85)' }}>生命:</strong>{' '}
-                    {selectedUnit.hp}/{selectedUnit.maxHp}
-                  </p>
-                  <p style={{ color: 'rgba(245,230,200,0.85)' }}>
-                    <strong style={{ color: 'rgba(201,162,39,0.85)' }}>行动:</strong>{' '}
-                    {selectedUnit.actionsThisTurn}/
-                    {(() => {
-                      // 弩车特殊处理：行动次数上限为1
-                      if (selectedUnit.type === UnitType.BALLISTA) {
-                        return 1;
-                      }
-                      // 战车特殊处理：行动次数上限为1
-                      if (selectedUnit.type === UnitType.CHARIOT) {
-                        return 1;
-                      }
-                      // 投石车特殊处理：行动次数上限为1
-                      if (selectedUnit.type === UnitType.CATAPULT) {
-                        return 1;
-                      }
-                      // 将军可能有额外行动次数
-                      const bonusActions = (selectedUnit.type === UnitType.GENERAL && 'bonusActionLimit' in selectedUnit && typeof selectedUnit.bonusActionLimit === 'number')
-                        ? selectedUnit.bonusActionLimit
-                        : 0;
-                      return 2 + bonusActions;
-                    })()}
-                  </p>
-                </div>
-
+  /**
+   * 选中单位的动作按钮。
+   *
+   * 提成变量**只是为了换个地方渲染** —— 每个按钮的 disabled 判断都深度嵌在兵种分支里
+   * （弓手 2 次、弩车/战车/投石车各 1 次、无双扇形、被定身、部署阶段…），
+   * 抽成数据列表要重写 ~500 行最密的判断逻辑，风险远大于收益。这里一行没动，
+   * 只是把整棵子树挪到贴着棋子的浮层里。
+   *
+   * 解决的是实测出来的「每个动作三段行程」：点棋子 → 右栏按钮 → 回到目标格，
+   * 1440 下单程 671px。见 docs/layout-spec.md §L3 §3.3
+   */
+  /* actionAnchor 的 useMemo 必须放在组件顶部（见上）—— 这里已经在
+   * 「掷骰子」「等待对手」这些**提前 return 之后**，放 hook 会让
+   * 每次渲染的 hook 数量不一致，React 直接报
+   * "Rendered more hooks than during the previous render"。 */
+  const actionButtons = selectedUnit ? (
                 <div className="mt-4 space-y-2">
                   <button
                     onClick={handleShowMoves}
@@ -2608,6 +2082,571 @@ export const GameBoard: React.FC = () => {
                     </button>
                   )}
                 </div>
+  ) : null;
+
+  return (
+    /* 整页一屏，不滚动：根是 flex column，棋盘那一行 flex:1 吃掉剩余高度。
+     * 原来是 min-h-screen + max-w-7xl —— 内容宽被锁在 1280，1920 和 1440 下
+     * 棋盘像素完全相同（744×664），而且页面在 1440×900 下要滚 221px。
+     * 见 docs/layout-spec.md §L1 §L4 §3.2 */
+    <div
+      className="h-screen p-3 md:p-4 flex flex-col overflow-hidden"
+      style={{ background: 'radial-gradient(ellipse at 50% 30%, #1a0800 0%, #0d0500 60%, #050200 100%)' }}
+    >
+      <div className="w-full mx-auto flex flex-col flex-1 min-h-0 gap-3 md:gap-4">
+        {/* 非你回合提示 */}
+        {!isMyTurn && isOnlineMode && (
+          <div className="rounded-lg p-3 text-center flex-none" style={{ border: '1px solid rgba(201,162,39,0.35)', background: 'rgba(13,5,0,0.7)' }}>
+            <p className="font-chinese tracking-wider gold-breathe" style={{ color: 'rgba(245,230,200,0.7)' }}>
+              等待对手操作...
+            </p>
+          </div>
+        )}
+
+        {/* 顶部信息栏 */}
+        <div className={`rounded-lg px-3 py-2 md:px-4 flex-none${turnFlash ? ' turn-transition' : ''}`} style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.95) 0%, rgba(13,5,0,0.98) 100%)', border: '1px solid rgba(201,162,39,0.25)', boxShadow: '0 0 20px rgba(201,162,39,0.08)' }}>
+          {/* 单行 HUD：每个子项都是一行高的盒子 + items-center，
+            * 这样"所有元素共享一条中心线"由布局本身保证，而不是靠手调。
+            * 旧实现里各块是 2–4 行的堆叠，七个元素落在五条不同的中心线上
+            * （实测 cy：行动阶段 101 / 规则 85 / 部署价值 61 / 行动点 41 / 基础 94 / 结束回合 85），
+            * 整条 HUD 吃掉 138px（手机上 236px = 29% 视口高）。
+            * 见 docs/layout-spec.md §L5 §3.2 */}
+          <div className="flex flex-wrap justify-between items-center gap-y-2 gap-x-3 sy-hud">
+            <div className="flex items-center gap-2 md:gap-3 min-w-0">
+              {/* 回合 + 阶段：同一行，阶段作为次要后缀 */}
+              <h2 className={`${isNarrow ? 'text-base' : 'text-xl'} font-ancient tracking-wider whitespace-nowrap`} style={{ color: '#C9A227' }}>
+                {currentPlayer === Player.PLAYER1 ? '玩家 1' : '玩家 2'} 的回合
+                <span className="ml-2 text-xs font-chinese align-middle" style={{ color: 'rgba(201,162,39,0.45)' }}>
+                  {phase === GamePhase.DEPLOY ? '部署' : '行动'}
+                </span>
+              </h2>
+
+              {/* 将领：头像 + 名字同一行，阵营靠名字颜色区分，不再单独占一行 */}
+              <div className="flex items-center gap-1.5 md:gap-2 pl-2 md:pl-3 shrink-0" style={{ borderLeft: '1px solid rgba(201,162,39,0.2)' }}>
+                {([
+                  { g: player1General, side: '朱红', nameColor: '#E8C84A', bg: 'rgba(201,162,39,0.08)', border: 'rgba(201,162,39,0.4)', ring: 'rgba(201,162,39,0.5)' },
+                  { g: player2General, side: '青玉', nameColor: '#6FCFA4', bg: 'rgba(46,107,79,0.10)', border: 'rgba(63,138,102,0.4)', ring: 'rgba(63,138,102,0.5)' },
+                ] as const).map((p, i) => (
+                  <React.Fragment key={p.side}>
+                    {i === 1 && <span className="font-ancient text-xs shrink-0" style={{ color: 'rgba(201,162,39,0.35)' }}>VS</span>}
+                    <div
+                      className="flex items-center gap-1.5 px-2 py-1 rounded shrink-0"
+                      style={{ background: p.bg, border: `1px solid ${p.border}` }}
+                      title={`${p.side} · ${GENERAL_NAME[p.g ?? ''] ?? '未知'}`}
+                    >
+                      <img
+                        src={`/generals/${p.g}.svg`}
+                        alt=""
+                        className="w-5 h-5 md:w-6 md:h-6 rounded-full"
+                        style={{ border: `1px solid ${p.ring}` }}
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                      <span className="text-xs font-chinese font-bold whitespace-nowrap" style={{ color: p.nameColor }}>
+                        {GENERAL_NAME[p.g ?? ''] ?? '未知'}
+                      </span>
+                    </div>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+
+            {/* 这一组（规则/音效/部署价值/行动点/操作按钮）原来是 nowrap，
+                窄屏下内容总宽超过容器又不能换行，就把整页撑出横向滚动条。
+                允许换行后各块会自己排成多行。 */}
+            <div className="flex flex-wrap items-center justify-end gap-3 md:gap-6">
+              {/* 规则 / 音效：收成 32×32 的图标按钮。
+                * 它们不是回合动作，不该占 HUD 的横向预算 —— 带文字时两个按钮要 124px，
+                * 1024 宽下正是它们把 HUD 挤成两行。文字进 title（也是无障碍标签）。 */}
+              <button
+                onClick={() => setRulesModalOpen(true)}
+                className="flex items-center justify-center w-8 h-8 rounded font-chinese transition-all shrink-0"
+                style={{ border: '1px solid rgba(201,162,39,0.35)', color: '#C9A227', background: 'rgba(13,5,0,0.6)' }}
+                title="查看游戏规则"
+                aria-label="查看游戏规则"
+                onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.7)')}
+                onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.35)')}
+              >
+                <span className="text-sm leading-none">规</span>
+              </button>
+
+              <button
+                onClick={toggleSound}
+                className="flex items-center justify-center w-8 h-8 rounded font-chinese transition-all shrink-0"
+                style={{
+                  border: '1px solid rgba(201,162,39,0.35)',
+                  color: soundEnabled ? '#C9A227' : 'rgba(201,162,39,0.35)',
+                  background: 'rgba(13,5,0,0.6)',
+                }}
+                title={soundEnabled ? '关闭音效' : '开启音效'}
+                aria-label={soundEnabled ? '关闭音效' : '开启音效'}
+                onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.7)')}
+                onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.35)')}
+              >
+                <span className="text-sm leading-none">{soundEnabled ? '音' : '静'}</span>
+              </button>
+
+              {/* 部署价值：label 与数值同一行。
+                * 原来是「标签 / 数值 / 骰子颗数」三行堆叠，骰子颗数这类派生信息
+                * 挪进 title，鼠标悬停可查，不占 HUD 高度。 */}
+              <div
+                className="flex items-baseline gap-1.5 shrink-0"
+                title={phase === GamePhase.DEPLOY
+                  ? (currentPlayer === Player.PLAYER2
+                      ? `骰子 ${1 + Math.floor(player1DeployedValue)} 颗（基于对方部署价值）`
+                      : '先手无限行动点')
+                  : `骰子 ${1 + Math.floor((currentPlayer === Player.PLAYER1 ? player1DeployedValue : player2DeployedValue) / 2)} 颗`}
+              >
+                <span className="text-xs font-chinese whitespace-nowrap" style={{ color: 'rgba(201,162,39,0.5)' }}>部署</span>
+                <span className={`${isNarrow ? 'text-base' : 'text-lg'} font-ancient leading-none`} style={{ color: '#E8C84A' }}>
+                  {(currentPlayer === Player.PLAYER1 ? player1DeployedValue : player2DeployedValue).toFixed(1)}元
+                </span>
+              </div>
+
+              <div className="flex items-baseline gap-1.5 shrink-0">
+                <span className="text-xs font-chinese whitespace-nowrap" style={{ color: 'rgba(201,162,39,0.5)' }}>行动点</span>
+                {(() => {
+                  const tempMax = currentPlayer === Player.PLAYER1 ? player1TempMaxActionPoints : player2TempMaxActionPoints;
+                  const diceSum = (currentPlayer === Player.PLAYER1 ? player1DiceResults : player2DiceResults)
+                    .reduce((sum, val) => sum + val, 0);
+
+                  if (tempMax !== null) {
+                    // 有临时上限,显示为 (当前/临时上限)
+                    return (
+                      <span className={`${isNarrow ? 'text-lg' : 'text-xl'} font-ancient leading-none`} style={{ color: '#E8C84A' }}>
+                        {currentActionPoints}
+                        <span className="text-sm" style={{ color: 'rgba(201,162,39,0.45)' }}>/{tempMax}</span>
+                      </span>
+                    );
+                  } else {
+                    // 没有临时上限,显示为 (当前/骰子总和)
+                    return (
+                      <span className={`${isNarrow ? 'text-lg' : 'text-xl'} font-ancient leading-none`} style={{ color: '#E8C84A' }}>
+                        {currentActionPoints}
+                        <span className="text-sm" style={{ color: 'rgba(201,162,39,0.45)' }}>/{diceSum}</span>
+                      </span>
+                    );
+                  }
+                })()}
+              </div>
+
+              {/* 骰子：自成一个单行内联组。
+                * 原来挂在「行动点」块下面，还顶着一行「基础:N个 / 击杀奖励 / 永久失去」说明，
+                * 所以行动点那一组比别的元素高出 44px。说明文字挪进 title。 */}
+              {(() => {
+                  const diceResults = currentPlayer === Player.PLAYER1 ? player1DiceResults : player2DiceResults;
+                  const killDice = currentPlayer === Player.PLAYER1 ? player1KillDice : player2KillDice;
+                  const lostDice = currentPlayer === Player.PLAYER1 ? player1LostDice : player2LostDice;
+                  const totalDice = currentPlayer === Player.PLAYER1 ? player1Dice : player2Dice;
+
+                  if (diceResults && diceResults.length > 0) {
+                    // 基础骰子数 = 总骰子数 - 击杀骰子数
+                    const baseDice = totalDice - killDice;
+
+                    const breakdown = [
+                      `基础 ${baseDice} 个`,
+                      killDice > 0 ? `击杀奖励 +${killDice} 个` : '',
+                      lostDice > 0 ? `永久失去 ${lostDice} 个` : '',
+                    ].filter(Boolean).join(' · ');
+
+                    return (
+                      <div className="flex items-center gap-1.5 shrink-0" title={breakdown}>
+                        {/* 基础骰 —— 真骰面，不再是写数字的方块 */}
+                        {diceResults.slice(0, baseDice).map((result, index) => (
+                          <span key={`base-${index}`} className={diceRolling ? 'dice-rolling' : undefined}>
+                            <Die
+                              value={result}
+                              variant="base"
+                              selected={selectedDiceIndex === index}
+                              interactive={shenjiAbilityActive || rerollMode}
+                              onClick={() => handleDiceClick(index, currentPlayer)}
+                            />
+                          </span>
+                        ))}
+                        {/* 击杀奖励骰 —— 金边区分来源 */}
+                        {diceResults.slice(baseDice, baseDice + killDice).map((result, index) => {
+                          const actualIndex = baseDice + index;
+                          return (
+                            <span key={`kill-${index}`} className={diceRolling ? 'dice-rolling' : undefined}>
+                              <Die
+                                value={result}
+                                variant="kill"
+                                selected={selectedDiceIndex === actualIndex}
+                                interactive={shenjiAbilityActive || rerollMode}
+                                onClick={() => handleDiceClick(actualIndex, currentPlayer)}
+                              />
+                            </span>
+                          );
+                        })}
+                        {/* 永久失去的骰位 —— 空位 + ✕，不画点数 */}
+                        {Array.from({ length: lostDice }).map((_, index) => (
+                          <Die key={`lost-${index}`} variant="lost" />
+                        ))}
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+              {/* 太平将军天命结算结果面板 */}
+              {(() => {
+                const currentGeneral = currentPlayer === Player.PLAYER1 ? player1General : player2General;
+                const isTaipingTurn = currentGeneral === 'taiping' && isMyTurn;
+                if (!isTaipingTurn || !taipingTianmingActive) return null;
+                const currentDestiny = currentPlayer === Player.PLAYER1 ? player1DestinyValue : player2DestinyValue;
+                return (
+                  <div className="mb-3 p-3 rounded-lg" style={{ background: 'rgba(13,5,0,0.6)', border: '1px solid rgba(201,162,39,0.4)' }}>
+                    <h4 className="text-sm font-chinese font-bold mb-2" style={{ color: '#C9A227' }}>天命结算结果</h4>
+                    <div className="text-xs space-y-1 font-chinese" style={{ color: 'rgba(245,230,200,0.7)' }}>
+                      <div className="flex justify-between">
+                        <span>苍天骰：</span><span className="font-bold text-imperial-jade-light">{taipingTianmingCangtiandi}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>黄天骰：</span><span className="font-bold text-imperial-gold-light">{taipingTianmingHuangtian}</span>
+                      </div>
+                      <div className="flex justify-between pt-1" style={{ borderTop: '1px solid rgba(201,162,39,0.2)' }}>
+                        <span>天命值：</span>
+                        <span className="font-bold">{taipingTianmingOldDestiny} + {taipingTianmingHuangtian} - {taipingTianmingCangtiandi} = <span className="text-bronze-light">{currentDestiny}</span></span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>承载伤害：</span>
+                        <span className={`font-bold ${taipingTianmingDamage > 0 ? 'text-imperial-red-light' : 'text-imperial-jade-light'}`}>
+                          {taipingTianmingDamage > 0 ? `扣${taipingTianmingDamage}血（力士过多）` : '无伤害'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 窄屏下让这排操作按钮独占一行：
+                  和信息块挤在同一行时会被压到换行（「结\束\回\合」）或撑出横向滚动条 */}
+              <div className={isNarrow ? "flex gap-2 w-full" : "flex gap-3"}>
+                {/* 部署阶段太平将军：苍天已死黄天当立初始化按钮 */}
+                {phase === GamePhase.DEPLOY && isMyTurn && (() => {
+                  const hasTaiping = currentPlayer === Player.PLAYER1
+                    ? player1General === 'taiping'
+                    : player2General === 'taiping';
+                  const initDone = currentPlayer === Player.PLAYER1
+                    ? player1TaipingDeployInitDone
+                    : player2TaipingDeployInitDone;
+                  if (!hasTaiping) return null;
+                  return (
+                    <div className="w-full mb-2">
+                      {!initDone ? (
+                        <button
+                          onClick={handleTaipingDeployInit}
+ className="btn-sy btn-sy-gold w-full px-6 py-3 rounded-lg font-bold whitespace-nowrap"
+                        >
+                          ⚡ 结算天命值（苍天已死，黄天当立）
+                        </button>
+                      ) : (
+                        <p className="text-center text-sm panel-sy-title font-bold">✅ 初始天命已结算（+3点）</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* 太平将军：结算天命按钮 or 正常结束回合 */}
+                {(() => {
+                  const currentGeneral = currentPlayer === Player.PLAYER1 ? player1General : player2General;
+                  const isTaipingTurn = currentGeneral === 'taiping' && isMyTurn && phase !== GamePhase.DEPLOY;
+                  const taipingAlive = Object.values(units).some(u =>
+                    u.owner === currentPlayer && u.type === UnitType.GENERAL && (u as any).generalType === 'taiping'
+                  );
+
+                  if (isTaipingTurn && taipingAlive && !taipingTianmingActive) {
+                    // 未结算天命：显示「结算天命」按钮
+                    return (
+                      <button
+                        onClick={handleTaipingTianmingRoll}
+                        disabled={taipingFushuiActive && taipingFushuiPlayer === currentPlayer}
+ className="btn-sy btn-sy-gold flex-1 px-6 py-3 rounded-lg font-bold whitespace-nowrap"
+                      >
+                        结算天命
+                      </button>
+                    );
+                  } else if (isTaipingTurn && taipingAlive && taipingTianmingActive) {
+                    // 已结算天命：显示「结束回合」确认按钮
+                    return (
+                      <button
+                        onClick={handleTaipingTianmingConfirm}
+ className="btn-sy btn-sy-red flex-1 px-6 py-3 rounded-lg font-bold whitespace-nowrap"
+                      >
+                        结束回合
+                      </button>
+                    );
+                  } else {
+                    // 非太平将军或将军已死：正常结束回合
+                    return (
+                      <button
+                        onClick={handleEndTurn}
+                        disabled={!isMyTurn}
+                        className="btn-sy btn-sy-red flex-1 px-6 py-3 rounded-lg font-bold whitespace-nowrap"
+                      >
+                        结束回合
+                      </button>
+                    );
+                  }
+                })()}
+                {isOnlineMode && (
+                  <button
+                    onClick={handleSurrender}
+ className="btn-sy btn-sy-ghost px-6 py-3 rounded-lg font-bold whitespace-nowrap"
+                  >
+                    认输
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={hasSideRail ? "flex gap-4 flex-1 min-h-0" : "flex flex-col gap-3 flex-1 min-h-0"}
+        >
+          {/* 棋盘区
+           *
+           * 尺寸公式见 docs/layout-spec.md §3.1：容器量自身尺寸（container-type: size），
+           * 棋盘取 min(可用宽, 可用高 × 长宽比)，既吃满空间又永不溢出。
+           * 旧实现是宽屏固定 height:700px、窄屏 aspectRatio '9.66/8.5' + maxHeight 62vh，
+           * 前者让棋盘在任何宽度下都一样大，后者的比值还和真实 viewBox 不符。 */}
+          <div
+            className={hasSideRail
+              ? "sy-board-wrap rounded-lg p-2 md:p-3 flex-1 min-h-0 min-w-0"
+              : "sy-board-wrap sy-board-wrap--width rounded-lg p-2 flex-none min-w-0"}
+            style={{
+              touchAction: 'none', // 防止移动端滚动干扰
+              background: 'rgba(13,5,0,0.6)',
+              border: '1px solid rgba(201,162,39,0.2)',
+            }}
+          >
+            {/* 转 90° 后棋盘长宽比取倒数，容器尺寸公式要跟着换 */}
+            <div
+              className="sy-board"
+              style={boardRotate ? ({ '--sy-board-ar': 1 / BOARD_ASPECT } as React.CSSProperties) : undefined}
+            >
+              <HexMap
+                radius={5}
+                hexSize={isNarrow ? 30 : 40}
+                rotate={boardRotate}
+                onHexClick={handleHexClick}
+                highlightedHexes={highlightedHexes}
+                /* 攻击类的高亮走朱色，移动走青色。
+                 * 原来两者共用同一套填充，攻击范围显示成"可移动"的青色，是实打实的误导。 */
+                highlightKind={actionMode === 'attack' || actionMode === 'rende-convert' ? 'attack' : 'move'}
+                /* 范围内真有敌军的格子加深 + 挂矛尖。
+                 * 「可攻击 vs 可击杀」（空心/实心矛尖）要等服务端下发 lethal，见 §7 */
+                threatHexes={
+                  actionMode === 'attack'
+                    ? highlightedHexes.filter(h =>
+                        Object.values(units).some(u =>
+                          u.owner !== currentPlayer && hexEquals(u.position, h)))
+                    : []
+                }
+                /* 实心矛尖 = 这一下能杀。lethal 由服务端用与实际结算同一份
+                 * Rules.predictDamage 算出来，客户端不自己判血量。 */
+                lethalHexes={
+                  actionMode === 'attack' && selectedUnit
+                    ? getServerLethalTargets(selectedUnit.id)
+                        .map(id => units[id]?.position)
+                        .filter((p): p is HexCoord => !!p)
+                    : []
+                }
+                /* 敌方下回合能打到的格子：常驻铺朱色斜纹，让站位失误在落子前就看得见。
+                 * 由服务端委派 checkAttackLegality 算出，不含战车碾压 → 偏保守。 */
+                enemyThreatHexes={enemyThreatHexes}
+                /* 被纵深抗击保护的单位：队首亮盾。
+                 * 这条规则（弓箭手打步兵、背后有连续步兵则免伤）谁都发现不了，
+                 * 画出来等于把一条隐藏规则变成一种可用的玩法。 */
+                shieldedHexes={Object.values(units)
+                  .filter(un => depthDefended.has(un.id))
+                  .map(un => un.position)}
+                damageFlashes={damageFlashes}
+                machineFootprints={machineFootprints}
+              >
+              {/* 渲染射击路径 */}
+              {actionMode === 'rotate' && rotationPaths.size > 0 && (() => {
+                const pathColors = [
+                  '#ef4444', // 红色 - EAST (东)
+                  '#f97316', // 橙色 - NORTH_EAST (东北)
+                  '#eab308', // 黄色 - NORTH_WEST (西北)
+                  '#22c55e', // 绿色 - WEST (西)
+                  '#3b82f6', // 蓝色 - SOUTH_WEST (西南)
+                  '#a855f7', // 紫色 - SOUTH_EAST (东南)
+                ];
+                const directions = [
+                  Direction.EAST,
+                  Direction.NORTH_EAST,
+                  Direction.NORTH_WEST,
+                  Direction.WEST,
+                  Direction.SOUTH_WEST,
+                  Direction.SOUTH_EAST,
+                ];
+
+                return directions.map((dir, index) => {
+                  const path = rotationPaths.get(dir);
+                  if (!path || path.length === 0) return null;
+
+                  return (
+                    <g key={dir}>
+                      {path.map((hex, i) => {
+                        const pixel = hexToPixel(hex, isNarrow ? 30 : 40);
+                        return (
+                          <circle
+                            key={`${hex.q}-${hex.r}-${hex.s}`}
+                            cx={pixel.x}
+                            cy={pixel.y}
+                            r={isNarrow ? 11 : 15}
+                            fill={pathColors[index]}
+                            opacity={0.4}
+                            style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRotationPathClick(hex);
+                            }}
+                          />
+                        );
+                      })}
+                    </g>
+                  );
+                });
+              })()}
+
+
+
+              {Object.values(units).map(unit => {
+                /* 棋子上的「移动力下弧」与「已行动」都从服务端下发的 validActions 推出，
+                 * 不在客户端按兵种硬编码一张移动力表 —— 那份数值住在服务端，两边会漂移。
+                 * 见 docs/board-art-spec.md §7 */
+                const moves = getServerMoves(unit.id);
+                const moveSteps = moves.length
+                  ? Math.max(...moves.map(m => m.steps ?? 1))
+                  : undefined;
+                const hasAttack =
+                  getServerAttackTargets(unit.id).length > 0 ||
+                  getServerAttackHexes(unit.id).length > 0;
+                return (
+                  <g key={unit.id} style={{ pointerEvents: 'auto' }}>
+                    <UnitPiece
+                      unit={unit}
+                      hexSize={isNarrow ? 30 : 40}
+                      onClick={() => handleUnitClick(unit.id)}
+                      isSelected={unit.id === selectedUnitId}
+                      isPending={pending?.unitId === unit.id}
+                      isRejected={rejectedUnitId === unit.id}
+                      moveSteps={moveSteps}
+                      isSpent={unit.actionsThisTurn > 0 && !moveSteps && !hasAttack}
+                      isHit={hitUnitIds.has(unit.id)}
+                      boardRotate={boardRotate}
+                    />
+                  </g>
+                );
+              })}
+
+              {/* 移动指令待确认：在目标格画半透明幽灵棋子，点下去就有反应 */}
+              {pending?.kind === 'move' && units[pending.unitId] && (
+                <UnitPiece
+                  unit={{ ...units[pending.unitId], position: pending.target }}
+                  hexSize={isNarrow ? 30 : 40}
+                  isGhost
+                  boardRotate={boardRotate}
+                />
+              )}
+
+              {/* 攻击指令待确认：目标格上画朱红脉冲环 */}
+              {pending?.kind === 'attack' && (() => {
+                const c = hexToPixel(pending.target, isNarrow ? 30 : 40);
+                return (
+                  <circle
+                    className="attack-pending-ring"
+                    cx={c.x}
+                    cy={c.y}
+                    r={(isNarrow ? 30 : 40) * 0.55}
+                    fill="none"
+                    stroke={IMPERIAL.redLight}
+                    strokeWidth={3}
+                    strokeDasharray="6 4"
+                  />
+                );
+              })()}
+              </HexMap>
+
+              {/* 动作浮层：贴着选中的棋子，而不是放在 400–670px 外的右栏。
+                * 窄屏不用 —— 那里面板紧贴棋盘下方，行程本来就短，而浮层会盖掉小棋盘的一大块。
+                * 见 docs/layout-spec.md §3.3 */}
+              {hasSideRail && actionAnchor && actionButtons && (
+                <div
+                  className="sy-action-pop"
+                  style={{
+                    left: `${actionAnchor.left}%`,
+                    // 棋子靠上时浮层放下方，否则放上方，避免溢出棋盘
+                    top: `${actionAnchor.top}%`,
+                    transform: actionAnchor.top < 38
+                      ? 'translate(-50%, 2.2rem)'
+                      : 'translate(-50%, calc(-100% - 2.2rem))',
+                  }}
+                >
+                  {actionButtons}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 右侧操作面板
+           * 旧实现是 maxHeight:700px + overflow-y-auto —— 820×1180 这类高视口下
+           * 视口有 1180 高、面板却硬截到 700，将军技能按钮被切掉一半，要在面板内二次滚动。
+           * 现在跟着行高走，内部自己滚。见 docs/layout-spec.md §L6 */}
+          <div
+            className="space-y-3 overflow-y-auto min-h-0"
+            style={hasSideRail
+              ? { flex: '0 0 clamp(264px, 22%, 400px)' }
+              // 堆叠时：棋盘按宽度定高后，剩下的高度全给操作面板，面板自己滚
+              : { flex: '1 1 auto' }}
+          >
+            {/* 选中单位信息 */}
+            {selectedUnit && (
+              <div className="rounded-lg p-4" style={{ background: 'rgba(13,5,0,0.7)', border: '1px solid rgba(201,162,39,0.2)' }}>
+                <h3 className="text-lg font-ancient tracking-wider mb-2" style={{ color: '#C9A227' }}>选中单位</h3>
+                <div className="space-y-2">
+                  {/* 这三行原来没有任何颜色类，继承浏览器默认 rgb(0,0,0)，
+                    * 写在 rgba(13,5,0,0.7) 的面板上实测对比度 1.04:1（AA 要求 4.5:1），
+                    * 等于不可见；而且「类型」直接把枚举值 archer / general 显示给玩家。
+                    * 见 docs/layout-spec.md §6 验收项 8 */}
+                  <p style={{ color: 'rgba(245,230,200,0.85)' }}>
+                    <strong style={{ color: 'rgba(201,162,39,0.85)' }}>类型:</strong>{' '}
+                    {UNIT_NAME[selectedUnit.type] ?? selectedUnit.type}
+                  </p>
+                  <p style={{ color: 'rgba(245,230,200,0.85)' }}>
+                    <strong style={{ color: 'rgba(201,162,39,0.85)' }}>生命:</strong>{' '}
+                    {selectedUnit.hp}/{selectedUnit.maxHp}
+                  </p>
+                  <p style={{ color: 'rgba(245,230,200,0.85)' }}>
+                    <strong style={{ color: 'rgba(201,162,39,0.85)' }}>行动:</strong>{' '}
+                    {selectedUnit.actionsThisTurn}/
+                    {(() => {
+                      // 弩车特殊处理：行动次数上限为1
+                      if (selectedUnit.type === UnitType.BALLISTA) {
+                        return 1;
+                      }
+                      // 战车特殊处理：行动次数上限为1
+                      if (selectedUnit.type === UnitType.CHARIOT) {
+                        return 1;
+                      }
+                      // 投石车特殊处理：行动次数上限为1
+                      if (selectedUnit.type === UnitType.CATAPULT) {
+                        return 1;
+                      }
+                      // 将军可能有额外行动次数
+                      const bonusActions = (selectedUnit.type === UnitType.GENERAL && 'bonusActionLimit' in selectedUnit && typeof selectedUnit.bonusActionLimit === 'number')
+                        ? selectedUnit.bonusActionLimit
+                        : 0;
+                      return 2 + bonusActions;
+                    })()}
+                  </p>
+                </div>
+
+                {/* 窄屏：动作按钮留在面板里（面板紧贴棋盘下方，行程本来就短）。
+                    宽屏搬到贴着棋子的浮层，见下方 sy-action-pop。 */}
+                {!hasSideRail && actionButtons}
               </div>
             )}
 

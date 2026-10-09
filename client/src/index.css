@@ -51,6 +51,41 @@ body {
   margin: 0 auto;
 }
 
+/* ========== 贴着棋子的动作浮层 ==========
+ *
+ * 解决实测出来的「每个动作三段行程」：点棋子 → 右栏按钮 → 回到目标格，
+ * 1440×900 下单程 671px。浮层贴到棋子旁边后降到 ~80px。
+ * 见 docs/layout-spec.md §L3 §3.3
+ */
+.sy-board {
+  position: relative; /* 浮层按百分比定位的参照 */
+}
+
+.sy-action-pop {
+  position: absolute;
+  z-index: 5;
+  width: 11.5rem;
+  max-width: 46%;
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(180deg, rgba(26, 18, 9, 0.96), rgba(13, 9, 3, 0.97));
+  border: 1px solid rgba(201, 162, 39, 0.35);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  /* 浮层自己不吃事件，只有里面的按钮吃 —— 否则会挡住它覆盖的格子 */
+  pointer-events: none;
+}
+
+.sy-action-pop > * {
+  pointer-events: auto;
+}
+
+/* 浮层里的按钮比面板里紧凑一档 */
+.sy-action-pop button {
+  font-size: 0.8125rem;
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+}
+
 /* ========== 可折叠面板 ========== */
 
 /* 去掉浏览器默认的三角，换成自绘的、跟着展开状态转的指示符 */

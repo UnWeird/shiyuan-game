@@ -120,9 +120,32 @@ describe('getThreatHexes —— 机关', () => {
     expect(a).not.toEqual(b);
   });
 
-  it('战车不产生威胁格 —— 它靠移动碾压，不是攻击动作，这里刻意不覆盖', () => {
+  /**
+   * 战车按**服务端实现**算：碾压只发生在落点车身，不是沿路。
+   * 规则书写的是「前进路上的单位会被直接击杀（带友伤）」，
+   * 但 handleMove 只检查 getMachineOccupiedHexes(targetPos,'chariot')，
+   * 且只杀 owner !== role —— 既没沿路也没友伤。威胁提示跟代码走。
+   */
+  it('战车威胁 = 所有合法落点的车身覆盖格', () => {
     const ch = u({ id: 'ch', type: 'chariot', owner: 'player1', q: 0, r: 0 });
-    expect(getThreatHexes(ch, [ch], R)).toEqual([]);
+    const got = getThreatHexes(ch, [ch], R);
+    expect(got.length).toBeGreaterThan(0);
+    // 车身是中心 + 右上/右/右下，所以威胁区会明显偏向 +q 侧
+    const right = got.filter(h => h.q > 0).length;
+    expect(right).toBeGreaterThan(0);
+  });
+
+  it('战车动不了（本回合已行动）时威胁依然算得出 —— 预测的是下回合', () => {
+    const spent = u({ id: 'ch', type: 'chariot', owner: 'player1', q: 0, r: 0, hasActedThisTurn: true });
+    const fresh = u({ id: 'ch', type: 'chariot', owner: 'player1', q: 0, r: 0 });
+    expect(keys(getThreatHexes(spent, [spent], R)))
+      .toEqual(keys(getThreatHexes(fresh, [fresh], R)));
+  });
+
+  it('战车威胁不含自己当前的车身格', () => {
+    const ch = u({ id: 'ch', type: 'chariot', owner: 'player1', q: 0, r: 0 });
+    const got = keys(getThreatHexes(ch, [ch], R));
+    expect(got.has('0,0')).toBe(false);
   });
 
   it('弩车威胁 = 贯穿线 + 近战邻格，且不含自己的车身', () => {

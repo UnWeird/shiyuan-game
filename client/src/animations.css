@@ -43,13 +43,6 @@ button:disabled {
 .unit-moving {
   opacity: 0.9;
 }
-
-/* 机关单位占用格子标记的平滑过渡 */
-.machine-hex-indicator {
-  transition: cx 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              cy 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
 /* 弓箭手方向指示器旋转动画 */
 .direction-indicator {
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);

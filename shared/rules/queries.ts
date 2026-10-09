@@ -347,9 +347,13 @@ function asNextTurn(u: UnitLike): UnitLike {
 /**
  * 单个单位在下回合能威胁到的格子。
  *
- * **不包含战车碾压**：战车没有攻击动作，它是靠移动把路上的单位直接击杀，
- * 威胁范围等于它的可达移动路径 —— 那需要新推导一套规则，这里不做。
- * 画出来的威胁区因此是**偏保守的**（少报不多报），不会骗玩家说某格安全。
+ * 战车单独一支：它没有攻击动作，是靠移动碾压。威胁范围 = 所有合法落点的车身覆盖格。
+ *
+ * ⚠️ 这里按**服务端实现**算，不按规则书算。规则书写「前进路上的单位会被直接击杀
+ * （带友伤）」，但 handleMove 的碾压分支实际上只检查**落点车身**
+ * （`getMachineOccupiedHexes(targetPos, 'chariot')`），而且只杀 `u.owner !== role`
+ * 的单位 —— 既没有沿路碾压，也没有友伤。威胁提示必须反映代码的行为，
+ * 否则会骗玩家。两处差异见 docs/board-art-spec.md 的备注。
  */
 export function getThreatHexes(
   threatener: UnitLike,
@@ -367,6 +371,16 @@ export function getThreatHexes(
     }
     for (const hex of own.flatMap(h => hexNeighbors(h))) {
       if (isInMapRange(hex, radius) && !own.some(o => hexEquals(o, hex))) out.push(hex);
+    }
+    return dedupeHexes(out);
+  }
+
+  // 战车：碾压发生在落点车身，所以威胁 = 所有合法落点的车身覆盖格之并集
+  if (threatener.type === 'chariot') {
+    for (const dest of getValidMoves(fresh, units)) {
+      for (const hex of getMachineOccupiedHexes({ q: dest.q, r: dest.r, s: dest.s }, 'chariot')) {
+        if (isInMapRange(hex, radius) && !own.some(o => hexEquals(o, hex))) out.push(hex);
+      }
     }
     return dedupeHexes(out);
   }

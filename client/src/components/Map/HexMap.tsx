@@ -54,6 +54,18 @@ interface HexMapProps {
   enemyThreatHexes?: HexCoord[];
   /** 被纵深抗击保护着的单位位置，画一个盾 */
   shieldedHexes?: HexCoord[];
+  /**
+   * 机关的占位轮廓。
+   *
+   * 原来是在每个非中心格画一个 opacity .3 的小圆点 —— 看不出"这是一台占三格的器械"，
+   * 规格 §④ 要的是整体底色 + 轮廓。`ghost` 用于转向预览（整块一起转）。
+   */
+  machineFootprints?: ReadonlyArray<{
+    key: string;
+    hexes: readonly HexCoord[];
+    side: 'p1' | 'p2';
+    ghost?: boolean;
+  }>;
   /** 伤害飘字。由 useDamageFeed 差分单位体力得到 */
   damageFlashes?: ReadonlyArray<{
     key: string;
@@ -83,6 +95,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
   enemyThreatHexes = [],
   shieldedHexes = [],
   damageFlashes = [],
+  machineFootprints = [],
   rotate = 0,
   children,
 }) => {
@@ -184,6 +197,36 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
 
       {/* ── 信息层：范围填充 ── */}
       <g id="info-area" pointerEvents="none">
+        {/* 机关占位：整块底色 + 每格内圈轮廓。
+          * 铺在最底 —— 它描述的是"这块地被一台器械占着"，属于地形性质，
+          * 不该盖掉上面的可行动范围与威胁。 */}
+        {machineFootprints.map((m) => {
+          const c = m.side === 'p1' ? PIECE.player1.face : PIECE.player2.face;
+          return (
+            <g key={m.key} opacity={m.ghost ? 0.35 : 1}>
+              {m.hexes.map((h) => (
+                <path
+                  key={`mf-${h.q},${h.r}`}
+                  d={hexPath(h, hexSize)}
+                  fill={c}
+                  opacity={m.ghost ? 0.1 : 0.2}
+                />
+              ))}
+              {m.hexes.map((h) => (
+                <path
+                  key={`mr-${h.q},${h.r}`}
+                  d={hexPath(h, hexSize, 0.93)}
+                  fill="none"
+                  stroke={c}
+                  strokeWidth={m.ghost ? 1.2 : 1.8}
+                  strokeDasharray={m.ghost ? '5 4' : undefined}
+                  opacity={m.ghost ? 0.6 : 0.8}
+                />
+              ))}
+            </g>
+          );
+        })}
+
         {/* 威胁区铺在可行动范围**之下**：范围是「我要做什么」，威胁是「背景风险」 */}
         {enemyThreatHexes.map((h) => (
           <path key={`th-${h.q},${h.r}`} d={hexPath(h, hexSize)} fill="url(#sy-threat-hatch)" />

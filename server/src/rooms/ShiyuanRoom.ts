@@ -1001,6 +1001,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.state.player2DeployedValue += unitValue;
     }
 
+    // 作乱：部署按**落点**判定。单位此刻才上场，所以没有「效果生效前」可言 ——
+    // 效果就是「它站在这里」，于是落地即吃伤害。
+    // 部署的单位最低 2 血（将领 3-4 血），1 点打不死，所以不会出现
+    // 「付了行动点却什么都没放下」的情况。
+    this.applyZuoluan(unit);
+
     // 注意：部署阶段不自动切换回合，即使行动点耗尽也要等玩家手动点击"结束回合"
   }
 
@@ -1280,6 +1286,13 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
             if (steps === 2) flags |= Rules.MOVE_FLAG_DAMAGE_UP;
             if (steps === 3) flags |= Rules.MOVE_FLAG_NO_ATTACK;
           }
+          // 落在这一格会被相邻的充能黄巾贼作乱。
+          // 用「把单位假想搬到落点再问规则」的办法算，而不是客户端自己
+          // 按坐标推 —— 贼的威胁判定（体积相邻、贼对贼豁免）只有一份实现。
+          const probe = { ...(unit as unknown as Rules.UnitLike), q: h.q, r: h.r, s: -h.q - h.r };
+          if (Rules.wouldTriggerZuoluan(probe, this.unitList)) {
+            flags |= Rules.MOVE_FLAG_ZUOLUAN;
+          }
           return [h.q, h.r, steps, flags] as [number, number, number, number];
         });
       }
@@ -1344,6 +1357,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       forPlayer, phase: this.state.phase,
       moves, attacks, lethal, attackHexes,
       threatHexes, depthDefended,
+      /**
+       * 所有充能黄巾贼的相邻格。含义是「在这里行动会挨 1 点作乱伤害」，
+       * 和 threatHexes（敌方下回合能打到哪）是两件事，所以分开。
+       */
+      zuoluanHexes: Rules.getZuoluanThreatHexes(this.unitList)
+        .map(h => [h.q, h.r] as [number, number]),
       fushuiTargets,
       /**
        * 黄天当立的四条件清单（界面逐条打勾）+ 当前是否已在宣告中。
@@ -1388,7 +1407,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         `${u.chargeLevel},${u.movementRestricted ? 1 : 0},${u.unlimitedActions ? 1 : 0},${u.bonusActionLimit},` +
         // direction 必须在内：投石车的射击线、弩车的贯穿方向都跟着朝向变，
         // 漏掉它的话转向之后不会重算，客户端会拿着旧的高亮
-        `${u.direction},${u.hasRotated ? 1 : 0}`
+        // charged 必须在内：贼的充能一耗尽，作乱威胁格和移动落点标记都要变
+        `${u.direction},${u.hasRotated ? 1 : 0},${u.charged ? 1 : 0}`
       );
     });
     return parts.join('|');
@@ -1692,6 +1712,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.addBattleLog(`黄巾贼${unit.id}移动后重新积蓄作乱之势`);
     }
 
+    // 作乱：移动只检查**终点**（起点旁边有贼、走开了就不算）。
+    //
+    // 必须排在夺营判定之前（§9.1）：冲进敌方大本营的单位要先吃这 1 点伤害，
+    // 活下来才算赢。顺序写反的话，被作乱打死的单位照样能赢。
+    if (this.applyZuoluan(unit)) return;
+
     // 检查胜利条件：是否触碰到敌方大本营
     this.checkVictoryCondition(unit);
   }
@@ -1880,6 +1906,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
       this.state.player2ActionPoints -= actionCost;
     }
+
+
+    // 作乱：非移动行动在**效果生效前**结算，判定行动单位当前所在位置。
+    // 已支付的行动点不返还（规则明确），所以放在扣点之后。
+    if (this.applyZuoluan(attacker)) return;
 
     // === 步兵纵深抗击和击退传导机制（仅对弓箭手攻击有效）===
     //
@@ -2156,6 +2187,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.state.player2ActionPoints -= 1;
     }
 
+    // 作乱：非移动行动在效果生效前结算（已付 AP 不返还）
+    if (this.applyZuoluan(ballista)) return;
+
     // 计算垂直贯穿路径
     const isPlayerOne = role === "player1";
     const shootingPath = this.getBallistaVerticalPath(ballista, isPlayerOne);
@@ -2384,6 +2418,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.state.player2ActionPoints -= 1;
     }
 
+    // 作乱：非移动行动在效果生效前结算（已付 AP 不返还）
+    if (this.applyZuoluan(ballista)) return;
+
     // 弩车近战攻击造成1点伤害
     target.hp -= 1;
     ballista.hasActedThisTurn = true;
@@ -2502,6 +2539,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
+    // 作乱：非移动行动在效果生效前结算（已付 AP 不返还）
+    if (this.applyZuoluan(catapult)) return;
+
     // 执行蓄力
     catapult.chargeLevel = currentCharge + 1;
     catapult.hasActedThisTurn = true;
@@ -2567,6 +2607,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
       this.state.player2ActionPoints -= 1;
     }
+
+    // 作乱：非移动行动在效果生效前结算（已付 AP 不返还）
+    if (this.applyZuoluan(unit)) return;
 
     unit.direction = data.direction;
     unit.hasRotated = true; // 标记已转向
@@ -3021,6 +3064,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
    * 执行扇形攻击逻辑
    */
   private performFanAttack(general: UnitSchema, attacker: "player1" | "player2", direction: number) {
+    // 作乱：扇形攻击分三段，拦在这里一处覆盖全部三段
+    if (this.applyZuoluan(general)) return;
+
     // 获取扇形区域（120度，覆盖3个单位）
     const fanHexes = getFanShapedHexes(
       { q: general.q, r: general.r, s: general.s },
@@ -3830,6 +3876,48 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       tp.destiny -= 1;
       this.addBattleLog(`平民${civ.id}身死，${who}的太平天命 ${before}→${tp.destiny}`);
     }
+  }
+
+  /**
+   * 作乱结算：行动单位若与充能黄巾贼相邻，立刻受 1 点系统伤害。
+   *
+   * 四条容易写错的细节：
+   *   - **无论相邻多少贼，同一次行动最多 1 点**（旧实现是「相邻贼数量」点，正相反）
+   *   - 所有相邻且充满的贼**同时**耗尽充能，不是只耗掉一个
+   *   - 伤害来源是系统：不给击杀士气奖励，也不需要支付攻击将领的额外 AP
+   *   - 不分敌我，只有「贼对贼」豁免
+   *
+   * @returns true = 行动单位已被作乱打死，调用方必须立刻中止后续效果
+   */
+  private applyZuoluan(unit: UnitSchema): boolean {
+    if (!this.state.units.has(unit.id)) return true;
+    if (this.state.phase === "end") return false;
+
+    const sources = Rules.getZuoluanSources(
+      unit as unknown as Rules.UnitLike,
+      this.unitList
+    ) as unknown as UnitSchema[];
+    if (sources.length === 0) return false;
+
+    // 相邻的充能贼全部耗尽 —— 一次行动把周围一片贼的威慑同时用掉，
+    // 这是贼「传播暴乱会暂时降低自身威慑」的机制来源
+    for (const z of sources) {
+      const live = this.state.units.get(z.id);
+      if (live) live.charged = false;
+    }
+
+    unit.hp -= 1;
+    this.addBattleLog(
+      `作乱！${unit.id} 在 ${sources.length} 名充能黄巾贼旁行动，受到 1 点系统伤害`
+      + `（体力 ${unit.hp + 1}→${unit.hp}，${sources.length} 名贼充能耗尽）`
+    );
+
+    if (unit.hp > 0) return false;
+
+    // 系统伤害：不走 grantFirstKillReward，所以不会给任何人士气奖励
+    this.killUnit(unit);
+    this.addBattleLog(`${unit.id} 死于作乱（系统伤害，无士气奖励）`);
+    return true;
   }
 
   /**

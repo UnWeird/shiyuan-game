@@ -47,6 +47,8 @@ export const MAP_RADIUS = 5;
 export const MOVE_FLAG_DAMAGE_UP = 1;
 /** 本回合不能攻击（骑兵冲满 3 格） */
 export const MOVE_FLAG_NO_ATTACK = 2;
+/** 落在这一格会被相邻的充能黄巾贼作乱，立刻挨 1 点伤害 */
+export const MOVE_FLAG_ZUOLUAN = 4;
 
 /**
  * 规则判定需要的最小单位形状。
@@ -1145,4 +1147,57 @@ export function getHuangtianConditions(
  */
 export function huangtianStillHolds(c: HuangtianConditions): boolean {
   return c.destinyEnough && c.inBattleZone && c.withinCapacity;
+}
+
+/* ══════════════════ 太平 · 作乱 ══════════════════
+ *
+ * 黄巾贼不能主动攻击，它的威胁全在这里：任何非贼单位在**充能贼的相邻格**
+ * 行动，就要吃 1 点系统伤害，同时把周围所有充满的贼一次耗尽。
+ *
+ * 所以贼的强度是「站位 + 一次性」的：N 个充能贼每回合最多造成 N 点伤害，
+ * 而回充要靠各自花 1 AP 移动一次。
+ */
+
+/**
+ * 会对这个单位造成作乱的充能贼。
+ *
+ * 不分敌我 —— 太平自己的步兵走到自家贼旁边照样挨打。
+ * 只有「贼对贼」豁免：贼之间不互相触发，贼自己移动也不触发自身的作乱。
+ *
+ * 机关占多格，按**体积相邻**判定（任一车身格与贼相邻即可）。
+ */
+export function getZuoluanSources(victim: UnitLike, units: readonly UnitLike[]): UnitLike[] {
+  if (victim.type === 'huangjin_zei') return [];
+
+  const body = occupiedHexesOf(victim);
+  return units.filter(z => {
+    if (z.type !== 'huangjin_zei' || !z.charged) return false;
+    const zp = { q: z.q, r: z.r, s: z.s };
+    return body.some(cell => hexDistance(cell, zp) === 1);
+  });
+}
+
+/** 这个单位此刻行动会不会挨作乱 */
+export function wouldTriggerZuoluan(victim: UnitLike, units: readonly UnitLike[]): boolean {
+  return getZuoluanSources(victim, units).length > 0;
+}
+
+/**
+ * 所有充能贼的相邻格并集 —— 客户端据此铺一层警示色。
+ *
+ * 这张图是「在这里行动会挨 1 伤」的意思，和 getThreatHexes
+ *（敌方下回合能打到哪）是两件不同的事，所以分开下发。
+ */
+export function getZuoluanThreatHexes(
+  units: readonly UnitLike[],
+  radius: number = MAP_RADIUS
+): HexCoord[] {
+  const out: HexCoord[] = [];
+  for (const z of units) {
+    if (z.type !== 'huangjin_zei' || !z.charged) continue;
+    for (const n of hexNeighbors({ q: z.q, r: z.r, s: z.s })) {
+      if (isInMapRange(n, radius)) out.push(n);
+    }
+  }
+  return dedupeHexes(out);
 }

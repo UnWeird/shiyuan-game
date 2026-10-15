@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { HexCoord } from '../types';
-import { MOVE_FLAG_DAMAGE_UP, MOVE_FLAG_NO_ATTACK } from '../../../shared/rules/queries';
+import { MOVE_FLAG_DAMAGE_UP, MOVE_FLAG_NO_ATTACK, MOVE_FLAG_ZUOLUAN } from '../../../shared/rules/queries';
 
 /**
  * 服务端下发的「当前行动方每个单位能做什么」
@@ -41,6 +41,11 @@ export interface ValidActionsPayload {
    * 所以这张图偏保守：少报不多报，不会骗玩家说某格安全。
    */
   threatHexes?: Array<[number, number]>;
+  /**
+   * 所有充能黄巾贼的相邻格：「在这里行动会挨 1 点作乱伤害」。
+   * 和 threatHexes（敌方下回合能打到哪）含义不同，所以分开下发。
+   */
+  zuoluanHexes?: Array<[number, number]>;
   /** 当前被纵深抗击保护着的单位 id（队首亮盾） */
   depthDefended?: string[];
   /**
@@ -78,6 +83,8 @@ export type MoveHex = HexCoord & {
   damageUp?: boolean;
   /** 本回合不能攻击（骑兵冲满 3 格） */
   noAttack?: boolean;
+  /** 落在这里会被相邻的充能黄巾贼作乱，立刻挨 1 点 */
+  zuoluan?: boolean;
 };
 
 interface ValidActionsState {
@@ -91,6 +98,8 @@ interface ValidActionsState {
   lethal: Record<string, string[]>;
   /** 敌方下回合能打到的格子 */
   threatHexes: HexCoord[];
+  /** 充能黄巾贼的相邻格（在此行动会挨 1 伤） */
+  zuoluanHexes: HexCoord[];
   /** 被纵深抗击保护着的单位 id */
   depthDefended: Set<string>;
   /** unitId -> 范围型攻击覆盖格 */
@@ -110,6 +119,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
   attacks: {},
   lethal: {},
   threatHexes: [],
+  zuoluanHexes: [],
   depthDefended: new Set<string>(),
   attackHexes: {},
   fushuiTargets: [],
@@ -122,6 +132,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
         q, r, s: -q - r, steps,
         damageUp: ((flags ?? 0) & MOVE_FLAG_DAMAGE_UP) !== 0,
         noAttack: ((flags ?? 0) & MOVE_FLAG_NO_ATTACK) !== 0,
+        zuoluan: ((flags ?? 0) & MOVE_FLAG_ZUOLUAN) !== 0,
       }));
     }
     const attackHexes: Record<string, HexCoord[]> = {};
@@ -134,6 +145,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
       attacks: payload.attacks ?? {},
       lethal: payload.lethal ?? {},
       threatHexes: (payload.threatHexes ?? []).map(([q, r]) => ({ q, r, s: -q - r })),
+      zuoluanHexes: (payload.zuoluanHexes ?? []).map(([q, r]) => ({ q, r, s: -q - r })),
       depthDefended: new Set(payload.depthDefended ?? []),
       attackHexes,
       fushuiTargets: payload.fushuiTargets ?? [],
@@ -143,7 +155,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
 
   clear: () => set({
     forPlayer: null, moves: {}, attacks: {}, lethal: {},
-    threatHexes: [], depthDefended: new Set<string>(), attackHexes: {},
+    threatHexes: [], zuoluanHexes: [], depthDefended: new Set<string>(), attackHexes: {},
     fushuiTargets: [], huangtian: null,
   }),
 }));
@@ -172,6 +184,11 @@ export function getServerLethalTargets(unitId: string): string[] {
 /** 敌方下回合能打到的格子 */
 export function getServerThreatHexes(): HexCoord[] {
   return useValidActionsStore.getState().threatHexes;
+}
+
+/** 充能黄巾贼的相邻格：在这些格子上行动会挨 1 点作乱伤害 */
+export function getServerZuoluanHexes(): HexCoord[] {
+  return useValidActionsStore.getState().zuoluanHexes;
 }
 
 /** 这个单位此刻是否被纵深抗击保护着 */

@@ -12,7 +12,9 @@ import {
   hexNeighbor,
   hexNeighbors,
   hexRange,
+  isInBattleZone,
   isInMapRange,
+  isInStartZone,
 } from '../utils/hexUtils';
 
 /**
@@ -76,6 +78,12 @@ export interface UnitLike {
   movementRestrictionSourceQ: number;
   movementRestrictionSourceR: number;
   movementRestrictionSourceS: number;
+  /**
+   * 单位来源标记。目前只有一个取值 `'civilian'`：
+   * 太平的公共平民和仁德自造的中立标记都是 `neutral_marker`，
+   * 但两者的死亡结算不同，必须在数据上可分。
+   */
+  statusTag: string;
 }
 
 /** 单位占据的格子：机关占多格，其余就是自己那一格 */
@@ -812,4 +820,86 @@ export function getValidMoves(unit: UnitLike, units: readonly UnitLike[]): { q: 
     // 可以走到棋盘外（handleMoveUnit 正是拿这里的结果做合法性校验的）。
     return !occupied && isInMapRange(hex, MAP_RADIUS) && hexDistance(unitPos, hex) <= finalRange;
   });
+}
+
+/* ══════════════════ 太平 · 公共平民 ══════════════════
+ *
+ * 平民是「公共」的：任一方选太平就启用，归属 neutral，双方都能走位影响它。
+ * 这一节全是纯查询 —— 刷新到哪几格由房间掷骰决定，但「哪些格子有资格」
+ * 和「该刷几个」在这里算，客户端据此画出流民可能出现的区域。
+ */
+
+/** 场上公共平民的数量上限。力士转化来的平民不受此限，但计入总数 */
+export const CIVILIAN_CAP = 5;
+
+/** 公共平民：和仁德自造的中立标记同类型，靠 statusTag 区分 */
+export const CIVILIAN_TAG = 'civilian';
+
+/** 是不是一个公共平民 */
+export function isCivilian(unit: UnitLike): boolean {
+  return unit.type === 'neutral_marker' && unit.statusTag === CIVILIAN_TAG;
+}
+
+/** 场上公共平民数量 */
+export function countCivilians(units: readonly UnitLike[]): number {
+  return units.filter(isCivilian).length;
+}
+
+/**
+ * 本回合该刷几名平民（太平存活时按天命）。
+ *
+ *   天命 0–3 → 1
+ *   天命 4–8 → 2
+ *   天命 9–12 → 3
+ *
+ * 注意这张表的档位和刷新**范围**的档位（0–4 / 5–12）不一样，是两张表。
+ */
+export function getCivilianSpawnCount(destiny: number): number {
+  if (destiny <= 3) return 1;
+  if (destiny <= 8) return 2;
+  return 3;
+}
+
+/**
+ * 本回合平民可能出现的区域。
+ *
+ *   天命 0–4 → 交战区 + 该太平玩家的己方起始区，共 70 格
+ *   天命 5–12 → 仅交战区，共 49 格
+ *
+ * 天命低时流民涌向后方（自家起始区），所以更容易被符水粥救济、也更容易
+ * 被自家步兵强制征募；天命起来以后平民只在交战区，必须推出去抢。
+ *
+ * `owner` 是**那个太平玩家**，不是平民的归属（平民恒为 neutral）。
+ */
+export function getCivilianSpawnRange(
+  destiny: number,
+  owner: string,
+  radius: number = MAP_RADIUS
+): HexCoord[] {
+  const includeOwnStartZone = destiny <= 4;
+  const side = owner === 'player1' ? 'top' : 'bottom';
+  return generateHexMap(radius).filter(hex =>
+    isInBattleZone(hex) || (includeOwnStartZone && isInStartZone(hex, side))
+  );
+}
+
+/**
+ * 刷新范围里**当前真的可以落子**的格子。
+ *
+ * 排除：任何单位占据的格（含机关的整个车身）、双方大本营格。
+ * 大本营不能被平民堵住 —— 那会把胜利条件变成「谁先把平民刷到对方门口」。
+ */
+export function getCivilianSpawnCells(
+  destiny: number,
+  owner: string,
+  units: readonly UnitLike[],
+  bases: readonly HexCoord[] = [],
+  radius: number = MAP_RADIUS
+): HexCoord[] {
+  const taken: HexCoord[] = [];
+  for (const u of units) taken.push(...occupiedHexesOf(u));
+
+  return getCivilianSpawnRange(destiny, owner, radius).filter(hex =>
+    !taken.some(t => hexEquals(t, hex)) && !bases.some(b => hexEquals(b, hex))
+  );
 }

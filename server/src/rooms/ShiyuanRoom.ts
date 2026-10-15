@@ -1,5 +1,5 @@
 import { Room, Client } from '@colyseus/core';
-import { GameStateSchema, UnitSchema } from '../schema/GameState';
+import { GameStateSchema, UnitSchema, TaipingSchema } from '../schema/GameState';
 
 // 导入共享的六边形工具函数和类型
 import {
@@ -1136,6 +1136,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}投骰：${diceCount}颗骰子(基础${baseDice}+部署${Math.floor(deployedValue / 2)})，点数${results.join(',')}，共${actionPoints}点行动值`);
 
+    // 太平：回合开始、掷骰之后刷新公共平民（强制豆饭/腐化在此之后）
+    this.refreshCivilians(role);
   }
 
   /**
@@ -3705,6 +3707,121 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   /** 判断当前玩家是否可以指挥某单位 */
   private canCommandUnit(unit: UnitSchema, role: "player1" | "player2"): boolean {
     return unit.owner === role;
+  }
+
+  // ========================================
+  // 太平将军
+  // ========================================
+
+  /** 某方的太平阵营状态 */
+  private taipingOf(role: "player1" | "player2"): TaipingSchema {
+    return role === "player1" ? this.state.player1Taiping : this.state.player2Taiping;
+  }
+
+  /** 某方是否选了太平（将军死了也仍然成立 —— 死后阶段的规则要靠它） */
+  private hasTaiping(role: "player1" | "player2"): boolean {
+    const g = role === "player1" ? this.state.player1General : this.state.player2General;
+    return g === "taiping";
+  }
+
+  /** 某方的太平将军单位，阵亡后为 undefined */
+  private taipingGeneralOf(role: "player1" | "player2"): UnitSchema | undefined {
+    return Array.from(this.state.units.values()).find(
+      u => u.owner === role && u.type === "general" && u.generalType === "taiping"
+    );
+  }
+
+  /**
+   * 某方的太平是否存活 —— 「黄天未立」与「苍天已死」两个阶段的分界。
+   *
+   * 刻意推导而不是存一个 `alive` 字段：存一份就会有漂移的机会，
+   * 而这两个来源（选将配置 + 场上单位）本来就都是权威状态。
+   */
+  private isTaipingAlive(role: "player1" | "player2"): boolean {
+    return this.hasTaiping(role) && this.taipingGeneralOf(role) !== undefined;
+  }
+
+  /** 任一方选了太平就启用公共平民机制 */
+  private get civiliansEnabled(): boolean {
+    return this.hasTaiping("player1") || this.hasTaiping("player2");
+  }
+
+  /** 双方大本营格，平民不能刷在这上面 */
+  private get baseHexes(): HexCoord[] {
+    return [
+      { q: this.state.player1BaseQ, r: this.state.player1BaseR, s: this.state.player1BaseS },
+      { q: this.state.player2BaseQ, r: this.state.player2BaseR, s: this.state.player2BaseS },
+    ];
+  }
+
+  /** 在指定格子放一名公共平民 */
+  private spawnCivilian(hex: HexCoord): UnitSchema {
+    const civ = new UnitSchema();
+    civ.id = this.newUnitId("civ");
+    civ.type = "neutral_marker";
+    civ.owner = "neutral";
+    civ.statusTag = Rules.CIVILIAN_TAG;
+    civ.q = hex.q;
+    civ.r = hex.r;
+    civ.s = hex.s;
+    civ.hp = 1;
+    civ.maxHp = 1;
+    civ.direction = 0;
+    this.state.units.set(civ.id, civ);
+    return civ;
+  }
+
+  /**
+   * 回合开始刷新公共平民。
+   *
+   * 数量：太平存活时按天命（0–3→1 / 4–8→2 / 9–12→3）；
+   * 太平死后不看天命，固定 1 名。两种情况都受场上 5 名的上限约束。
+   *
+   * 位置：在刷新范围（天命 0–4 为交战区 + 己方起始区 70 格，
+   * 5–12 为仅交战区 49 格）里随机取空格，排除单位、机关车身和双方大本营。
+   *
+   * 力士被击败转化来的平民不走这里，所以不受上限限制 —— 但它们计入场上总数，
+   * 会挤掉后续的自动刷新。
+   */
+  private refreshCivilians(role: "player1" | "player2"): void {
+    // 部署阶段不刷新
+    if (this.state.phase !== "action") return;
+    if (!this.hasTaiping(role)) return;
+
+    const tp = this.taipingOf(role);
+    const alive = this.isTaipingAlive(role);
+
+    const onBoard = Rules.countCivilians(this.unitList);
+    const room = Rules.CIVILIAN_CAP - onBoard;
+    if (room <= 0) return;
+
+    const want = alive ? Rules.getCivilianSpawnCount(tp.destiny) : 1;
+    const count = Math.min(want, room);
+
+    // 范围始终按天命算。太平死后天命不再结算，但值还在，范围就按那个值冻结
+    const pool = Rules.getCivilianSpawnCells(
+      tp.destiny,
+      role,
+      this.unitList,
+      this.baseHexes
+    );
+    if (pool.length === 0) {
+      this.addBattleLog(`流民无处容身：刷新范围内没有空格`);
+      return;
+    }
+
+    const spawned: string[] = [];
+    for (let i = 0; i < count && pool.length > 0; i++) {
+      const idx = Math.floor(this.rng() * pool.length);
+      const hex = pool.splice(idx, 1)[0]!;
+      const civ = this.spawnCivilian(hex);
+      spawned.push(`${civ.id}(${hex.q},${hex.r},${hex.s})`);
+    }
+
+    this.addBattleLog(
+      `流民涌来：${spawned.length}名平民出现于 ${spawned.join('、')}` +
+      `（天命${tp.destiny}${alive ? '' : '，太平已死固定1名'}）`
+    );
   }
 
   /**

@@ -1065,3 +1065,69 @@ export function getDoufanTargets(units: readonly UnitLike[], owner: string): str
     )
     .map(u => u.id);
 }
+
+/* ══════════════════ 太平 · 黄天当立 ══════════════════ */
+
+/** 宣告黄天当立所需的天命下限 */
+export const HUANGTIAN_DESTINY = 10;
+
+/**
+ * 宣告「黄天当立」的四个条件，逐条给出 —— 界面要据此画一份可打勾的清单，
+ * 所以不能只回一个布尔值。
+ */
+export interface HuangtianConditions {
+  /** 天命达到 10 点或以上 */
+  destinyEnough: boolean;
+  /** 太平本人处于交战区 */
+  inBattleZone: boolean;
+  /** 本回合曾成功使用符水粥 */
+  fushuiUsed: boolean;
+  /** 当前黄巾力士数量没有超过天命承载量 */
+  withinCapacity: boolean;
+  /** 四条全部满足 */
+  ok: boolean;
+}
+
+/**
+ * 逐条检查黄天当立的条件。
+ *
+ * `general` 为 undefined 表示太平已阵亡 —— 那时四条全不成立，
+ * 而且这条胜利路线是**永久**失去的（死后只剩夺营）。
+ */
+export function getHuangtianConditions(
+  general: UnitLike | undefined,
+  units: readonly UnitLike[],
+  destiny: number,
+  fushuiUsedThisTurn: boolean
+): HuangtianConditions {
+  if (!general) {
+    return {
+      destinyEnough: false, inBattleZone: false,
+      fushuiUsed: false, withinCapacity: false, ok: false,
+    };
+  }
+
+  const destinyEnough = destiny >= HUANGTIAN_DESTINY;
+  const inBattleZone = isInBattleZone({ q: general.q, r: general.r, s: general.s });
+  const fushuiUsed = fushuiUsedThisTurn;
+  const withinCapacity = !isOverCapacity(destiny, countLishi(units, general.owner));
+
+  return {
+    destinyEnough,
+    inBattleZone,
+    fushuiUsed,
+    withinCapacity,
+    ok: destinyEnough && inBattleZone && fushuiUsed && withinCapacity,
+  };
+}
+
+/**
+ * 宣告之后要持续成立的三条（不含符水粥）。
+ *
+ * 符水粥只在**宣告那一回合**要求用过 —— 它是「证明你还在救人」的入场券，
+ * 不是一个要一直维持的状态。对手回合结束后的复查、以及取胜前的最后一次
+ * 复查，都用这个函数。
+ */
+export function huangtianStillHolds(c: HuangtianConditions): boolean {
+  return c.destinyEnough && c.inBattleZone && c.withinCapacity;
+}

@@ -548,6 +548,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.handleTaipingRecruit(client, data);
     });
 
+    this.onAction("taipingDeclareHuangtian", (client) => {
+      this.handleTaipingDeclareHuangtian(client);
+    });
+
     // === 开发工具：存档 / 读档（仅 SHIYUAN_DEV_TOOLS=1 时注册） ===
     if (DEV_TOOLS) {
       this.onAction("__devSaveState", (client, data: { label?: string }) => {
@@ -1101,6 +1105,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
    * 为指定玩家投骰子（行动阶段）
    */
   private rollDiceForPlayer(role: "player1" | "player2") {
+    // 黄天当立：对手的一个完整回合已经过去，条件仍成立则此刻直接取胜。
+    // 放在掷骰之前 —— 已经赢了就不该再走掷骰（骰子为 0 还会判负）。
+    if (this.resolveHuangtianDeclaration(role)) return;
+
     // 调试：检查所有单位的定身状态
     console.log(`\n[定身调试] rollDiceForPlayer 开始 - ${role}的回合`);
     this.state.units.forEach((unit) => {
@@ -1337,6 +1345,16 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       moves, attacks, lethal, attackHexes,
       threatHexes, depthDefended,
       fushuiTargets,
+      /**
+       * 黄天当立的四条件清单（界面逐条打勾）+ 当前是否已在宣告中。
+       * 非太平方拿到 null。
+       */
+      huangtian: taipingGeneral
+        ? {
+            ...this.huangtianConditionsOf(forPlayer),
+            declaredTurn: this.taipingOf(forPlayer).huangtianDeclaredTurn,
+          }
+        : null,
     };
   }
 
@@ -3753,6 +3771,15 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   private onTaipingGeneralDeath(role: "player1" | "player2"): void {
     const who = role === "player1" ? "玩家1" : "玩家2";
     this.addBattleLog(`⚡ ${who}的太平阵亡 —— 苍天已死，黄巾失去信仰`);
+
+    // 黄天当立随将领一起没了，而且是**永久**失去：
+    // handleTaipingDeclareHuangtian 要求太平在场，所以之后再也宣告不了。
+    const tp = this.taipingOf(role);
+    if (tp.huangtianDeclaredTurn >= 0) {
+      tp.huangtianDeclaredTurn = -1;
+      this.addBattleLog(`${who}的黄天当立宣告随太平阵亡而作废`);
+      this.broadcast("huangtianCancelled", { by: role, reason: "太平阵亡" });
+    }
     // 起义（力士→贼）与随之而来的腐化在步骤 9 / 11 接进来
   }
 
@@ -3786,6 +3813,117 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       tp.destiny -= 1;
       this.addBattleLog(`平民${civ.id}身死，${who}的太平天命 ${before}→${tp.destiny}`);
     }
+  }
+
+  /** 当前这方的黄天当立条件清单 */
+  private huangtianConditionsOf(role: "player1" | "player2"): Rules.HuangtianConditions {
+    const tp = this.taipingOf(role);
+    return Rules.getHuangtianConditions(
+      this.taipingGeneralOf(role) as unknown as Rules.UnitLike | undefined,
+      this.unitList,
+      tp.destiny,
+      tp.fushuiUsedThisTurn
+    );
+  }
+
+  /**
+   * 宣告「黄天当立」。
+   *
+   * 手动而不是自动：宣告会给对手一个完整回合去反制（打死太平、把他赶出交战区、
+   * 杀平民压天命、或者什么都不做赌他撑不住），所以**什么时候宣告**本身是个决策
+   * —— 条件满足但不宣告，对手就得不到预警。
+   */
+  private handleTaipingDeclareHuangtian(client: Client) {
+    const role = this.getPlayerRole(client);
+    if (!role || role !== this.state.currentPlayer) {
+      client.send("error", { message: "不是你的回合" });
+      return;
+    }
+    if (!this.hasTaiping(role)) {
+      client.send("error", { message: "你没有太平" });
+      return;
+    }
+    if (!this.taipingGeneralOf(role)) {
+      client.send("error", { message: "太平已阵亡，永久失去黄天当立" });
+      return;
+    }
+
+    const tp = this.taipingOf(role);
+    if (tp.huangtianDeclaredTurn >= 0) {
+      client.send("error", { message: "黄天当立已在宣告中" });
+      return;
+    }
+
+    const c = this.huangtianConditionsOf(role);
+    if (!c.ok) {
+      const missing = [
+        !c.destinyEnough ? `天命不足 ${Rules.HUANGTIAN_DESTINY}（当前 ${tp.destiny}）` : '',
+        !c.inBattleZone ? '太平不在交战区' : '',
+        !c.fushuiUsed ? '本回合未使用符水粥' : '',
+        !c.withinCapacity ? '黄巾力士超出承载' : '',
+      ].filter(Boolean);
+      client.send("error", { message: `无法宣告黄天当立：${missing.join('、')}` });
+      return;
+    }
+
+    tp.huangtianDeclaredTurn = this.state.turn;
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    this.addBattleLog(`⚡ ${who}宣布「黄天当立」！对手有一个完整回合可以反制`);
+    this.broadcast("huangtianDeclared", { by: role, turn: this.state.turn });
+  }
+
+  /**
+   * 宣告后的复查：条件被破坏就作废。
+   *
+   * 两个复查点 —— 宣告那一回合的结算之后（夺天命可能把天命打回 9，
+   * 天命难承可能让力士超载甚至压死太平），以及对手回合结束之后。
+   */
+  private revalidateHuangtian(role: "player1" | "player2", when: string): boolean {
+    const tp = this.taipingOf(role);
+    if (tp.huangtianDeclaredTurn < 0) return false;
+
+    const c = this.huangtianConditionsOf(role);
+    if (Rules.huangtianStillHolds(c)) return true;
+
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    const broken = [
+      !c.destinyEnough ? '天命跌破 10' : '',
+      !c.inBattleZone ? '太平离开交战区' : '',
+      !c.withinCapacity ? '黄巾力士超出承载' : '',
+    ].filter(Boolean);
+    tp.huangtianDeclaredTurn = -1;
+    this.addBattleLog(`${who}的黄天当立宣告失效（${when}：${broken.join('、')}），需重新满足条件再次宣告`);
+    this.broadcast("huangtianCancelled", { by: role, reason: broken.join('、') });
+    return false;
+  }
+
+  /**
+   * 回合开始时结算宣告：对手的一个完整回合已经过去，条件仍成立则此刻取胜。
+   *
+   * 时序用一个数字就够：宣告记下当时的 `turn`，判定点恒为 `turn === 宣告回合 + 1`
+   * —— turn 只在切回 player1 时 ++，所以 player1 在第 N 回合宣告、
+   * 下一次轮到他是第 N+1 回合；player2 在第 N 回合宣告，中间经过 player1 的
+   * 第 N+1 回合，再轮到他时 turn 也正好是 N+1。两边都成立。
+   *
+   * @returns true = 游戏已经结束，调用方应立刻返回
+   */
+  private resolveHuangtianDeclaration(role: "player1" | "player2"): boolean {
+    const tp = this.taipingOf(role);
+    if (tp.huangtianDeclaredTurn < 0) return false;
+    if (this.state.turn !== tp.huangtianDeclaredTurn + 1) return false;
+
+    if (!this.revalidateHuangtian(role, "对手反制")) return false;
+
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    this.addBattleLog(`⚡⚡ 苍天已死，黄天当立！${who}达成特殊胜利！`);
+    this.state.phase = "end";
+    this.broadcast("phaseChange", { phase: "end" });
+    this.broadcast("gameEnd", {
+      winner: role,
+      reason: "huangtian",
+      message: `${who}以「黄天当立」获胜！`,
+    });
+    return true;
   }
 
   /**
@@ -4065,22 +4203,28 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // ── 天命难承 ──
     const capacity = Rules.getDestinyCapacity(tp.destiny);
     const lishi = Rules.countLishi(this.unitList, role);
-    if (!Rules.isOverCapacity(tp.destiny, lishi)) {
-      if (lishi > 0) {
-        this.addBattleLog(`${who}的黄巾力士 ${lishi}/${capacity}，承载正常`);
+
+    if (Rules.isOverCapacity(tp.destiny, lishi)) {
+      // 超出多少都只掉 1 点，且不走任何减伤路径（直接改 hp）
+      general.hp -= 1;
+      this.addBattleLog(
+        `天命难承！${who}的黄巾力士 ${lishi} 超出承载 ${capacity}，太平体力 ${general.hp + 1}→${general.hp}`
+      );
+
+      if (general.hp <= 0) {
+        this.killUnit(general);
+        return; // 阵亡的处理里已经作废了宣告，没有后续
       }
-      return;
+    } else if (lishi > 0) {
+      this.addBattleLog(`${who}的黄巾力士 ${lishi}/${capacity}，承载正常`);
     }
 
-    // 超出多少都只掉 1 点，且不走任何减伤路径（直接改 hp）
-    general.hp -= 1;
-    this.addBattleLog(
-      `天命难承！${who}的黄巾力士 ${lishi} 超出承载 ${capacity}，太平体力 ${general.hp + 1}→${general.hp}`
-    );
-
-    if (general.hp <= 0) {
-      this.killUnit(general);
-    }
+    // ── §7.1 第 7 步：胜利判定 ──
+    // 这里不是「赢了吗」，而是「本回合宣告的黄天当立还站得住吗」：
+    // 夺天命可能刚把天命打回 9，天命难承可能刚让力士超载。
+    // 注意不能写成 if 的 early return —— 没超载（也就是黄天当立路线的
+    // 常态）才最需要走到这一步。
+    this.revalidateHuangtian(role, "回合结算");
   }
 
   // ========================================

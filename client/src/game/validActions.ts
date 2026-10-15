@@ -54,6 +54,21 @@ export interface ValidActionsPayload {
    * 而且这类派生数据本来就不该存进对局状态。
    */
   fushuiTargets?: string[];
+  /**
+   * 太平的黄天当立：四条件逐条 + 当前宣告状态（declaredTurn，-1 为未宣告）。
+   * 非太平方为 null。界面据此画可打勾的清单和宣告按钮。
+   */
+  huangtian?: HuangtianStatus | null;
+}
+
+/** 黄天当立的条件清单 + 宣告状态 */
+export interface HuangtianStatus {
+  destinyEnough: boolean;
+  inBattleZone: boolean;
+  fushuiUsed: boolean;
+  withinCapacity: boolean;
+  ok: boolean;
+  declaredTurn: number;
 }
 
 /** 解码后的移动格子，形状与客户端既有的高亮数据一致 */
@@ -82,6 +97,8 @@ interface ValidActionsState {
   attackHexes: Record<string, HexCoord[]>;
   /** 符水粥能救济的平民 id */
   fushuiTargets: string[];
+  /** 黄天当立条件清单；非太平方为 null */
+  huangtian: HuangtianStatus | null;
 
   apply: (payload: ValidActionsPayload) => void;
   clear: () => void;
@@ -96,6 +113,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
   depthDefended: new Set<string>(),
   attackHexes: {},
   fushuiTargets: [],
+  huangtian: null,
 
   apply: (payload) => {
     const moves: Record<string, MoveHex[]> = {};
@@ -119,13 +137,14 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
       depthDefended: new Set(payload.depthDefended ?? []),
       attackHexes,
       fushuiTargets: payload.fushuiTargets ?? [],
+      huangtian: payload.huangtian ?? null,
     });
   },
 
   clear: () => set({
     forPlayer: null, moves: {}, attacks: {}, lethal: {},
     threatHexes: [], depthDefended: new Set<string>(), attackHexes: {},
-    fushuiTargets: [],
+    fushuiTargets: [], huangtian: null,
   }),
 }));
 
@@ -168,4 +187,9 @@ export function getServerAttackHexes(unitId: string): HexCoord[] {
 /** 太平此刻能用符水粥救济的平民 id */
 export function getServerFushuiTargets(): string[] {
   return useValidActionsStore.getState().fushuiTargets;
+}
+
+/** 黄天当立的条件清单与宣告状态；非太平方为 null */
+export function getServerHuangtian(): HuangtianStatus | null {
+  return useValidActionsStore.getState().huangtian;
 }

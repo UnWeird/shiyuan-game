@@ -307,19 +307,41 @@ units: readonly UnitLike[]
     return { ok: false, reason: "战车没有攻击动作" };
   }
 
-  // 弓箭手射击路径经过友军：行动点额外 +1（不阻止攻击）
+  // 太平阵营不能主动攻击平民 —— 太平存活时才有这个约束，死后他的正规军就没这层顾忌了。
+  //
+  // 「太平存活」直接从 units 推出来（场上还有没有自己的太平将军），
+  // 不需要额外参数，也就不会和房间里的状态漂移。
+  if (isCivilian(target)) {
+    const ownTaipingAlive = units.some(u =>
+      u.owner === attacker.owner && u.type === 'general' && u.generalType === 'taiping'
+    );
+    if (ownTaipingAlive) {
+      return { ok: false, reason: "太平阵营不能攻击平民" };
+    }
+  }
+
+  // 弓箭手射击路径经过友军或平民：行动点额外 +1（不阻止攻击）
+  //
+  // 平民按友军同待遇，而不是硬阻挡 —— 规则书里仁德那条「中立单位会挡住弓箭、弩箭」
+  // 从来没有实现过（弓箭手至今不被任何单位阻挡），为平民单开一条硬阻挡
+  // 会实质改动远程平衡，所以折成 +1 AP。
   let archerBlocked = false;
   if (attacker.type === 'archer') {
     const intermediateHexes = hexLineDraw(attackerPos, targetPos).slice(1, -1);
     archerBlocked = intermediateHexes.some(hex =>
       units.some(u =>
-        u.owner === attacker.owner && u.q === hex.q && u.r === hex.r && u.s === hex.s
+        (u.owner === attacker.owner || isCivilian(u)) &&
+        u.q === hex.q && u.r === hex.r && u.s === hex.s
       )
     );
   }
 
-  // 攻击将领消耗 2 点，其他 1 点
-  const cost = (target.type === "general" ? 2 : 1) + (archerBlocked ? 1 : 0);
+  // 攻击将领消耗 2 点，主动以平民为目标额外 +1 点（都是 1 + 1），其他 1 点。
+  // 范围伤害的附带伤亡不走这条路径，所以不额外收费 —— 那是设计有意留的口子。
+  const cost = 1
+    + (target.type === "general" ? 1 : 0)
+    + (isCivilian(target) ? 1 : 0)
+    + (archerBlocked ? 1 : 0);
   return { ok: true, cost, archerBlocked };
 }
 

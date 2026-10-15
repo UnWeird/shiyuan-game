@@ -1559,7 +1559,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       // 对每个被碾压的普通单位：直接击杀，战车扣1点血
       crushedUnits.forEach(crushedUnit => {
         // 直接击杀被碾压的单位
-        this.state.units.delete(crushedUnit.id);
+        this.killUnit(crushedUnit);
         this.addBattleLog(`战车碾压击杀了${crushedUnit.owner}的${crushedUnit.type}！`);
 
         // 如果是击杀敌方单位，战车killCount+1
@@ -1584,23 +1584,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
         // 首次击杀奖励（只对敌方单位）
         if (crushedUnit.owner !== role) {
-          if (role === "player1" && !this.state.player1KilledThisTurn) {
-            this.state.player1KilledThisTurn = true;
-            this.state.player1KillDice++;
-            const extraRoll = this.rollD6();
-            this.state.player1Dice++;
-            this.state.player1DiceResults.push(extraRoll);
-            this.state.player1ActionPoints += extraRoll;
-            this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
-          } else if (role === "player2" && !this.state.player2KilledThisTurn) {
-            this.state.player2KilledThisTurn = true;
-            this.state.player2KillDice++;
-            const extraRoll = this.rollD6();
-            this.state.player2Dice++;
-            this.state.player2DiceResults.push(extraRoll);
-            this.state.player2ActionPoints += extraRoll;
-            this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
-          }
+          this.grantFirstKillReward(role, crushedUnit);
         }
       });
 
@@ -1956,27 +1940,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
                 if (splashTarget.type === 'chariot') {
                   this.handleChariotDeath(splashTarget);
                 }
-                this.state.units.delete(splashTarget.id);
+                this.killUnit(splashTarget);
                 this.addBattleLog(`溅射击杀：${splashTarget.owner}的${splashTarget.type}被击杀！`);
 
                 // 处理首次击杀奖励
-                if (role === "player1" && !this.state.player1KilledThisTurn) {
-                  this.state.player1KilledThisTurn = true;
-                  this.state.player1KillDice++;
-                  const extraRoll = this.rollD6();
-                  this.state.player1Dice++;
-                  this.state.player1DiceResults.push(extraRoll);
-                  this.state.player1ActionPoints += extraRoll;
-                  this.addBattleLog(`玩家1首次击杀（溅射）！获得额外骰子，投出${extraRoll}点`);
-                } else if (role === "player2" && !this.state.player2KilledThisTurn) {
-                  this.state.player2KilledThisTurn = true;
-                  this.state.player2KillDice++;
-                  const extraRoll = this.rollD6();
-                  this.state.player2Dice++;
-                  this.state.player2DiceResults.push(extraRoll);
-                  this.state.player2ActionPoints += extraRoll;
-                  this.addBattleLog(`玩家2首次击杀（溅射）！获得额外骰子，投出${extraRoll}点`);
-                }
+                this.grantFirstKillReward(role, splashTarget, '（溅射）');
 
                 // 检查是否溅射击杀了将军
                 if (splashTarget.type === "general") {
@@ -2031,12 +1999,15 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         this.addBattleLog(`${target.owner}的战车被击杀，崩毁！`);
       } else {
         // 非战车单位：直接击杀
-        this.state.units.delete(data.targetId);
+        this.killUnit(target);
         this.addBattleLog(`${target.owner}的${target.type}被击杀！`);
       }
 
       // 如果击杀了中立标记，敌方仁德将军的转化费用重置
-      if (target.type === "neutral_marker" && target.owner === "neutral") {
+      // 公共平民是太平的机制，死了不该让仁德的招降费用回到 1 点
+      // —— 两者都是 neutral_marker，靠 statusTag 区分（isCivilian）。
+      if (target.type === "neutral_marker" && target.owner === "neutral"
+          && !Rules.isCivilian(target as unknown as Rules.UnitLike)) {
         // 找到敌方的仁德将军
         const enemyRole = role === "player1" ? "player2" : "player1";
         const enemyRendeGeneral = Array.from(this.state.units.values()).find(u =>
@@ -2049,27 +2020,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       }
 
       // 首次击杀奖励：立即获得额外骰子和行动点
-      if (role === "player1" && !this.state.player1KilledThisTurn) {
-        this.state.player1KilledThisTurn = true;
-        this.state.player1KillDice++;
-
-        const extraRoll = this.rollD6();
-        this.state.player1Dice++;
-        this.state.player1DiceResults.push(extraRoll);
-        this.state.player1ActionPoints += extraRoll;
-
-        this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
-      } else if (role === "player2" && !this.state.player2KilledThisTurn) {
-        this.state.player2KilledThisTurn = true;
-        this.state.player2KillDice++;
-
-        const extraRoll = this.rollD6();
-        this.state.player2Dice++;
-        this.state.player2DiceResults.push(extraRoll);
-        this.state.player2ActionPoints += extraRoll;
-
-        this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
-      }
+      this.grantFirstKillReward(role, target);
 
       // 检查是否击杀了将军（失去基础骰子，下回合生效）
       if (target.type === "general") {
@@ -2268,23 +2219,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
         // 首次击杀奖励（只对敌方单位）
         if (target.owner !== role) {
-          if (role === "player1" && !this.state.player1KilledThisTurn) {
-            this.state.player1KilledThisTurn = true;
-            this.state.player1KillDice++;
-            const extraRoll = this.rollD6();
-            this.state.player1Dice++;
-            this.state.player1DiceResults.push(extraRoll);
-            this.state.player1ActionPoints += extraRoll;
-            this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
-          } else if (role === "player2" && !this.state.player2KilledThisTurn) {
-            this.state.player2KilledThisTurn = true;
-            this.state.player2KillDice++;
-            const extraRoll = this.rollD6();
-            this.state.player2Dice++;
-            this.state.player2DiceResults.push(extraRoll);
-            this.state.player2ActionPoints += extraRoll;
-            this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
-          }
+          this.grantFirstKillReward(role, target);
         }
       } else {
         if (totalDamage > 1) {
@@ -2296,7 +2231,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     });
 
     // 删除所有被击杀的单位
-    unitsToDelete.forEach(id => this.state.units.delete(id));
+    unitsToDelete.forEach(id => {
+      const dead = this.state.units.get(id);
+      if (dead) this.killUnit(dead);
+    });
 
     // 更新弩车状态：增加贯穿计数
     ballista.pierceCount += hitUnits.length;
@@ -2381,7 +2319,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         this.addBattleLog(`${target.owner}的战车被弩车近战击杀，崩毁！`);
       } else {
         // 非战车单位：直接删除
-        this.state.units.delete(data.targetId);
+        this.killUnit(target);
         this.addBattleLog(`${target.owner}的${target.type}被弩车近战击杀！`);
       }
 
@@ -2404,23 +2342,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       // 首次击杀奖励
       if (target.owner !== role) {
-        if (role === "player1" && !this.state.player1KilledThisTurn) {
-          this.state.player1KilledThisTurn = true;
-          this.state.player1KillDice++;
-          const extraRoll = this.rollD6();
-          this.state.player1Dice++;
-          this.state.player1DiceResults.push(extraRoll);
-          this.state.player1ActionPoints += extraRoll;
-          this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
-        } else if (role === "player2" && !this.state.player2KilledThisTurn) {
-          this.state.player2KilledThisTurn = true;
-          this.state.player2KillDice++;
-          const extraRoll = this.rollD6();
-          this.state.player2Dice++;
-          this.state.player2DiceResults.push(extraRoll);
-          this.state.player2ActionPoints += extraRoll;
-          this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
-        }
+        this.grantFirstKillReward(role, target);
       }
     } else {
       // 目标受伤但未击杀
@@ -2697,6 +2619,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     } else {
       this.state.currentPlayer = "player1";
       this.state.turn++;
+      // 新的完整轮次开始：平民之死的扣天命额度（每轮 2 点）重置。
+      // 额度以 turn 为单位，所以 player1 回合和 player2 回合共用这 2 点。
+      this.state.player1Taiping.destinyLostThisRound = 0;
+      this.state.player2Taiping.destinyLostThisRound = 0;
       this.addBattleLog(`--- 第${this.state.turn}回合 - 玩家1 ---`);
       // 自动为玩家1投骰子
       this.rollDiceForPlayer("player1");
@@ -3027,31 +2953,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       if (newHp <= 0) {
         // 击杀单位
-        this.state.units.delete(target.id);
+        this.killUnit(target);
         this.addBattleLog(`扇形攻击击杀了${target.type}！`);
 
         // 记录击杀
-        if (attacker === "player1") {
-          if (!this.state.player1KilledThisTurn) {
-            this.state.player1KilledThisTurn = true;
-            this.state.player1KillDice++;
-            const extraRoll = this.rollD6();
-            this.state.player1Dice++;
-            this.state.player1DiceResults.push(extraRoll);
-            this.state.player1ActionPoints += extraRoll;
-            this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
-          }
-        } else {
-          if (!this.state.player2KilledThisTurn) {
-            this.state.player2KilledThisTurn = true;
-            this.state.player2KillDice++;
-            const extraRoll = this.rollD6();
-            this.state.player2Dice++;
-            this.state.player2DiceResults.push(extraRoll);
-            this.state.player2ActionPoints += extraRoll;
-            this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
-          }
-        }
+        this.grantFirstKillReward(attacker, target);
 
         // 如果击杀了将军，减少骰子
         if (target.type === "general") {
@@ -3552,35 +3458,20 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 删除单位
-    this.state.units.delete(data.targetId);
+    this.killUnit(target);
     this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}击杀了${target.owner}的${target.type}`);
 
     // 首次击杀奖励
-    if (role === "player1" && !this.state.player1KilledThisTurn) {
-      this.state.player1KilledThisTurn = true;
-      this.state.player1KillDice++;
-      const extraRoll = this.rollD6();
-      this.state.player1Dice++;
-      this.state.player1DiceResults.push(extraRoll);
-      this.state.player1ActionPoints += extraRoll;
-      this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
-    } else if (role === "player2" && !this.state.player2KilledThisTurn) {
-      this.state.player2KilledThisTurn = true;
-      this.state.player2KillDice++;
-      const extraRoll = this.rollD6();
-      this.state.player2Dice++;
-      this.state.player2DiceResults.push(extraRoll);
-      this.state.player2ActionPoints += extraRoll;
-      this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
-    }
+    this.grantFirstKillReward(role, target);
 
     // 如果击杀了将军
     if (target.type === "general") {
       this.addBattleLog(`${target.owner === "player1" ? "玩家1" : "玩家2"}的将军阵亡！下回合失去基础骰子`);
     }
 
-    // 如果击杀了中立标记，重置转化费用
-    if (target.type === "neutral_marker" && target.owner === "neutral") {
+    // 如果击杀了中立标记，重置转化费用（公共平民除外，同上）
+    if (target.type === "neutral_marker" && target.owner === "neutral"
+        && !Rules.isCivilian(target as unknown as Rules.UnitLike)) {
       const rendeGeneral = Array.from(this.state.units.values()).find(u =>
         u.owner === role && u.type === "general" && u.generalType === "rende"
       );
@@ -3707,6 +3598,100 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   /** 判断当前玩家是否可以指挥某单位 */
   private canCommandUnit(unit: UnitSchema, role: "player1" | "player2"): boolean {
     return unit.owner === role;
+  }
+
+  /**
+   * 首次击杀奖励（士气）：当回合第一次击杀时立刻多投一颗骰子，点数直接进行动值。
+   *
+   * 原来这段在 7 处各复制了一遍（普通攻击、战车碾压、投石车溅射、弩车贯穿、
+   * 弩车近战、无双扇形、仁德确认击杀）。收成一个方法是因为
+   * 「哪些击杀不算战功」需要一处统一判断 —— 击杀公共平民就是第一个这样的例外，
+   * 否则这条规则得在 7 个地方各写一遍。
+   *
+   * 注意各调用点原有的额外前置条件（战车碾压只对敌方单位计功）保持不变，
+   * 那是既有行为，不在本次改动范围内。
+   */
+  private grantFirstKillReward(
+    role: "player1" | "player2",
+    victim: UnitSchema,
+    label = ''
+  ): boolean {
+    // 击杀公共平民不算战功 —— 这条规则只在这一处判断，
+    // 这正是把 7 份复制收成一个方法的原因。
+    if (Rules.isCivilian(victim as unknown as Rules.UnitLike)) {
+      this.addBattleLog(`击杀平民不计战功，无士气奖励`);
+      return false;
+    }
+
+    const already = role === "player1"
+      ? this.state.player1KilledThisTurn
+      : this.state.player2KilledThisTurn;
+    if (already) return false;
+
+    const extraRoll = this.rollD6();
+    if (role === "player1") {
+      this.state.player1KilledThisTurn = true;
+      this.state.player1KillDice++;
+      this.state.player1Dice++;
+      this.state.player1DiceResults.push(extraRoll);
+      this.state.player1ActionPoints += extraRoll;
+    } else {
+      this.state.player2KilledThisTurn = true;
+      this.state.player2KillDice++;
+      this.state.player2Dice++;
+      this.state.player2DiceResults.push(extraRoll);
+      this.state.player2ActionPoints += extraRoll;
+    }
+    this.addBattleLog(
+      `${role === "player1" ? "玩家1" : "玩家2"}首次击杀${label}！获得额外骰子，投出${extraRoll}点`
+    );
+    return true;
+  }
+
+  /**
+   * 真正的「阵亡」出口：移除单位并结算死亡的连带效果。
+   *
+   * 和裸的 `units.delete` 的分工：**死亡走这里，转化不走**。
+   * 仁德招降中立单位、以德服人转中立、力士被击败转平民都是转化，
+   * 它们会删掉原单位再造一个，但不该触发死亡效果（比如扣太平天命）。
+   */
+  private killUnit(unit: UnitSchema): void {
+    if (Rules.isCivilian(unit as unknown as Rules.UnitLike)) {
+      this.onCivilianKilled(unit);
+    }
+    this.state.units.delete(unit.id);
+  }
+
+  /**
+   * 平民阵亡：每名**仍然存活**的太平失去 1 点天命，每个完整轮次最多 2 点。
+   *
+   * 「完整轮次」以 `state.turn` 为单位（turn 在切回 player1 时 ++），
+   * 所以 player1 回合和 player2 回合共用这 2 点额度。
+   *
+   * 额度记的是**真的扣掉的点数**：天命已经见底（0）时扣不动，
+   * 也就不占用本轮额度 —— 否则「天命 0 时死两个平民」会白白吃掉额度，
+   * 让之后天命涨回来的那一刻反而免疫。
+   *
+   * 力士被击败转化来的平民不算平民死亡，走的是转化路径，不到这里。
+   */
+  private onCivilianKilled(civ: UnitSchema): void {
+    for (const role of ["player1", "player2"] as const) {
+      if (!this.isTaipingAlive(role)) continue;
+      const tp = this.taipingOf(role);
+      const who = role === "player1" ? "玩家1" : "玩家2";
+
+      if (tp.destiny <= 0) continue; // 已见底，扣不动也不占额度
+
+      if (tp.destinyLostThisRound >= 2) {
+        this.addBattleLog(`${who}的太平本轮已因平民之死失去 2 点天命，${civ.id} 不再扣减`);
+        continue;
+      }
+
+      tp.destinyLostThisRound++;
+      const before = tp.destiny;
+      tp.destiny -= 1;
+      this.addBattleLog(`平民${civ.id}身死，${who}的太平天命 ${before}→${tp.destiny}`);
+    }
   }
 
   // ========================================

@@ -1683,6 +1683,15 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     console.log(`[DEBUG] 移动结束 - currentPlayer: ${this.state.currentPlayer}, role: ${role}`);
 
+    // 黄巾贼：主动移动结束时重新充满作乱充能。
+    //
+    // 只认这条路径，所以被击退、被动位移不会回充 —— 规则明确要求如此。
+    // 一次移动即可充满，不需要连续移动，也不额外消耗行动点。
+    if (unit.type === "huangjin_zei" && !unit.charged) {
+      unit.charged = true;
+      this.addBattleLog(`黄巾贼${unit.id}移动后重新积蓄作乱之势`);
+    }
+
     // 检查胜利条件：是否触碰到敌方大本营
     this.checkVictoryCondition(unit);
   }
@@ -3780,6 +3789,14 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.addBattleLog(`${who}的黄天当立宣告随太平阵亡而作废`);
       this.broadcast("huangtianCancelled", { by: role, reason: "太平阵亡" });
     }
+
+    // 还没来得及征募的平民不再是义务 —— 豆饭是太平的被动，人没了就没了
+    if (tp.pendingRecruit.length > 0) {
+      this.addBattleLog(`${who}的豆饭征募随太平阵亡而中止（${tp.pendingRecruit.length} 名平民获免）`);
+      tp.pendingRecruit.clear();
+    }
+
+    this.applyQiyi(role);
     // 起义（力士→贼）与随之而来的腐化在步骤 9 / 11 接进来
   }
 
@@ -3813,6 +3830,37 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       tp.destiny -= 1;
       this.addBattleLog(`平民${civ.id}身死，${who}的太平天命 ${before}→${tp.destiny}`);
     }
+  }
+
+  /**
+   * 起义：太平阵亡的瞬间，该方所有黄巾力士转化为黄巾贼。
+   *
+   * 继承转化前的剩余体力（1 血力士变成 1 血贼），并立即获得**充满**的作乱充能
+   * —— 所以太平倒下那一刻，整片黄巾同时变成会反伤的威胁，
+   * 这是「苍天已死」阶段最主要的补偿。
+   *
+   * 原地改 type 而不是删掉重建：贼继承体力和位置，id 不变也让战报里
+   * 「lishi3 变成黄巾贼」这件事可追。和力士转平民不同 —— 那边是换阵营，
+   * 新 id 才说得清。
+   */
+  private applyQiyi(role: "player1" | "player2"): void {
+    const lishiList = Array.from(this.state.units.values()).filter(
+      u => u.owner === role && u.type === "huangjin_lishi"
+    );
+    if (lishiList.length === 0) return;
+
+    for (const u of lishiList) {
+      u.type = "huangjin_zei";
+      u.charged = true;
+      // 失去纪律：本回合还没用掉的攻击权直接作废
+      u.hasAttacked = true;
+    }
+
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    this.addBattleLog(
+      `起义！${who}的 ${lishiList.length} 名黄巾力士失去信仰，化为黄巾贼（作乱充能已充满）`
+    );
+    this.broadcast("qiyi", { by: role, count: lishiList.length });
   }
 
   /** 当前这方的黄天当立条件清单 */

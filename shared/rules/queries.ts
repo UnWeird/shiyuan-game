@@ -84,6 +84,13 @@ export interface UnitLike {
    * 但两者的死亡结算不同，必须在数据上可分。
    */
   statusTag: string;
+  /**
+   * 黄巾贼的作乱充能是否充满。非贼单位恒为 false。
+   *
+   * 二态而不是层数：作乱和腐化共用这一个开关，用掉就耗尽，
+   * 主动移动一次即充满。
+   */
+  charged: boolean;
 }
 
 /** 单位占据的格子：机关占多格，其余就是自己那一格 */
@@ -245,6 +252,14 @@ units: readonly UnitLike[]
   }
   if (attacker.type === 'catapult' && attacker.actionsThisTurn >= 2) {
     return { ok: false, reason: "投石车本回合已达行动次数上限" };
+  }
+
+  // 黄巾贼完全不能主动攻击 —— 它失去了纪律，威胁靠「作乱」被动造成。
+  //
+  // 必须在射程判定之前拦掉：贼也不在近战名单里，漏掉这条它就会落进
+  // 「没有任何射程判定」的分支，变成全图可攻击（和力士当初那个坑同源）。
+  if (attacker.type === 'huangjin_zei') {
+    return { ok: false, reason: "黄巾贼不能主动攻击" };
   }
 
   // --- 攻击范围 ---

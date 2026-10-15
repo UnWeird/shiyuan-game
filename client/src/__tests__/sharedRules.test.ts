@@ -39,6 +39,7 @@ const mk = (over: Partial<UnitLike> & Pick<UnitLike, 'id' | 'type' | 'owner' | '
   movementRestrictionSourceR: 0,
   movementRestrictionSourceS: 0,
   statusTag: '',
+  charged: false,
   ...over,
 });
 

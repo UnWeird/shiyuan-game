@@ -2610,6 +2610,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.resetWushuangFanAttack();
     }
 
+    // 太平：夺天命 + 天命难承（§7.1 第 5、6 步），必须在切换玩家之前
+    this.settleDestiny(role);
+
     // 切换玩家
     if (this.state.currentPlayer === "player1") {
       this.state.currentPlayer = "player2";
@@ -3656,10 +3659,27 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
    * 它们会删掉原单位再造一个，但不该触发死亡效果（比如扣太平天命）。
    */
   private killUnit(unit: UnitSchema): void {
-    if (Rules.isCivilian(unit as unknown as Rules.UnitLike)) {
-      this.onCivilianKilled(unit);
-    }
+    const wasCivilian = Rules.isCivilian(unit as unknown as Rules.UnitLike);
+    const wasTaiping = unit.type === "general" && unit.generalType === "taiping";
+    const owner = unit.owner as "player1" | "player2";
+
+    // 先下场再结算，这样连带效果里的 isTaipingAlive 看到的是事后的局面
     this.state.units.delete(unit.id);
+
+    if (wasCivilian) this.onCivilianKilled(unit);
+    if (wasTaiping) this.onTaipingGeneralDeath(owner);
+  }
+
+  /**
+   * 太平将军阵亡 —— 从「黄天未立」转入「苍天已死」。
+   *
+   * 所有真正的死亡路径都经过 killUnit，所以这个钩子不会被漏掉：
+   * 被攻击打死、被机关打死、被天命难承压死，走的都是同一个出口。
+   */
+  private onTaipingGeneralDeath(role: "player1" | "player2"): void {
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    this.addBattleLog(`⚡ ${who}的太平阵亡 —— 苍天已死，黄巾失去信仰`);
+    // 起义（力士→贼）与随之而来的腐化在步骤 9 / 11 接进来
   }
 
   /**
@@ -3691,6 +3711,63 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       const before = tp.destiny;
       tp.destiny -= 1;
       this.addBattleLog(`平民${civ.id}身死，${who}的太平天命 ${before}→${tp.destiny}`);
+    }
+  }
+
+  /**
+   * 太平回合结束的结算：夺天命 → 天命难承。
+   *
+   * 顺序按规则书 §7.1 的第 5、6 步，**不能交换** ——
+   * 天命难承比较的是夺天命**之后**的承载量，所以这一回合骰出来的 ±1
+   * 当场就决定了会不会掉血。
+   *
+   * 太平阵亡后整段跳过（§7.2：不再结算天命骰、天命承载、符水粥）。
+   *
+   * 旧实现把这件事拆成「结算天命」「结束回合」两个必点按钮，
+   * 中间还要一个 Schema 状态挂住。现在合并成一步：点结束回合时一次算完，
+   * 骰子结果写进 lastHuangtian / lastCangtian 供界面展示。
+   */
+  private settleDestiny(role: "player1" | "player2"): void {
+    const general = this.taipingGeneralOf(role);
+    if (!general) return; // 没选太平，或太平已阵亡
+
+    const tp = this.taipingOf(role);
+    const who = role === "player1" ? "玩家1" : "玩家2";
+
+    // ── 夺天命 ──
+    const huangtian = this.rollD6();
+    const cangtian = this.rollD6();
+    tp.lastHuangtian = huangtian;
+    tp.lastCangtian = cangtian;
+
+    const before = tp.destiny;
+    if (huangtian > cangtian) {
+      tp.destiny = Math.min(Rules.DESTINY_MAX, tp.destiny + 1);
+    } else if (huangtian < cangtian) {
+      tp.destiny = Math.max(Rules.DESTINY_MIN, tp.destiny - 1);
+    }
+    this.addBattleLog(
+      `${who}夺天命：黄天${huangtian} / 苍天${cangtian}，天命 ${before}→${tp.destiny}`
+    );
+
+    // ── 天命难承 ──
+    const capacity = Rules.getDestinyCapacity(tp.destiny);
+    const lishi = Rules.countLishi(this.unitList, role);
+    if (!Rules.isOverCapacity(tp.destiny, lishi)) {
+      if (lishi > 0) {
+        this.addBattleLog(`${who}的黄巾力士 ${lishi}/${capacity}，承载正常`);
+      }
+      return;
+    }
+
+    // 超出多少都只掉 1 点，且不走任何减伤路径（直接改 hp）
+    general.hp -= 1;
+    this.addBattleLog(
+      `天命难承！${who}的黄巾力士 ${lishi} 超出承载 ${capacity}，太平体力 ${general.hp + 1}→${general.hp}`
+    );
+
+    if (general.hp <= 0) {
+      this.killUnit(general);
     }
   }
 

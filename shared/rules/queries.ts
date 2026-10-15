@@ -925,3 +925,37 @@ export function getCivilianSpawnCells(
     !taken.some(t => hexEquals(t, hex)) && !bases.some(b => hexEquals(b, hex))
   );
 }
+
+/* ══════════════════ 太平 · 天命 ══════════════════ */
+
+/** 天命下限 / 上限。天命不是技能消耗资源，而是太平能维持的信仰与组织能力 */
+export const DESTINY_MIN = 0;
+export const DESTINY_MAX = 12;
+/** 开局天命 */
+export const DESTINY_INITIAL = 5;
+
+/**
+ * 天命能承载的黄巾力士数量：**1 + ⌈天命 / 2⌉**
+ *
+ * | 天命 | 0 | 1–2 | 3–4 | 5–6 | 7–8 | 9–10 | 11–12 |
+ * |------|---|-----|-----|-----|-----|------|-------|
+ * | 承载 | 1 | 2   | 3   | 4   | 5   | 6    | 7     |
+ */
+export function getDestinyCapacity(destiny: number): number {
+  return 1 + Math.ceil(destiny / 2);
+}
+
+/**
+ * 某方场上的黄巾力士数量 —— 天命难承的判定依据。
+ *
+ * 残血力士照样占一格承载；被击败后转成平民的力士已经不是力士了，
+ * 自然不再计入（这就是「立即释放承载量」的实现方式，不需要额外逻辑）。
+ */
+export function countLishi(units: readonly UnitLike[], owner: string): number {
+  return units.filter(u => u.type === 'huangjin_lishi' && u.owner === owner).length;
+}
+
+/** 力士是否超出承载 —— 超了则太平回合结束时掉 1 点体力 */
+export function isOverCapacity(destiny: number, lishiCount: number): boolean {
+  return lishiCount > getDestinyCapacity(destiny);
+}

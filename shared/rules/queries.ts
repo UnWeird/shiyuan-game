@@ -269,7 +269,16 @@ units: readonly UnitLike[]
   }
 
   // 近战单位：必须与目标体积相邻
-  if (attacker.type === 'infantry' || attacker.type === 'cavalry' || attacker.type === 'general') {
+  //
+  // 黄巾力士必须在这张名单里。不在的话它会落进「没有任何射程判定」的分支
+  // —— 也就是隔着整张棋盘打对角，和当年投石车那个 bug 一模一样
+  //（见 README「机关单位的射程校验」）。新兵种加进来时第一件事就是看这里。
+  if (
+    attacker.type === 'infantry' ||
+    attacker.type === 'cavalry' ||
+    attacker.type === 'general' ||
+    attacker.type === 'huangjin_lishi'
+  ) {
     if (minBodyDist > 1) {
       return { ok: false, reason: "目标不在攻击范围内" };
     }
@@ -305,6 +314,18 @@ units: readonly UnitLike[]
   }
   if (attacker.type === 'chariot') {
     return { ok: false, reason: "战车没有攻击动作" };
+  }
+
+  // 信仰不死：残血（1 血）的黄巾力士只能移动，不能主动攻击。
+  // 它的代价换来的是「不会真的死」—— 0 血时化为平民而不是阵亡。
+  if (attacker.type === 'huangjin_lishi' && attacker.hp <= 1) {
+    return { ok: false, reason: "残血的黄巾力士无法主动攻击" };
+  }
+
+  // 黄巾力士不能主动攻击平民 —— 和太平本人那条约束不同，
+  // 这条**不看太平是否存活**：力士自己就是被征募的流民，任何血量都不会动手。
+  if (attacker.type === 'huangjin_lishi' && isCivilian(target)) {
+    return { ok: false, reason: "黄巾力士不能攻击平民" };
   }
 
   // 太平阵营不能主动攻击平民 —— 太平存活时才有这个约束，死后他的正规军就没这层顾忌了。

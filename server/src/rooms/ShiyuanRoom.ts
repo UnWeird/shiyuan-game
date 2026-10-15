@@ -1640,9 +1640,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   private checkVictoryCondition(unit: any) {
     console.log(`[DEBUG checkVictoryCondition] 检查单位: type=${unit.type}, owner=${unit.owner}, pos=(${unit.q},${unit.r},${unit.s})`);
 
-    // 黄巾力士/黄巾贼不触发胜利条件
-    if (unit.type === "huangjin_lishi" || unit.type === "huangjin_zei") return;
-
     // 获取敌方大本营位置
     const enemyBaseQ = unit.owner === "player1" ? this.state.player2BaseQ : this.state.player1BaseQ;
     const enemyBaseR = unit.owner === "player1" ? this.state.player2BaseR : this.state.player1BaseR;
@@ -2008,7 +2005,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       );
 
       // 仁德阵营击杀非中立单位：发送确认请求给客户端
-      if (rendeGeneral && target.type !== 'neutral_marker') {
+      // 力士排除在外：信仰不死已经规定它化为平民而不是阵亡，
+      // 再让仁德选一次的话「转为中立标记」会造出一个**没有 civilian 标记**的
+      // 中立单位，等于绕过了信仰不死。
+      if (rendeGeneral && target.type !== 'neutral_marker' && target.type !== 'huangjin_lishi') {
         client.send("rendeKillConfirm", {
           attackerId: attacker.id,
           targetId: target.id,
@@ -3653,6 +3653,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.addBattleLog(`击杀平民不计战功，无士气奖励`);
       return false;
     }
+    if (victim.type === "huangjin_lishi") {
+      this.addBattleLog(`黄巾力士信仰不死，化为平民而非阵亡，无士气奖励`);
+      return false;
+    }
 
     const already = role === "player1"
       ? this.state.player1KilledThisTurn
@@ -3687,6 +3691,13 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
    * 它们会删掉原单位再造一个，但不该触发死亡效果（比如扣太平天命）。
    */
   private killUnit(unit: UnitSchema): void {
+    // 黄巾力士不会真的死 —— 信仰不死：体力耗尽时化为 1 血中立平民。
+    // 拦在这里而不是在每条伤害路径上，是因为所有真正的死亡都经过这个出口。
+    if (unit.type === "huangjin_lishi") {
+      this.convertLishiToCivilian(unit);
+      return;
+    }
+
     const wasCivilian = Rules.isCivilian(unit as unknown as Rules.UnitLike);
     const wasTaiping = unit.type === "general" && unit.generalType === "taiping";
     const owner = unit.owner as "player1" | "player2";
@@ -3740,6 +3751,25 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       tp.destiny -= 1;
       this.addBattleLog(`平民${civ.id}身死，${who}的太平天命 ${before}→${tp.destiny}`);
     }
+  }
+
+  /**
+   * 信仰不死：黄巾力士体力耗尽时不阵亡，而是化为 1 血的中立平民。
+   *
+   * 用「删掉力士 + 新建平民」而不是原地改 type，是为了战报和测试能读
+   * —— `lishi2 化为 civ9` 比「某个单位的 type 变了」清楚得多，
+   * 而且新 id 让「这个平民是从力士来的」在日志里留了痕。
+   *
+   * 不走刷新的 5 名上限（转化来的平民不受限），但新平民会计入场上总数，
+   * 从而挤掉之后的自动刷新。承载量的释放不需要额外处理：
+   * countLishi 只认 type === huangjin_lishi，type 一换就自动不算了。
+   */
+  private convertLishiToCivilian(lishi: UnitSchema): void {
+    const who = lishi.owner === "player1" ? "玩家1" : "玩家2";
+    const pos = { q: lishi.q, r: lishi.r, s: lishi.s };
+    this.state.units.delete(lishi.id);
+    const civ = this.spawnCivilian(pos);
+    this.addBattleLog(`${who}的黄巾力士${lishi.id}体力耗尽，失去信仰化为平民${civ.id}`);
   }
 
   /**

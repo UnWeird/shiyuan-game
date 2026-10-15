@@ -959,3 +959,40 @@ export function countLishi(units: readonly UnitLike[], owner: string): number {
 export function isOverCapacity(destiny: number, lishiCount: number): boolean {
   return lishiCount > getDestinyCapacity(destiny);
 }
+
+/* ══════════════════ 太平 · 符水粥 ══════════════════ */
+
+/** 符水粥的行动点消耗 */
+export const FUSHUI_COST = 2;
+
+/**
+ * 符水粥可以救济的平民 id。
+ *
+ * 条件：太平本人相邻、目标是公共平民、本回合还没用过符水粥、
+ * 太平本回合的攻击类行动还没用掉、行动次数未满。
+ *
+ * 「本回合是否用过」是阵营级状态（TaipingSchema.fushuiUsedThisTurn），
+ * 不在 UnitLike 里，所以显式传进来 —— 比为了一个布尔值给所有单位加字段干净。
+ *
+ * 和其他查询一致：**不检查行动点**。够不够付由结算层判断，
+ * 这样「可救济的目标」和「现在付得起」是两件分开的事。
+ */
+export function getFushuiTargets(
+  general: UnitLike,
+  units: readonly UnitLike[],
+  usedThisTurn: boolean
+): string[] {
+  if (general.type !== 'general' || general.generalType !== 'taiping') return [];
+  if (usedThisTurn) return [];
+
+  // 符水粥视为本回合的攻击类行动，所以和普通攻击互斥（两个方向都互斥）
+  if (general.hasAttacked) return [];
+
+  const actionLimit = 2 + (general.bonusActionLimit || 0);
+  if (general.actionsThisTurn >= actionLimit) return [];
+
+  const pos = { q: general.q, r: general.r, s: general.s };
+  return units
+    .filter(u => isCivilian(u) && hexDistance(pos, { q: u.q, r: u.r, s: u.s }) === 1)
+    .map(u => u.id);
+}

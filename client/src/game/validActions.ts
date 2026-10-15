@@ -48,6 +48,12 @@ export interface ValidActionsPayload {
    * 这类攻击不是选一个目标，而是覆盖一条线，所以和 attacks 分开表达。
    */
   attackHexes: Record<string, Array<[number, number]>>;
+  /**
+   * 太平的符水粥此刻能救济哪些平民（平民 id）。
+   * 和 moves / attacks 一样走消息而不进 Schema —— 顶层字段数有上限，
+   * 而且这类派生数据本来就不该存进对局状态。
+   */
+  fushuiTargets?: string[];
 }
 
 /** 解码后的移动格子，形状与客户端既有的高亮数据一致 */
@@ -74,6 +80,8 @@ interface ValidActionsState {
   depthDefended: Set<string>;
   /** unitId -> 范围型攻击覆盖格 */
   attackHexes: Record<string, HexCoord[]>;
+  /** 符水粥能救济的平民 id */
+  fushuiTargets: string[];
 
   apply: (payload: ValidActionsPayload) => void;
   clear: () => void;
@@ -87,6 +95,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
   threatHexes: [],
   depthDefended: new Set<string>(),
   attackHexes: {},
+  fushuiTargets: [],
 
   apply: (payload) => {
     const moves: Record<string, MoveHex[]> = {};
@@ -109,12 +118,14 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
       threatHexes: (payload.threatHexes ?? []).map(([q, r]) => ({ q, r, s: -q - r })),
       depthDefended: new Set(payload.depthDefended ?? []),
       attackHexes,
+      fushuiTargets: payload.fushuiTargets ?? [],
     });
   },
 
   clear: () => set({
     forPlayer: null, moves: {}, attacks: {}, lethal: {},
     threatHexes: [], depthDefended: new Set<string>(), attackHexes: {},
+    fushuiTargets: [],
   }),
 }));
 
@@ -152,4 +163,9 @@ export function isDepthDefendedUnit(unitId: string): boolean {
 /** 读取某个单位的范围型攻击覆盖格（弩车贯穿线、投石车射击线） */
 export function getServerAttackHexes(unitId: string): HexCoord[] {
   return useValidActionsStore.getState().attackHexes[unitId] ?? [];
+}
+
+/** 太平此刻能用符水粥救济的平民 id */
+export function getServerFushuiTargets(): string[] {
+  return useValidActionsStore.getState().fushuiTargets;
 }

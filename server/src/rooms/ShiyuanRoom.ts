@@ -510,6 +510,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.handleSurrender(client);
     });
 
+    // === 太平将军技能 ===
+    this.onMessage("taipingFushui", (client, data: { civilianId: string }) => {
+      this.handleTaipingFushui(client, data);
+    });
+
     // === 开发工具：存档 / 读档（仅 SHIYUAN_DEV_TOOLS=1 时注册） ===
     if (DEV_TOOLS) {
       this.onMessage("__devSaveState", (client, data: { label?: string }) => {
@@ -1136,6 +1141,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}投骰：${diceCount}颗骰子(基础${baseDice}+部署${Math.floor(deployedValue / 2)})，点数${results.join(',')}，共${actionPoints}点行动值`);
 
+    // 太平：新回合开始，符水粥的每回合额度回满
+    this.taipingOf(role).fushuiUsedThisTurn = false;
+
     // 太平：回合开始、掷骰之后刷新公共平民（强制豆饭/腐化在此之后）
     this.refreshCivilians(role);
   }
@@ -1274,10 +1282,26 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
      */
     const depthDefended = Rules.getDepthDefendedUnitIds(this.unitList);
 
+    /**
+     * 太平的符水粥可救济目标（平民 id）。
+     *
+     * 和 moves / attacks 一样走 validActions 消息而不进 Schema
+     * —— 顶层字段数有上限，而且这类派生数据本来就不该存。
+     */
+    const taipingGeneral = this.taipingGeneralOf(forPlayer);
+    const fushuiTargets = taipingGeneral
+      ? Rules.getFushuiTargets(
+          taipingGeneral as unknown as Rules.UnitLike,
+          this.unitList,
+          this.taipingOf(forPlayer).fushuiUsedThisTurn
+        )
+      : [];
+
     return {
       forPlayer, phase: this.state.phase,
       moves, attacks, lethal, attackHexes,
       threatHexes, depthDefended,
+      fushuiTargets,
     };
   }
 
@@ -1299,6 +1323,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.state.currentPlayer,
       String(this.state.player1ActionPoints),
       String(this.state.player2ActionPoints),
+      // 符水粥的「本回合已用」会改变可救济目标。实际上用掉它也会同时改动
+      // 太平的 hasAttacked / actionsThisTurn，但靠那个巧合来触发重算太脆了
+      `${this.state.player1Taiping.fushuiUsedThisTurn ? 1 : 0}`,
+      `${this.state.player2Taiping.fushuiUsedThisTurn ? 1 : 0}`,
     ];
     this.state.units.forEach((u, id) => {
       parts.push(
@@ -3712,6 +3740,80 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       tp.destiny -= 1;
       this.addBattleLog(`平民${civ.id}身死，${who}的太平天命 ${before}→${tp.destiny}`);
     }
+  }
+
+  /**
+   * 符水粥：花 2 AP 救济一名相邻的平民，天命 +1。
+   *
+   * 救济**不是击杀**：平民是被带离战场而不是死掉，所以走裸 delete 而不是
+   * killUnit —— 否则会同时触发「平民死亡扣天命」，一加一减白忙一场，
+   * 双太平时还会连带扣掉对手那个太平的天命。
+   *
+   * 代价不只是 2 AP：它占掉太平的一次行动，并且**算作本回合的攻击类行动**，
+   * 所以同一回合不能再普通攻击。可以先移动再救济，但将领每回合仍然最多两次行动。
+   *
+   * 天命 12 时照样能用 —— 天命不再上涨，但消耗照付、本回合已用照记。
+   * 因为「黄天当立」硬性要求宣告回合内成功使用过符水粥，不能让满天命堵死这条路。
+   */
+  private handleTaipingFushui(client: Client, data: { civilianId: string }) {
+    const role = this.getPlayerRole(client);
+    if (!role || role !== this.state.currentPlayer) {
+      client.send("error", { message: "不是你的回合" });
+      return;
+    }
+
+    const general = this.taipingGeneralOf(role);
+    if (!general) {
+      client.send("error", { message: "太平不在场" });
+      return;
+    }
+
+    const tp = this.taipingOf(role);
+    const targets = Rules.getFushuiTargets(
+      general as unknown as Rules.UnitLike,
+      this.unitList,
+      tp.fushuiUsedThisTurn
+    );
+
+    if (!targets.includes(data?.civilianId)) {
+      // 把三种常见原因分开说，否则玩家只会看到一句「不能救济」
+      const reason = tp.fushuiUsedThisTurn
+        ? "符水粥本回合已经用过了"
+        : general.hasAttacked
+          ? "太平本回合已使用攻击类行动，不能再施符水粥"
+          : general.actionsThisTurn >= 2 + (general.bonusActionLimit || 0)
+            ? "太平本回合行动次数已用尽"
+            : "只能救济与太平相邻的平民";
+      client.send("error", { message: reason });
+      return;
+    }
+
+    const ap = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
+    if (ap < Rules.FUSHUI_COST) {
+      client.send("error", { message: `行动点不足（符水粥需要 ${Rules.FUSHUI_COST} 点）` });
+      return;
+    }
+    if (role === "player1") {
+      this.state.player1ActionPoints -= Rules.FUSHUI_COST;
+    } else {
+      this.state.player2ActionPoints -= Rules.FUSHUI_COST;
+    }
+
+    const civ = this.state.units.get(data.civilianId)!;
+    this.state.units.delete(civ.id);
+
+    const before = tp.destiny;
+    tp.destiny = Math.min(Rules.DESTINY_MAX, tp.destiny + 1);
+    tp.fushuiUsedThisTurn = true;
+
+    general.actionsThisTurn += 1;
+    general.hasAttacked = true;
+
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    this.addBattleLog(
+      `${who}施符水粥救济平民${civ.id}，天命 ${before}→${tp.destiny}` +
+      (before === tp.destiny ? `（天命已满）` : ``)
+    );
   }
 
   /**

@@ -60,6 +60,11 @@ export interface ValidActionsPayload {
    */
   fushuiTargets?: string[];
   /**
+   * 强制腐化阶段：贼 id → 它能腐化的相邻平民 id。
+   * 待办队列本身走 Schema（pendingCorrupt），这里只补可选目标。
+   */
+  corruptTargets?: Record<string, string[]>;
+  /**
    * 太平的黄天当立：四条件逐条 + 当前宣告状态（declaredTurn，-1 为未宣告）。
    * 非太平方为 null。界面据此画可打勾的清单和宣告按钮。
    */
@@ -106,6 +111,8 @@ interface ValidActionsState {
   attackHexes: Record<string, HexCoord[]>;
   /** 符水粥能救济的平民 id */
   fushuiTargets: string[];
+  /** 贼 id → 可腐化的相邻平民 id */
+  corruptTargets: Record<string, string[]>;
   /** 黄天当立条件清单；非太平方为 null */
   huangtian: HuangtianStatus | null;
 
@@ -123,6 +130,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
   depthDefended: new Set<string>(),
   attackHexes: {},
   fushuiTargets: [],
+  corruptTargets: {},
   huangtian: null,
 
   apply: (payload) => {
@@ -149,6 +157,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
       depthDefended: new Set(payload.depthDefended ?? []),
       attackHexes,
       fushuiTargets: payload.fushuiTargets ?? [],
+      corruptTargets: payload.corruptTargets ?? {},
       huangtian: payload.huangtian ?? null,
     });
   },
@@ -156,7 +165,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
   clear: () => set({
     forPlayer: null, moves: {}, attacks: {}, lethal: {},
     threatHexes: [], zuoluanHexes: [], depthDefended: new Set<string>(), attackHexes: {},
-    fushuiTargets: [], huangtian: null,
+    fushuiTargets: [], corruptTargets: {}, huangtian: null,
   }),
 }));
 
@@ -204,6 +213,11 @@ export function getServerAttackHexes(unitId: string): HexCoord[] {
 /** 太平此刻能用符水粥救济的平民 id */
 export function getServerFushuiTargets(): string[] {
   return useValidActionsStore.getState().fushuiTargets;
+}
+
+/** 某只黄巾贼此刻能腐化的相邻平民 id */
+export function getServerCorruptTargets(zeiId: string): string[] {
+  return useValidActionsStore.getState().corruptTargets[zeiId] ?? [];
 }
 
 /** 黄天当立的条件清单与宣告状态；非太平方为 null */

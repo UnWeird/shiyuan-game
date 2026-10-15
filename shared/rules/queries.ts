@@ -1201,3 +1201,44 @@ export function getZuoluanThreatHexes(
   }
   return dedupeHexes(out);
 }
+
+/* ══════════════════ 太平 · 腐化 ══════════════════
+ *
+ * 「苍天已死」阶段的扩张手段，和豆饭同构但不花行动点：
+ * 回合开始时所有充能且相邻平民的贼**必须**腐化一名平民，代价是自己的全部充能。
+ *
+ * 腐化与作乱共用那一个充能开关，所以腐化完就不能作乱，
+ * 反之作乱完也不能腐化 —— 除非重新移动充满。
+ */
+
+/**
+ * 本回合必须尝试腐化的黄巾贼 id。
+ *
+ * 条件：己方、充能充满、至少有一个相邻的公共平民。
+ * 房间会在阶段开始时把结果**快照**下来，所以新腐化出来的贼
+ * 不参与本次判定（规则明确要求，否则会在同一回合无限连锁）。
+ */
+export function getCorruptCandidates(units: readonly UnitLike[], owner: string): string[] {
+  const civilians = units.filter(isCivilian);
+  if (civilians.length === 0) return [];
+
+  return units
+    .filter(z =>
+      z.type === 'huangjin_zei' &&
+      z.owner === owner &&
+      z.charged &&
+      civilians.some(c =>
+        hexDistance({ q: z.q, r: z.r, s: z.s }, { q: c.q, r: c.r, s: c.s }) === 1
+      )
+    )
+    .map(z => z.id);
+}
+
+/** 某只贼此刻能腐化哪些相邻平民 */
+export function getCorruptTargets(zei: UnitLike, units: readonly UnitLike[]): string[] {
+  if (zei.type !== 'huangjin_zei' || !zei.charged) return [];
+  const pos = { q: zei.q, r: zei.r, s: zei.s };
+  return units
+    .filter(c => isCivilian(c) && hexDistance(pos, { q: c.q, r: c.r, s: c.s }) === 1)
+    .map(c => c.id);
+}

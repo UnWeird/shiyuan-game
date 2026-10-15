@@ -299,12 +299,13 @@ describe('死亡出口的收口', () => {
     const fs = require('node:fs') as typeof import('node:fs');
     const src = fs.readFileSync(new URL('../rooms/ShiyuanRoom.ts', import.meta.url), 'utf-8');
     const count = (src.match(/this\.state\.units\.delete\(/g) ?? []).length;
-    // 分类：1 处是 killUnit 自己的出口；3 处是**转化**（力士化为平民、
-    // 符水粥救济、豆饭征募平民为力士）—— 转化不是死亡，就该用裸 delete；
-    // 其余是仁德招降 / 以德服人 / 机关崩解等转化或打不到平民的死亡路径。
+    // 分类：1 处是 killUnit 自己的出口；4 处是**转化**（力士化为平民、
+    // 符水粥救济、豆饭征募平民为力士、腐化平民为黄巾贼）—— 转化不是死亡，
+    // 就该用裸 delete；其余是仁德招降 / 以德服人 / 机关崩解等转化，
+    // 或打不到平民的死亡路径。
     //
     // 这个数字变了不等于有 bug，但必须有人看一眼：新增的那处是死亡（走 killUnit）
     // 还是转化（可以裸 delete）。
-    expect(count).toBe(15);
+    expect(count).toBe(16);
   });
 });

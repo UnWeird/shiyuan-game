@@ -238,15 +238,18 @@ describe('贼的移动与充能', () => {
     expect(room.state.battleLog.filter(l => l.includes('重新积蓄')).length).toBe(0);
   });
 
-  it('充能只在两处被点亮：起义与主动移动', () => {
+  it('充能只在三处被点亮：起义、主动移动、腐化出生', () => {
     // 规则要求「被击退、被动位移等不属于主动移动的效果不会恢复充能」。
     // 目前场上还没有能被动位移贼的效果（纵深抗击的击退链只处理步兵），
     // 所以没法从行为上构造反例 —— 改为钉住赋值点：
     // 多出来的那一处就是一条绕过「主动移动才回充」的路径。
+    //
+    // 三处分别是：起义转化（力士变贼，天生充满）、
+    // handleMoveUnit（主动移动回充）、腐化出生的新贼（规则明确充满）。
     const fs = require('node:fs') as typeof import('node:fs');
     const src = fs.readFileSync(new URL('../rooms/ShiyuanRoom.ts', import.meta.url), 'utf-8');
     const hits = src.split('\n').filter(l => /\.charged = true/.test(l));
-    expect(hits).toHaveLength(2);
+    expect(hits).toHaveLength(3);
     expect(src).toContain('if (unit.type === "huangjin_zei" && !unit.charged)');
   });
 

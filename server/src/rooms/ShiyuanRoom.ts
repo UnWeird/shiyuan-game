@@ -393,6 +393,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
    */
   private static readonly FORCED_PHASE_EXEMPT: ReadonlySet<string> = new Set([
     'taipingRecruit',   // 正是此刻要你做的事
+    'taipingCorrupt',   // 同上
     'surrender',        // 任何时候都能认输
     '__devSaveState',
     '__devLoadState',
@@ -550,6 +551,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     this.onAction("taipingDeclareHuangtian", (client) => {
       this.handleTaipingDeclareHuangtian(client);
+    });
+
+    this.onAction("taipingCorrupt", (client, data: { zeiId: string; civilianId: string }) => {
+      this.handleTaipingCorrupt(client, data);
     });
 
     // === 开发工具：存档 / 读档（仅 SHIYUAN_DEV_TOOLS=1 时注册） ===
@@ -1194,7 +1199,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 太平：回合开始、掷骰之后刷新公共平民，紧接着强制豆饭（§7.1 第 2、3 步）。
     // 顺序不能换：新刷出来的平民**可以**立刻成为本回合的征募目标。
     this.refreshCivilians(role);
+    // 太平活着走豆饭，死了走腐化 —— 两者互斥，各自内部会判断
     this.startDoufanPhase(role);
+    this.startCorruptPhase(role);
   }
 
   /**
@@ -1364,6 +1371,20 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       zuoluanHexes: Rules.getZuoluanThreatHexes(this.unitList)
         .map(h => [h.q, h.r] as [number, number]),
       fushuiTargets,
+      /**
+       * 强制腐化阶段：每只待办的贼各自能腐化哪些相邻平民。
+       * 队列本身（pendingCorrupt）是 Schema 同步字段，客户端直接读；
+       * 这里补的是「这只贼点下去有哪些目标」，省得客户端自己算相邻。
+       */
+      corruptTargets: Object.fromEntries(
+        Array.from(this.taipingOf(forPlayer).pendingCorrupt).map(zid => {
+          const z = this.state.units.get(zid);
+          return [
+            zid,
+            z ? Rules.getCorruptTargets(z as unknown as Rules.UnitLike, this.unitList) : [],
+          ];
+        })
+      ) as Record<string, string[]>,
       /**
        * 黄天当立的四条件清单（界面逐条打勾）+ 当前是否已在宣告中。
        * 非太平方拿到 null。
@@ -2680,6 +2701,20 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 行动阶段：正常的回合结束逻辑
+    //
+    // 太平的结算放在最前面（§7.1 第 5-7 步：夺天命 → 天命难承 → 胜利判定）。
+    // 放前面是因为它可能**中止**本次回合结束：太平若死于天命难承，
+    // §7.1 末尾要求立刻执行一次黄巾腐化，而腐化要玩家选目标。
+    // 如果把它放在重置标记之后，中止再重来就会把「上回合是否击杀」这类
+    // 一次性状态刷掉两遍。
+    this.settleDestiny(role);
+
+    if (this.taipingOf(role).pendingCorrupt.length > 0) {
+      this.addBattleLog(`太平倒下，黄巾立刻转向百姓 —— 完成腐化后再结束回合`);
+      client.send("info", { message: "请先完成强制腐化，再结束回合" });
+      return;
+    }
+
     // 重置本回合标记
     this.state.units.forEach((unit) => {
       if (unit.owner === role) {
@@ -2742,9 +2777,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     if (this.state.wushuangFanAttackActive && this.state.wushuangAttackingPlayer === role) {
       this.resetWushuangFanAttack();
     }
-
-    // 太平：夺天命 + 天命难承（§7.1 第 5、6 步），必须在切换玩家之前
-    this.settleDestiny(role);
 
     // 切换玩家
     if (this.state.currentPlayer === "player1") {
@@ -4184,6 +4216,128 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   }
 
   /**
+   * 开启强制腐化阶段：把本回合必须尝试腐化的贼快照进 pendingCorrupt。
+   *
+   * 只在太平已阵亡的一方触发 —— 太平活着时黄巾是力士，走的是豆饭。
+   * 和豆饭一样用快照，这就是「新腐化的贼不参与本次判定」的实现方式，
+   * 否则会在同一回合无限连锁。
+   */
+  private startCorruptPhase(role: "player1" | "player2"): void {
+    if (!this.hasTaiping(role)) return;
+    if (this.isTaipingAlive(role)) return;
+
+    const tp = this.taipingOf(role);
+    tp.pendingCorrupt.clear();
+
+    const candidates = Rules.getCorruptCandidates(this.unitList, role);
+    if (candidates.length === 0) return;
+
+    candidates.forEach(id => tp.pendingCorrupt.push(id));
+    this.addBattleLog(
+      `强制腐化：${candidates.length} 名充能黄巾贼与平民相邻，必须各自腐化一人`
+    );
+  }
+
+  /**
+   * 剔除已经无事可做的贼。
+   *
+   * 和豆饭的结束条件不同：腐化不花行动点，所以不会「付不起」，
+   * 只会「没得腐化」—— 自己的充能被用掉了，或者相邻的平民被别的贼抢走了。
+   * 规则里「如存在多个可选目标由控制方决定」和「另一只贼若无其他目标则跳过」
+   * 两句，合起来就是这个剪枝。
+   */
+  private prunePendingCorrupt(role: "player1" | "player2"): void {
+    const tp = this.taipingOf(role);
+    if (tp.pendingCorrupt.length === 0) return;
+
+    const stale: string[] = [];
+    for (const id of Array.from(tp.pendingCorrupt)) {
+      const z = this.state.units.get(id);
+      const canStill = z && Rules.getCorruptTargets(
+        z as unknown as Rules.UnitLike, this.unitList
+      ).length > 0;
+      if (!canStill) stale.push(id);
+    }
+
+    for (const id of stale) {
+      const idx = tp.pendingCorrupt.indexOf(id);
+      if (idx >= 0) tp.pendingCorrupt.splice(idx, 1);
+    }
+    if (stale.length > 0) {
+      this.addBattleLog(`${stale.length} 名黄巾贼已无可腐化的平民，跳过`);
+    }
+  }
+
+  /**
+   * 腐化一名相邻平民：平民变成 1 血、充能充满的黄巾贼，施术的贼耗尽充能。
+   *
+   * 新贼当回合不能主动移动（所以也不会靠移动立刻把充能充回来），
+   * 但它的充能是满的 —— 从对手回合起就能作乱。
+   */
+  private handleTaipingCorrupt(client: Client, data: { zeiId: string; civilianId: string }) {
+    const role = this.getPlayerRole(client);
+    if (!role || role !== this.state.currentPlayer) {
+      client.send("error", { message: "不是你的回合" });
+      return;
+    }
+
+    const tp = this.taipingOf(role);
+    const idx = tp.pendingCorrupt.indexOf(data?.zeiId);
+    if (idx < 0) {
+      client.send("error", { message: "该黄巾贼不在本回合的腐化名单里" });
+      return;
+    }
+
+    const zei = this.state.units.get(data.zeiId);
+    if (!zei) {
+      tp.pendingCorrupt.splice(idx, 1);
+      this.prunePendingCorrupt(role);
+      client.send("error", { message: "该黄巾贼已不在场" });
+      return;
+    }
+
+    const targets = Rules.getCorruptTargets(zei as unknown as Rules.UnitLike, this.unitList);
+    if (!targets.includes(data?.civilianId)) {
+      client.send("error", { message: "只能腐化与该黄巾贼相邻的平民" });
+      return;
+    }
+
+    const civ = this.state.units.get(data.civilianId)!;
+    const pos = { q: civ.q, r: civ.r, s: civ.s };
+    this.state.units.delete(civ.id);
+
+    const born = new UnitSchema();
+    born.id = this.newUnitId("zei");
+    born.type = "huangjin_zei";
+    born.owner = role;
+    born.q = pos.q;
+    born.r = pos.r;
+    born.s = pos.s;
+    born.hp = 1;
+    born.maxHp = 2;
+    born.direction = 0;
+    born.charged = true;
+    // 当回合不能主动移动，也不能再参与本次腐化
+    born.actionsThisTurn = 2;
+    born.hasMoved = true;
+    born.hasAttacked = true;
+    born.hasActedThisTurn = true;
+    this.state.units.set(born.id, born);
+
+    // 腐化与作乱共用这一个开关：用掉就耗尽
+    zei.charged = false;
+
+    tp.pendingCorrupt.splice(idx, 1);
+
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    this.addBattleLog(
+      `${who}的黄巾贼${zei.id}腐化平民${civ.id}，化为黄巾贼${born.id}（1 血，充能充满）`
+    );
+
+    this.prunePendingCorrupt(role);
+  }
+
+  /**
    * 强制阶段未完成时拦住行动方的其他指令。
    *
    * 「只要存在合格目标且行动点足够，太平玩家就不能主动拒绝征募」——
@@ -4201,6 +4355,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     if (tp.pendingRecruit.length > 0) {
       client.send("error", {
         message: `强制豆饭未完成：还有 ${tp.pendingRecruit.length} 名平民等待征募`,
+      });
+      return true;
+    }
+    if (tp.pendingCorrupt.length > 0) {
+      client.send("error", {
+        message: `强制腐化未完成：还有 ${tp.pendingCorrupt.length} 名黄巾贼等待腐化平民`,
       });
       return true;
     }
@@ -4349,6 +4509,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       if (general.hp <= 0) {
         this.killUnit(general);
+        // §7.1 末尾：「如果太平在天命难承阶段死亡，立即执行黄巾腐化」。
+        // 不等到下个回合开始 —— 将领倒下的那一刻黄巾就转向了百姓。
+        this.startCorruptPhase(role);
         return; // 阵亡的处理里已经作废了宣告，没有后续
       }
     } else if (lishi > 0) {

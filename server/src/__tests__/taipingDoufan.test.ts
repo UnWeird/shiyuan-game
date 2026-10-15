@@ -454,8 +454,8 @@ describe('强制：队列非空期间拦住其他指令', () => {
     // 而且往往只在特定兵种 / 特定技能下才暴露
     setup();
     const types = registeredTypes();
-    expect(types.length).toBe(31);
-    const exempt = ['taipingRecruit', 'surrender'];
+    expect(types.length).toBe(32);
+    const exempt = ['taipingRecruit', 'taipingCorrupt', 'surrender'];
     for (const type of types) {
       if (exempt.includes(type)) continue;
       errors.length = 0;

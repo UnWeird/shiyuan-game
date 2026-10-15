@@ -1,4 +1,4 @@
-import { GameStateSchema, UnitSchema } from '../schema/GameState';
+import { GameStateSchema, UnitSchema, TaipingSchema } from '../schema/GameState';
 
 /**
  * 开发用：对局状态的存档 / 读档
@@ -18,6 +18,20 @@ const ARRAY_FIELDS = [
   'battleLog',
   'wushuangDiceRolls',
 ] as const;
+
+/**
+ * 嵌套 Schema 字段。
+ *
+ * 不能像基本类型那样 `state[key] = value` —— 那样会把 Schema 实例换成普通对象，
+ * 之后整棵子树都不再同步（和 units 是同一类坑）。必须往现有实例里逐字段写。
+ */
+const NESTED_FIELDS = ['player1Taiping', 'player2Taiping'] as const;
+
+/** 嵌套 Schema 内部自己的集合字段 */
+const NESTED_ARRAY_FIELDS: Record<string, readonly string[]> = {
+  player1Taiping: ['pendingRecruit', 'pendingCorrupt'],
+  player2Taiping: ['pendingRecruit', 'pendingCorrupt'],
+};
 
 export interface StateSnapshot {
   /** 快照格式版本，schema 大改后可据此拒绝旧档 */
@@ -53,9 +67,33 @@ export interface RestoreResult {
   unitCount: number
 }
 
+/** 把快照里的一个嵌套 Schema 写回现有实例（保留实例身份，不替换） */
+function restoreNested(
+  target: object,
+  value: unknown,
+  arrayFields: readonly string[],
+  keyPath: string,
+  unknownFields: string[]
+): void {
+  if (!value || typeof value !== 'object') return;
+  const anyTarget = target as unknown as Record<string, unknown>;
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (arrayFields.includes(k)) {
+      const arr = anyTarget[k] as { clear: () => void; push: (x: unknown) => number } | undefined;
+      if (!arr) { unknownFields.push(`${keyPath}.${k}`); continue; }
+      arr.clear();
+      if (Array.isArray(v)) v.forEach(x => arr.push(x));
+      continue;
+    }
+    if (!(k in anyTarget)) { unknownFields.push(`${keyPath}.${k}`); continue; }
+    anyTarget[k] = v;
+  }
+}
+
 /**
  * 把快照写回 state。
- * 基本类型逐个赋值，集合字段先 clear 再重建，units 重新构造 UnitSchema 实例。
+ * 基本类型逐个赋值，集合字段先 clear 再重建，units 重新构造 UnitSchema 实例，
+ * 嵌套 Schema 写进现有实例（见 restoreNested）。
  */
 export function restoreState(state: GameStateSchema, snapshot: StateSnapshot): RestoreResult {
   if (!snapshot || typeof snapshot !== 'object') {
@@ -82,6 +120,13 @@ export function restoreState(state: GameStateSchema, snapshot: StateSnapshot): R
       if (!arr) { unknownFields.push(key); continue; }
       arr.clear();
       if (Array.isArray(value)) value.forEach(v => arr.push(v));
+      continue;
+    }
+
+    if ((NESTED_FIELDS as readonly string[]).includes(key)) {
+      const nested = anyState[key] as unknown as TaipingSchema | undefined;
+      if (!nested) { unknownFields.push(key); continue; }
+      restoreNested(nested, value, NESTED_ARRAY_FIELDS[key] ?? [], key, unknownFields);
       continue;
     }
 

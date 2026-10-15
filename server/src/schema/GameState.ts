@@ -49,7 +49,59 @@ export class UnitSchema extends Schema {
   @type("boolean") cannotRotateNextTurn: boolean = false; // 弩车贯穿限制
 
   // 太平将军专属标记
-  @type("string") statusTag: string = ""; // "" 普通 | "lishi" 力士 | "zei" 贼
+  //
+  // statusTag 用来区分「同一个 type 的两种来源」：
+  // 公共平民和仁德自造的中立标记都是 type=neutral_marker，但死亡结算不同
+  //（公共平民死亡扣太平天命、不重置仁德招降费用），所以必须在数据上可分。
+  @type("string") statusTag: string = ""; // "" 普通 | "civilian" 公共平民
+
+  /**
+   * 黄巾贼：作乱充能是否充满。
+   *
+   * 二态而不是层数 —— 作乱和腐化共用这一个开关，用掉就耗尽，
+   * 主动移动一次即充满。非贼单位恒为 false。
+   */
+  @type("boolean") charged: boolean = false;
+}
+
+/**
+ * 太平将军的阵营状态（每方一份）
+ *
+ * 为什么是嵌套 Schema 而不是顶层字段：`GameStateSchema` 的字段数有
+ * Colyseus 的 64 上限，旧太平那 14 个字段正好把它占满（见 commit dc72383）。
+ * 收进嵌套 Schema 后顶层只占 2 格，而且以后给太平加状态不用再动顶层结构。
+ *
+ * 刻意**不存**「太平是否存活」：它可以由「选了太平」+「units 里还有没有太平将军」
+ * 精确推出，存一份反而会漂移。
+ */
+export class TaipingSchema extends Schema {
+  /** 天命值，初始 5，下限 0 上限 12 */
+  @type("number") destiny: number = 5;
+
+  /** 本轮次已因平民死亡失去的天命（上限 2，turn++ 时清零） */
+  @type("number") destinyLostThisRound: number = 0;
+
+  /** 本回合是否已用过符水粥（黄天当立的条件之一） */
+  @type("boolean") fushuiUsedThisTurn: boolean = false;
+
+  /** 上次夺天命的黄天骰 / 苍天骰，仅用于界面展示 */
+  @type("number") lastHuangtian: number = 0;
+  @type("number") lastCangtian: number = 0;
+
+  /**
+   * 宣告「黄天当立」时的回合数，-1 表示未宣告。
+   *
+   * 判定点是宣告方的下一个回合开始，届时 `turn === declaredTurn + 1`
+   * —— player1 和 player2 都成立（turn 在切回 player1 时才 ++），
+   * 所以一个数字就够，不需要额外记「经过了几个回合」。
+   */
+  @type("number") huangtianDeclaredTurn: number = -1;
+
+  /** 豆饭：本回合待征募的平民 id（阶段开始时快照，非空时拦截其他指令） */
+  @type(["string"]) pendingRecruit = new ArraySchema<string>();
+
+  /** 腐化：本回合待处理的黄巾贼 id（同上） */
+  @type(["string"]) pendingCorrupt = new ArraySchema<string>();
 }
 
 /**
@@ -129,5 +181,7 @@ export class GameStateSchema extends Schema {
   @type("number") wushuangSelectedDirection: number = -1; // -1 表示未选择
   @type(["number"]) wushuangDiceRolls = new ArraySchema<number>(); // 扇形攻击的掷骰记录
 
-  // 太平将军专属状态：见步骤 1，收进嵌套 TaipingSchema（顶层只占 2 格）
+  // 太平将军专属状态：收进嵌套 Schema，顶层只占 2 格（见 TaipingSchema 注释）
+  @type(TaipingSchema) player1Taiping = new TaipingSchema();
+  @type(TaipingSchema) player2Taiping = new TaipingSchema();
 }

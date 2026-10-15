@@ -66,6 +66,53 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
    */
   private isHotseat = false;
 
+  /* ══════════════════ 随机数与单位 id ══════════════════
+   *
+   * 这两样原来都是直接写死的（`Math.random()` 20 处、
+   * `unit_${Date.now()}_${Math.random()...}` 9 处），后果是**规则没法测**：
+   * 掷骰分支（无双「≤2 才能再攻击」、太平夺天命）靠运气才跑得到，
+   * 而单位 id 每次都不一样，测试没法指代「那个被贯穿的弩车」。
+   *
+   * 所以留两个接缝。生产代码行为不变，测试里替掉即可：
+   *   (room as any).rng = seq([3, 5, 1])
+   */
+
+  /** 随机源。测试里替换成确定序列 */
+  private rng: () => number = Math.random;
+
+  /** 掷一颗六面骰。全项目唯一的 d6 入口 */
+  private rollD6(): number {
+    return Math.floor(this.rng() * 6) + 1;
+  }
+
+  /** 单位 id 计数器。见 newUnitId */
+  private nextUnitId = 1;
+
+  /**
+   * 生成单位 id：`infantry3` / `ballista1` / `civ7` …
+   *
+   * 带类型前缀而不是纯序号，是为了让战报和测试断言能读
+   * —— `lishi2 转化为 civ9` 比 `u14 转化为 u15` 有用得多。
+   * 全局单调递增，所以同一个 id 不会在一局里出现两次，
+   * 即使单位已被删除也不复用。
+   */
+  private newUnitId(kind: string): string {
+    return `${kind}${this.nextUnitId++}`;
+  }
+
+  /**
+   * 把 id 计数器推到当前场上所有 id 之后。
+   * 载入开发快照后必须调用 —— 快照里的 id 来自上一局的计数器。
+   */
+  private syncUnitIdCounter(): void {
+    let max = 0;
+    this.state.units.forEach((_, id) => {
+      const m = /(\d+)$/.exec(id);
+      if (m) max = Math.max(max, Number(m[1]));
+    });
+    this.nextUnitId = Math.max(this.nextUnitId, max + 1);
+  }
+
   /** 统计当前活跃玩家数（排除断线中和已被接管的） */
   private getActivePlayerCount(): number {
     return Array.from(this.playerRoles.entries()).filter(
@@ -473,6 +520,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       this.onMessage("__devLoadState", (client, data: { snapshot: StateSnapshot }) => {
         const result = restoreState(this.state, data?.snapshot);
+        // 快照里的 id 是上一局生成的，计数器必须跳到它们之后，
+        // 否则接下来新建的单位会撞上已存在的 id（MapSchema 会被静默覆盖）
+        this.syncUnitIdCounter();
         console.log(`[DEV] ${client.sessionId} 载入局面:`, result.message);
         if (result.unknownFields.length > 0) {
           console.warn('[DEV] 快照含当前 schema 不认识的字段:', result.unknownFields);
@@ -828,7 +878,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 创建单位
     const unit = new UnitSchema();
-    unit.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    unit.id = this.newUnitId(unitType);
     unit.type = unitType;
     unit.owner = role;
     unit.q = position.q;
@@ -990,7 +1040,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         // 投骰子
         const results: number[] = [];
         for (let i = 0; i < diceCount; i++) {
-          results.push(Math.floor(Math.random() * 6) + 1);
+          results.push(this.rollD6());
         }
 
         const totalPoints = results.reduce((sum, val) => sum + val, 0);
@@ -1066,7 +1116,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 投骰子（服务器生成随机数）
     const results: number[] = [];
     for (let i = 0; i < diceCount; i++) {
-      results.push(Math.floor(Math.random() * 6) + 1); // 1-6
+      results.push(this.rollD6()); // 1-6
     }
 
     // 计算行动点
@@ -1102,7 +1152,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 重投指定的骰子
-    const newValue = Math.floor(Math.random() * 6) + 1;
+    const newValue = this.rollD6();
 
     if (role === "player1") {
       const oldValue = this.state.player1DiceResults[data.diceIndex];
@@ -1317,7 +1367,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 战车崩毁后，原地生成2个满血步兵（不可行动）
     const infantry1 = new UnitSchema();
-    infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    infantry1.id = this.newUnitId('infantry');
     infantry1.type = "infantry";
     infantry1.owner = chariot.owner;
     infantry1.q = chariotPos.q;
@@ -1346,7 +1396,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     if (emptyPos) {
       const infantry2 = new UnitSchema();
-      infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
+      infantry2.id = this.newUnitId('infantry');
       infantry2.type = "infantry";
       infantry2.owner = chariot.owner;
       infantry2.q = emptyPos.q;
@@ -1535,7 +1585,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           if (role === "player1" && !this.state.player1KilledThisTurn) {
             this.state.player1KilledThisTurn = true;
             this.state.player1KillDice++;
-            const extraRoll = Math.floor(Math.random() * 6) + 1;
+            const extraRoll = this.rollD6();
             this.state.player1Dice++;
             this.state.player1DiceResults.push(extraRoll);
             this.state.player1ActionPoints += extraRoll;
@@ -1543,7 +1593,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           } else if (role === "player2" && !this.state.player2KilledThisTurn) {
             this.state.player2KilledThisTurn = true;
             this.state.player2KillDice++;
-            const extraRoll = Math.floor(Math.random() * 6) + 1;
+            const extraRoll = this.rollD6();
             this.state.player2Dice++;
             this.state.player2DiceResults.push(extraRoll);
             this.state.player2ActionPoints += extraRoll;
@@ -1653,7 +1703,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 生成第一个步兵（原位置，可行动）
     const infantry1 = new UnitSchema();
-    infantry1.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    infantry1.id = this.newUnitId('infantry');
     infantry1.type = "infantry";
     infantry1.owner = role;
     infantry1.q = chariotPos.q;
@@ -1680,7 +1730,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     if (emptyPos) {
       const infantry2 = new UnitSchema();
-      infantry2.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_2`;
+      infantry2.id = this.newUnitId('infantry');
       infantry2.type = "infantry";
       infantry2.owner = role;
       infantry2.q = emptyPos.q;
@@ -1911,7 +1961,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
                 if (role === "player1" && !this.state.player1KilledThisTurn) {
                   this.state.player1KilledThisTurn = true;
                   this.state.player1KillDice++;
-                  const extraRoll = Math.floor(Math.random() * 6) + 1;
+                  const extraRoll = this.rollD6();
                   this.state.player1Dice++;
                   this.state.player1DiceResults.push(extraRoll);
                   this.state.player1ActionPoints += extraRoll;
@@ -1919,7 +1969,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
                 } else if (role === "player2" && !this.state.player2KilledThisTurn) {
                   this.state.player2KilledThisTurn = true;
                   this.state.player2KillDice++;
-                  const extraRoll = Math.floor(Math.random() * 6) + 1;
+                  const extraRoll = this.rollD6();
                   this.state.player2Dice++;
                   this.state.player2DiceResults.push(extraRoll);
                   this.state.player2ActionPoints += extraRoll;
@@ -2001,7 +2051,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         this.state.player1KilledThisTurn = true;
         this.state.player1KillDice++;
 
-        const extraRoll = Math.floor(Math.random() * 6) + 1;
+        const extraRoll = this.rollD6();
         this.state.player1Dice++;
         this.state.player1DiceResults.push(extraRoll);
         this.state.player1ActionPoints += extraRoll;
@@ -2011,7 +2061,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         this.state.player2KilledThisTurn = true;
         this.state.player2KillDice++;
 
-        const extraRoll = Math.floor(Math.random() * 6) + 1;
+        const extraRoll = this.rollD6();
         this.state.player2Dice++;
         this.state.player2DiceResults.push(extraRoll);
         this.state.player2ActionPoints += extraRoll;
@@ -2219,7 +2269,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           if (role === "player1" && !this.state.player1KilledThisTurn) {
             this.state.player1KilledThisTurn = true;
             this.state.player1KillDice++;
-            const extraRoll = Math.floor(Math.random() * 6) + 1;
+            const extraRoll = this.rollD6();
             this.state.player1Dice++;
             this.state.player1DiceResults.push(extraRoll);
             this.state.player1ActionPoints += extraRoll;
@@ -2227,7 +2277,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           } else if (role === "player2" && !this.state.player2KilledThisTurn) {
             this.state.player2KilledThisTurn = true;
             this.state.player2KillDice++;
-            const extraRoll = Math.floor(Math.random() * 6) + 1;
+            const extraRoll = this.rollD6();
             this.state.player2Dice++;
             this.state.player2DiceResults.push(extraRoll);
             this.state.player2ActionPoints += extraRoll;
@@ -2355,7 +2405,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         if (role === "player1" && !this.state.player1KilledThisTurn) {
           this.state.player1KilledThisTurn = true;
           this.state.player1KillDice++;
-          const extraRoll = Math.floor(Math.random() * 6) + 1;
+          const extraRoll = this.rollD6();
           this.state.player1Dice++;
           this.state.player1DiceResults.push(extraRoll);
           this.state.player1ActionPoints += extraRoll;
@@ -2363,7 +2413,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         } else if (role === "player2" && !this.state.player2KilledThisTurn) {
           this.state.player2KilledThisTurn = true;
           this.state.player2KillDice++;
-          const extraRoll = Math.floor(Math.random() * 6) + 1;
+          const extraRoll = this.rollD6();
           this.state.player2Dice++;
           this.state.player2DiceResults.push(extraRoll);
           this.state.player2ActionPoints += extraRoll;
@@ -2535,7 +2585,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         const diceCount = 1 + Math.floor(deployedValue);
         const results: number[] = [];
         for (let i = 0; i < diceCount; i++) {
-          results.push(Math.floor(Math.random() * 6) + 1);
+          results.push(this.rollD6());
         }
 
         const totalPoints = results.reduce((sum, val) => sum + val, 0);
@@ -2859,7 +2909,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 掷骰子
-    const roll = Math.floor(Math.random() * 6) + 1;
+    const roll = this.rollD6();
     this.state.wushuangDiceRolls.push(roll);
     this.addBattleLog(`第二阶段掷骰结果：${roll}`);
 
@@ -2916,7 +2966,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 掷骰子
-    const roll = Math.floor(Math.random() * 6) + 1;
+    const roll = this.rollD6();
     this.state.wushuangDiceRolls.push(roll);
     this.addBattleLog(`第三阶段掷骰结果：${roll}`);
 
@@ -2983,7 +3033,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           if (!this.state.player1KilledThisTurn) {
             this.state.player1KilledThisTurn = true;
             this.state.player1KillDice++;
-            const extraRoll = Math.floor(Math.random() * 6) + 1;
+            const extraRoll = this.rollD6();
             this.state.player1Dice++;
             this.state.player1DiceResults.push(extraRoll);
             this.state.player1ActionPoints += extraRoll;
@@ -2993,7 +3043,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           if (!this.state.player2KilledThisTurn) {
             this.state.player2KilledThisTurn = true;
             this.state.player2KillDice++;
-            const extraRoll = Math.floor(Math.random() * 6) + 1;
+            const extraRoll = this.rollD6();
             this.state.player2Dice++;
             this.state.player2DiceResults.push(extraRoll);
             this.state.player2ActionPoints += extraRoll;
@@ -3189,7 +3239,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 创建机关单位
     const machine = new UnitSchema();
-    machine.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    machine.id = this.newUnitId(data.machineType);
     machine.type = data.machineType;
     machine.owner = role;
     machine.q = data.position.q;
@@ -3456,7 +3506,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 创建步兵（血量为1）
     const infantry = new UnitSchema();
-    infantry.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    infantry.id = this.newUnitId('infantry');
     infantry.type = "infantry";
     infantry.owner = role;
     infantry.q = target.q;
@@ -3507,7 +3557,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     if (role === "player1" && !this.state.player1KilledThisTurn) {
       this.state.player1KilledThisTurn = true;
       this.state.player1KillDice++;
-      const extraRoll = Math.floor(Math.random() * 6) + 1;
+      const extraRoll = this.rollD6();
       this.state.player1Dice++;
       this.state.player1DiceResults.push(extraRoll);
       this.state.player1ActionPoints += extraRoll;
@@ -3515,7 +3565,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     } else if (role === "player2" && !this.state.player2KilledThisTurn) {
       this.state.player2KilledThisTurn = true;
       this.state.player2KillDice++;
-      const extraRoll = Math.floor(Math.random() * 6) + 1;
+      const extraRoll = this.rollD6();
       this.state.player2Dice++;
       this.state.player2DiceResults.push(extraRoll);
       this.state.player2ActionPoints += extraRoll;
@@ -3613,7 +3663,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       occupiedHexes.forEach((hex, index) => {
         const neutral = new UnitSchema();
-        neutral.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${index}`;
+        neutral.id = this.newUnitId('neutral');
         neutral.type = "neutral_marker";
         neutral.owner = "neutral";
         neutral.q = hex.q;
@@ -3633,7 +3683,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     } else {
       // 普通单位：创建单个中立标记
       const neutral = new UnitSchema();
-      neutral.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      neutral.id = this.newUnitId('neutral');
       neutral.type = "neutral_marker";
       neutral.owner = "neutral";
       neutral.q = target.q;

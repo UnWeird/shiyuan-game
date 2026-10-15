@@ -195,11 +195,9 @@ npm test --prefix server && npm test --prefix client && npm run build --prefix s
 
 ```ts
 export class TaipingSchema extends Schema {
-  @type("number")  destiny = 5;            // 天命 0–12
-  @type("boolean") alive = false;          // 太平本人是否存活（决定阶段）
+  @type("number")  destiny = 5;              // 天命 0–12
   @type("number")  destinyLostThisRound = 0; // 本轮因平民死亡已失天命（上限 2）
   @type("boolean") fushuiUsedThisTurn = false;
-  @type("boolean") tianmingSettled = false;  // 本回合夺天命是否已结算
   @type("number")  lastHuangtian = 0;        // 黄天骰（展示用）
   @type("number")  lastCangtian = 0;         // 苍天骰（展示用）
   @type("number")  huangtianDeclaredTurn = -1; // 黄天当立宣告于第几回合，-1 未宣告
@@ -207,6 +205,14 @@ export class TaipingSchema extends Schema {
   @type(["string"]) pendingCorrupt = new ArraySchema<string>(); // 腐化待处理贼 id
 }
 ```
+
+两处和初稿的偏差（都是为了少存可推导的状态）：
+
+- **不存 `alive`**。「太平是否存活」可以由「选了太平」+「`units` 里还有没有太平将军」
+  精确推出，存一份反而会漂移。两者都是现成数据，客户端也能自己推。
+- **不存 `tianmingSettled`**。旧实现要求玩家先点「结算天命」再点「结束回合」两步；
+  步骤 4 把它合并成一步（点结束回合时服务端一次算完），所以这个拦截状态不需要。
+  骰子结果靠 `lastHuangtian` / `lastCangtian` 下发给界面展示。
 
 顶层只加两格：
 

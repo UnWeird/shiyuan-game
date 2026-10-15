@@ -447,34 +447,6 @@ class ColyseusService {
       wushuangAttackPhase: state.wushuangAttackPhase ? state.wushuangAttackPhase as any : 'select-direction',
       wushuangSelectedDirection: state.wushuangSelectedDirection === -1 ? null : state.wushuangSelectedDirection,
       wushuangDiceRolls,
-
-      // 太平将军状态
-      player1DestinyValue: state.player1DestinyValue || 0,
-      player2DestinyValue: state.player2DestinyValue || 0,
-      taipingFushuiActive: state.taipingFushuiActive || false,
-      taipingFushuiPlayer: state.taipingFushuiPlayer || '',
-      taipingTianmingActive: state.taipingTianmingActive || false,
-      taipingTianmingPlayer: state.taipingTianmingPlayer || '',
-      taipingTianmingCangtiandi: state.taipingTianmingCangtiandi || 0,
-      taipingTianmingHuangtian: state.taipingTianmingHuangtian || 0,
-      taipingTianmingDamage: state.taipingTianmingDamage || 0,
-      // taipingTianmingOldDestiny：由 currentDestiny - huangtian + cangtiandi 派生
-      taipingTianmingOldDestiny: (() => {
-        const huangtian = state.taipingTianmingHuangtian || 0;
-        const cangtiandi = state.taipingTianmingCangtiandi || 0;
-        const destinyAfterRoll = state.taipingTianmingPlayer === 'player2'
-          ? (state.player2DestinyValue || 0)
-          : (state.player1DestinyValue || 0);
-        return destinyAfterRoll - huangtian + cangtiandi;
-      })(),
-      // 双太平共享状态
-      taipingSharedHp: state.taipingSharedHp ?? 3,
-      // taipingSharedMaxHp：由将领配置派生（双太平=6，单太平=3）
-      taipingSharedMaxHp: (state.player1General === 'taiping' && state.player2General === 'taiping') ? 6 : 3,
-      player1DoufanUsedThisTurn: state.player1DoufanUsedThisTurn || false,
-      player2DoufanUsedThisTurn: state.player2DoufanUsedThisTurn || false,
-      player1TaipingDeployInitDone: state.player1TaipingDeployInitDone || false,
-      player2TaipingDeployInitDone: state.player2TaipingDeployInitDone || false,
     });
   }
 
@@ -742,48 +714,6 @@ class ColyseusService {
   rendeSpareAsNeutral(targetId: string) {
     if (!this.room) return;
     this.room.send('rendeSpareAsNeutral', { targetId });
-  }
-
-  // ==================== 太平将军技能 API ====================
-
-  /**
-   * 符水粥：转化一个残血步兵为力士
-   */
-  taipingFushuiConvert(unitId: string) {
-    if (!this.room) return;
-    this.room.send('taipingFushuiConvert', { unitId });
-  }
-
-  /**
-   * 豆饭：召唤力士
-   */
-  taipingDoufan() {
-    if (!this.room) return;
-    this.room.send('taipingDoufan', {});
-  }
-
-  /**
-   * 夺天命：结算天命骰（进入待确认状态）
-   */
-  taipingTianmingRoll() {
-    if (!this.room) return;
-    this.room.send('taipingTianmingRoll', {});
-  }
-
-  /**
-   * 天命结算确认：看完结果后实际结束回合
-   */
-  taipingTianmingConfirm() {
-    if (!this.room) return;
-    this.room.send('taipingTianmingConfirm', {});
-  }
-
-  /**
-   * 部署阶段天命初始化：苍天已死，黄天当立
-   */
-  taipingDeployInit() {
-    if (!this.room) return;
-    this.room.send('taipingDeployInit', {});
   }
 
   /**

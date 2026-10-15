@@ -137,25 +137,6 @@ export interface GameState {
   wushuangSelectedDirection: number | null;
   wushuangDiceRolls: number[];
 
-  // 太平将军专属状态
-  player1DestinyValue: number;
-  player2DestinyValue: number;
-  taipingFushuiActive: boolean;
-  taipingFushuiPlayer: string;
-  taipingTianmingActive: boolean;
-  taipingTianmingPlayer: string;
-  taipingTianmingCangtiandi: number;
-  taipingTianmingHuangtian: number;
-  taipingTianmingDamage: number;
-  taipingTianmingOldDestiny: number;
-  // 双太平共享状态
-  taipingSharedHp: number;
-  taipingSharedMaxHp: number;
-  player1DoufanUsedThisTurn: boolean;
-  player2DoufanUsedThisTurn: boolean;
-  player1TaipingDeployInitDone: boolean;
-  player2TaipingDeployInitDone: boolean;
-
   // 服务端权威战报（仅在线模式有值；单机模式用 GameBoard 本地日志）
   serverBattleLog: string[];
 

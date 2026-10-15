@@ -129,29 +129,5 @@ export class GameStateSchema extends Schema {
   @type("number") wushuangSelectedDirection: number = -1; // -1 表示未选择
   @type(["number"]) wushuangDiceRolls = new ArraySchema<number>(); // 扇形攻击的掷骰记录
 
-  // 太平将军专属状态
-  @type("number") player1DestinyValue: number = 0; // 天命值
-  @type("number") player2DestinyValue: number = 0;
-
-  // 太平 - 符水粥交互模式
-  @type("boolean") taipingFushuiActive: boolean = false;
-  @type("string") taipingFushuiPlayer: string = ""; // 正在进行符水粥的玩家
-
-  // 太平 - 天命结算待确认状态
-  @type("boolean") taipingTianmingActive: boolean = false;
-  @type("string") taipingTianmingPlayer: string = "";
-  @type("number") taipingTianmingCangtiandi: number = 0; // 苍天骰结果
-  @type("number") taipingTianmingHuangtian: number = 0; // 黄天骰结果
-  @type("number") taipingTianmingDamage: number = 0;    // 本次承载伤害（0或1）
-
-  // 双太平共享血池
-  @type("number") taipingSharedHp: number = 3;
-
-  // 豆饭每回合限制
-  @type("boolean") player1DoufanUsedThisTurn: boolean = false;
-  @type("boolean") player2DoufanUsedThisTurn: boolean = false;
-
-  // 部署阶段天命初始化标记
-  @type("boolean") player1TaipingDeployInitDone: boolean = false;
-  @type("boolean") player2TaipingDeployInitDone: boolean = false;
+  // 太平将军专属状态：见步骤 1，收进嵌套 TaipingSchema（顶层只占 2 格）
 }

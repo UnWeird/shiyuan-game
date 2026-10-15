@@ -463,27 +463,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.handleSurrender(client);
     });
 
-    // === 太平将军技能 ===
-    this.onMessage("taipingFushuiConvert", (client, data) => {
-      this.handleTaipingFushuiConvert(client, data);
-    });
-
-    this.onMessage("taipingDoufan", (client, data) => {
-      this.handleTaipingDoufan(client);
-    });
-
-    this.onMessage("taipingDeployInit", (client, data) => {
-      this.handleTaipingDeployInit(client);
-    });
-
-    this.onMessage("taipingTianmingRoll", (client, data) => {
-      this.handleTaipingTianmingRoll(client);
-    });
-
-    this.onMessage("taipingTianmingConfirm", (client, data) => {
-      this.handleTaipingTianmingConfirm(client);
-    });
-
     // === 开发工具：存档 / 读档（仅 SHIYUAN_DEV_TOOLS=1 时注册） ===
     if (DEV_TOOLS) {
       this.onMessage("__devSaveState", (client, data: { label?: string }) => {
@@ -952,18 +931,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     const role = this.getPlayerRole(client);
     if (!role || role !== this.state.currentPlayer) return;
 
-    // 太平将军部署阶段必须先点「结算天命值」
-    const hasTaiping = role === "player1"
-      ? this.state.player1General === "taiping"
-      : this.state.player2General === "taiping";
-    const initDone = role === "player1"
-      ? this.state.player1TaipingDeployInitDone
-      : this.state.player2TaipingDeployInitDone;
-    if (hasTaiping && !initDone) {
-      client.send("error", { message: "请先点击「结算天命值」完成初始天命结算，再结束部署" });
-      return;
-    }
-
     // 切换到另一个玩家部署
     if (this.state.currentPlayer === "player1") {
       // 玩家1完成部署，轮到玩家2
@@ -1119,29 +1086,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}投骰：${diceCount}颗骰子(基础${baseDice}+部署${Math.floor(deployedValue / 2)})，点数${results.join(',')}，共${actionPoints}点行动值`);
 
-    // 重置豆饭每回合限制
-    if (role === "player1") {
-      this.state.player1DoufanUsedThisTurn = false;
-    } else {
-      this.state.player2DoufanUsedThisTurn = false;
-    }
-
-    // 太平将军：回合开始触发符水粥模式
-    // 只检查普通步兵（type=infantry），黄巾力士不参与符水粥
-    const taipingGeneral = Array.from(this.state.units.values()).find(u =>
-      u.owner === role && u.type === "general" && u.generalType === "taiping"
-    );
-    if (taipingGeneral) {
-      const fushuiCandidates = Array.from(this.state.units.values()).filter(u =>
-        u.owner === role && u.type === "infantry" && u.hp === 1
-      );
-      const currentAP = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
-      if (fushuiCandidates.length > 0 && currentAP > 0) {
-        this.state.taipingFushuiActive = true;
-        this.state.taipingFushuiPlayer = role;
-        this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的太平将军触发符水粥（${fushuiCandidates.length}个候选步兵）`);
-      }
-    }
   }
 
   /**
@@ -1624,11 +1568,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
     // 检查胜利条件：是否触碰到敌方大本营
     this.checkVictoryCondition(unit);
-
-    // 太平将军·作乱：移动结束后检查相邻贼数量并造成系统伤害
-    if (this.state.phase !== "end") {
-      this.applyZuoluan(unit, role);
-    }
   }
 
   /**
@@ -2057,48 +1996,33 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         }
       }
 
-      // 击杀黄巾贼：双方均无奖励（不返还AP，不触发首次击杀）
-      if (target.type === "huangjin_zei") {
-        this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}击杀黄巾贼，无击杀奖励`);
-      } else {
-        // 首次击杀奖励：立即获得额外骰子和行动点（仅对非贼单位）
-        if (role === "player1" && !this.state.player1KilledThisTurn) {
-          this.state.player1KilledThisTurn = true;
-          this.state.player1KillDice++;
+      // 首次击杀奖励：立即获得额外骰子和行动点
+      if (role === "player1" && !this.state.player1KilledThisTurn) {
+        this.state.player1KilledThisTurn = true;
+        this.state.player1KillDice++;
 
-          const extraRoll = Math.floor(Math.random() * 6) + 1;
-          this.state.player1Dice++;
-          this.state.player1DiceResults.push(extraRoll);
-          this.state.player1ActionPoints += extraRoll;
+        const extraRoll = Math.floor(Math.random() * 6) + 1;
+        this.state.player1Dice++;
+        this.state.player1DiceResults.push(extraRoll);
+        this.state.player1ActionPoints += extraRoll;
 
-          this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
-        } else if (role === "player2" && !this.state.player2KilledThisTurn) {
-          this.state.player2KilledThisTurn = true;
-          this.state.player2KillDice++;
+        this.addBattleLog(`玩家1首次击杀！获得额外骰子，投出${extraRoll}点`);
+      } else if (role === "player2" && !this.state.player2KilledThisTurn) {
+        this.state.player2KilledThisTurn = true;
+        this.state.player2KillDice++;
 
-          const extraRoll = Math.floor(Math.random() * 6) + 1;
-          this.state.player2Dice++;
-          this.state.player2DiceResults.push(extraRoll);
-          this.state.player2ActionPoints += extraRoll;
+        const extraRoll = Math.floor(Math.random() * 6) + 1;
+        this.state.player2Dice++;
+        this.state.player2DiceResults.push(extraRoll);
+        this.state.player2ActionPoints += extraRoll;
 
-          this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
-        }
+        this.addBattleLog(`玩家2首次击杀！获得额外骰子，投出${extraRoll}点`);
       }
 
       // 检查是否击杀了将军（失去基础骰子，下回合生效）
       if (target.type === "general") {
         this.addBattleLog(`${target.owner === "player1" ? "玩家1" : "玩家2"}的将军阵亡！下回合失去基础骰子`);
-        // 太平将军阵亡：触发起义（力士→贼）
-        if (target.generalType === "taiping") {
-          this.applyQiyiForDeath(target.owner as "player1" | "player2");
-        }
       }
-    }
-
-    // 太平将军·作乱：攻击行动结束后，检查攻击方是否受相邻贼伤害
-    // 注意：target 可能已被删除，但 attacker 仍在场
-    if (this.state.phase !== "end" && this.state.units.has(data.attackerId)) {
-      this.applyZuoluan(attacker, role);
     }
   }
 
@@ -2584,11 +2508,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     unit.hasRotated = true; // 标记已转向
     unit.actionsThisTurn = (unit.actionsThisTurn || 0) + 1; // 增加行动次数
     this.addBattleLog(`${role}旋转${unit.type}朝向（消耗1点行动值）`);
-
-    // 太平将军·作乱：转向行动结束后检查相邻贼
-    if (this.state.phase !== "end") {
-      this.applyZuoluan(unit, role);
-    }
   }
 
   /**
@@ -2651,21 +2570,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         this.rollDiceForPlayer("player1");
         return;
       }
-    }
-
-    // 太平将军：若有存活的太平将军，结束回合前必须先进行天命结算
-    // 若天命结算尚未完成（taipingTianmingActive 未激活），拦截 endTurn 请求
-    const taipingGeneralForTianming = Array.from(this.state.units.values()).find(u =>
-      u.owner === role && u.type === "general" && u.generalType === "taiping"
-    );
-    if (taipingGeneralForTianming && !this.state.taipingTianmingActive) {
-      client.send("error", { message: "请先点击「结算天命」完成天命结算，再结束回合" });
-      return;
-    }
-    // 若天命结算已完成，清除结算状态后继续正常的回合结束流程
-    if (this.state.taipingTianmingActive && this.state.taipingTianmingPlayer === role) {
-      this.state.taipingTianmingActive = false;
-      this.state.taipingTianmingPlayer = "";
     }
 
     // 行动阶段：正常的回合结束逻辑
@@ -3748,422 +3652,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
   }
 
-  /**
-   * 判断当前玩家是否可以指挥某单位
-   * 双太平模式：双方均可指挥黄巾力士
-   */
+  /** 判断当前玩家是否可以指挥某单位 */
   private canCommandUnit(unit: UnitSchema, role: "player1" | "player2"): boolean {
-    if (unit.owner === role) return true;
-    const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
-    if (bothTaiping && unit.type === "huangjin_lishi") return true;
-    return false;
-  }
-
-  // ========================================
-  // 太平将军技能处理器
-  // ========================================
-
-  /**
-   * 部署阶段天命初始化：「苍天已死，黄天当立」，获得3点初始天命值
-   * 双太平时各自结算一次（总计+6），共享天命值
-   */
-  private handleTaipingDeployInit(client: Client) {
-    const role = this.getPlayerRole(client);
-    if (!role || role !== this.state.currentPlayer) {
-      client.send("error", { message: "不是你的回合" });
-      return;
-    }
-
-    if (this.state.phase !== "deploy") {
-      client.send("error", { message: "只能在部署阶段结算初始天命" });
-      return;
-    }
-
-    const hasTaiping = role === "player1"
-      ? this.state.player1General === "taiping"
-      : this.state.player2General === "taiping";
-    if (!hasTaiping) {
-      client.send("error", { message: "你没有太平将军" });
-      return;
-    }
-
-    const alreadyDone = role === "player1"
-      ? this.state.player1TaipingDeployInitDone
-      : this.state.player2TaipingDeployInitDone;
-    if (alreadyDone) {
-      client.send("error", { message: "初始天命已结算" });
-      return;
-    }
-
-    // 双太平共享天命值，单太平各自独立
-    const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
-    const INIT_DESTINY = 3;
-
-    if (bothTaiping) {
-      // 双太平：叠加到共享天命（player1DestinyValue 作为共享值）
-      this.state.player1DestinyValue += INIT_DESTINY;
-      this.state.player2DestinyValue = this.state.player1DestinyValue;
-      // 初始化共享血池（双太平血池上限为6）
-      this.state.taipingSharedHp = 6;
-    } else {
-      if (role === "player1") {
-        this.state.player1DestinyValue += INIT_DESTINY;
-      } else {
-        this.state.player2DestinyValue += INIT_DESTINY;
-      }
-      this.state.taipingSharedHp = 3;
-    }
-
-    // 标记已完成初始化
-    if (role === "player1") {
-      this.state.player1TaipingDeployInitDone = true;
-    } else {
-      this.state.player2TaipingDeployInitDone = true;
-    }
-
-    this.addBattleLog(`⚡ 苍天已死，黄天当立！${role === "player1" ? "玩家1" : "玩家2"}获得${INIT_DESTINY}点初始天命（当前天命值：${role === "player1" ? this.state.player1DestinyValue : this.state.player2DestinyValue}）`);
-  }
-
-  /**
-   * 符水粥：转化一个残血步兵为力士（消耗1点行动点）
-   */
-  private handleTaipingFushuiConvert(client: Client, data: { unitId: string }) {
-    const role = this.getPlayerRole(client);
-    if (!role || role !== this.state.currentPlayer) {
-      client.send("error", { message: "不是你的回合" });
-      return;
-    }
-
-    if (!this.state.taipingFushuiActive || this.state.taipingFushuiPlayer !== role) {
-      client.send("error", { message: "当前不在符水粥模式" });
-      return;
-    }
-
-    const ap = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
-    if (ap < 1) {
-      client.send("error", { message: "行动点不足" });
-      return;
-    }
-
-    const unit = this.state.units.get(data.unitId);
-    if (!unit || unit.owner !== role || unit.type !== "infantry" || unit.hp !== 1) {
-      client.send("error", { message: "无效目标：必须是己方1血普通步兵" });
-      return;
-    }
-
-    // 执行转化：步兵升格为黄巾力士（独立单位类型，hp回满）
-    unit.type = "huangjin_lishi";
-    unit.hp = 2;
-    unit.maxHp = 2;
-    if (role === "player1") {
-      this.state.player1ActionPoints -= 1;
-    } else {
-      this.state.player2ActionPoints -= 1;
-    }
-    this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的步兵饮下符水粥，成为黄巾力士！`);
-
-    // 检查是否退出符水粥模式
-    const newAP = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
-    const remaining = Array.from(this.state.units.values()).filter(u =>
-      u.owner === role && u.type === "infantry" && u.hp === 1
-    );
-    if (newAP <= 0 || remaining.length === 0) {
-      this.state.taipingFushuiActive = false;
-      this.state.taipingFushuiPlayer = "";
-      this.addBattleLog(`符水粥结束，${role === "player1" ? "玩家1" : "玩家2"}可继续行动`);
-    }
-  }
-
-  /**
-   * 豆饭：消耗3点行动点，掷d6召唤等量力士于将军相邻空位
-   */
-  private handleTaipingDoufan(client: Client) {
-    const role = this.getPlayerRole(client);
-    if (!role || role !== this.state.currentPlayer) {
-      client.send("error", { message: "不是你的回合" });
-      return;
-    }
-
-    // 符水粥模式中不能使用豆饭
-    if (this.state.taipingFushuiActive && this.state.taipingFushuiPlayer === role) {
-      client.send("error", { message: "请先完成符水粥转化" });
-      return;
-    }
-
-    // 每回合只能使用一次豆饭
-    const doufanUsed = role === "player1"
-      ? this.state.player1DoufanUsedThisTurn
-      : this.state.player2DoufanUsedThisTurn;
-    if (doufanUsed) {
-      client.send("error", { message: "豆饭本回合已使用过" });
-      return;
-    }
-
-    const taipingGeneral = Array.from(this.state.units.values()).find(u =>
-      u.owner === role && u.type === "general" && u.generalType === "taiping"
-    );
-    if (!taipingGeneral) {
-      client.send("error", { message: "太平将军不在场" });
-      return;
-    }
-
-    const ap = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
-    if (ap < 3) {
-      client.send("error", { message: "行动点不足（需要3点）" });
-      return;
-    }
-
-    // 消耗3点行动点，标记本回合已用
-    if (role === "player1") {
-      this.state.player1ActionPoints -= 3;
-      this.state.player1DoufanUsedThisTurn = true;
-    } else {
-      this.state.player2ActionPoints -= 3;
-      this.state.player2DoufanUsedThisTurn = true;
-    }
-
-    // 掷d6决定召唤数量
-    const rollX = Math.floor(Math.random() * 6) + 1;
-
-    // 找将军相邻的空位
-    const generalPos = { q: taipingGeneral.q, r: taipingGeneral.r, s: taipingGeneral.s };
-    const neighbors = hexNeighbors(generalPos);
-    const emptyNeighbors = neighbors.filter((pos: { q: number; r: number; s: number }) => {
-      const occupied = Array.from(this.state.units.values()).some(u =>
-        u.q === pos.q && u.r === pos.r && u.s === pos.s
-      );
-      return !occupied && !this.isHexOccupiedByMachine(pos) && isInMapRange(pos, 5);
-    });
-
-    const spawnCount = Math.min(rollX, emptyNeighbors.length);
-    for (let i = 0; i < spawnCount; i++) {
-      const pos = emptyNeighbors[i];
-      const lishi = new UnitSchema();
-      lishi.id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_lishi${i}`;
-      lishi.type = "huangjin_lishi"; // 黄巾力士独立单位类型
-      lishi.owner = role;
-      lishi.q = pos.q;
-      lishi.r = pos.r;
-      lishi.s = pos.s;
-      lishi.direction = taipingGeneral.direction;
-      lishi.hp = 2;
-      lishi.maxHp = 2;
-      lishi.hasActedThisTurn = true; // 本回合不可行动
-      lishi.hasMoved = true;
-      lishi.hasAttacked = true;
-      lishi.actionsThisTurn = 2;
-      this.state.units.set(lishi.id, lishi);
-    }
-
-    this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}使用豆饭：掷出${rollX}，召唤${spawnCount}个黄巾力士（共${emptyNeighbors.length}个空位）`);
-  }
-
-  /**
-   * 夺天命：结算天命骰（天命值更新+承载判断），进入待确认状态
-   */
-  private handleTaipingTianmingRoll(client: Client) {
-    const role = this.getPlayerRole(client);
-    if (!role || role !== this.state.currentPlayer) {
-      client.send("error", { message: "不是你的回合" });
-      return;
-    }
-
-    if (this.state.taipingFushuiActive && this.state.taipingFushuiPlayer === role) {
-      client.send("error", { message: "请先完成符水粥转化" });
-      return;
-    }
-
-    const taipingGeneral = Array.from(this.state.units.values()).find(u =>
-      u.owner === role && u.type === "general" && u.generalType === "taiping"
-    );
-    if (!taipingGeneral) {
-      client.send("error", { message: "太平将军不在场" });
-      return;
-    }
-
-    if (this.state.taipingTianmingActive && this.state.taipingTianmingPlayer === role) {
-      client.send("error", { message: "天命已结算，请点击结束回合" });
-      return;
-    }
-
-    // 掷苍天/黄天骰
-    const cangtiandi = Math.floor(Math.random() * 6) + 1;
-    const huangtian = Math.floor(Math.random() * 6) + 1;
-
-    // 双太平共享天命值，单太平各自独立
-    const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
-    const oldDestiny = bothTaiping
-      ? this.state.player1DestinyValue  // 双太平用player1DestinyValue作共享值
-      : (role === "player1" ? this.state.player1DestinyValue : this.state.player2DestinyValue);
-    const newDestiny = oldDestiny + huangtian - cangtiandi;
-
-    if (bothTaiping) {
-      // 双太平：同步更新双方的天命值（UI展示一致）
-      this.state.player1DestinyValue = newDestiny;
-      this.state.player2DestinyValue = newDestiny;
-    } else if (role === "player1") {
-      this.state.player1DestinyValue = newDestiny;
-    } else {
-      this.state.player2DestinyValue = newDestiny;
-    }
-
-    // 承载判断：黄巾力士总数 > 天命值 → 太平扣1血
-    // 双太平：统计全场所有黄巾力士；单太平：统计己方黄巾力士
-    const lishiCount = Array.from(this.state.units.values()).filter(u =>
-      u.type === "huangjin_lishi" && (bothTaiping || u.owner === role)
-    ).length;
-
-    const damage = lishiCount > newDestiny ? 1 : 0;
-
-    // 保存结算结果供UI展示
-    this.state.taipingTianmingActive = true;
-    this.state.taipingTianmingPlayer = role;
-    this.state.taipingTianmingCangtiandi = cangtiandi;
-    this.state.taipingTianmingHuangtian = huangtian;
-    this.state.taipingTianmingDamage = damage;
-
-    this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}夺天命：苍天${cangtiandi}/黄天${huangtian}，天命值${oldDestiny}→${newDestiny}，黄巾力士${lishiCount}个，${damage > 0 ? "太平受到1点承载伤害" : "承载正常无伤害"}`);
-
-    // 立即扣血（若有伤害），走共享血池路径
-    if (damage > 0) {
-      const died = this.applyDamageToTaiping(damage, role);
-      if (died) {
-        this.addBattleLog(`太平将军因承载过重倒下！触发起义！`);
-      }
-    }
-  }
-
-  /**
-   * 天命结算确认：实际结束回合（清理天命状态并执行 endTurn 逻辑）
-   * 客户端看完天命结果后点击「结束回合」触发此消息
-   */
-  private handleTaipingTianmingConfirm(client: Client) {
-    // 直接复用 handleEndTurn，届时 taipingTianmingActive=true 会被清理
-    this.handleEndTurn(client);
-  }
-
-  /**
-   * 起义触发时机：将所有黄巾力士转为黄巾贼
-   * 单太平：转化该玩家方所有黄巾力士
-   * 双太平：转化场上所有黄巾力士（全员叛变）
-   */
-  private applyQiyi(role: "player1" | "player2") {
-    const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
-    let count = 0;
-    this.state.units.forEach((unit) => {
-      if (unit.type === "huangjin_lishi") {
-        if (bothTaiping || unit.owner === role) {
-          unit.type = "huangjin_zei";
-          count++;
-        }
-      }
-    });
-    this.addBattleLog(`${bothTaiping ? "双太平" : (role === "player1" ? "玩家1" : "玩家2")}起义！${count}个黄巾力士变为黄巾贼！`);
-  }
-
-  /**
-   * 将军死亡时的起义触发（处理双太平共享血池）
-   * 双太平：只有共享血池归零时才触发起义，并删除双将
-   * 单太平：正常触发起义
-   */
-  private applyQiyiForDeath(role: "player1" | "player2") {
-    const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
-    if (bothTaiping) {
-      // 双太平：扣共享血池，只有归零才触发起义
-      this.state.taipingSharedHp = 0;
-      this.applyQiyi(role);
-      // 删除双方将军
-      const toDelete: string[] = [];
-      this.state.units.forEach((u, id) => {
-        if (u.type === "general" && u.generalType === "taiping") toDelete.push(id);
-      });
-      toDelete.forEach(id => this.state.units.delete(id));
-      this.addBattleLog("双太平将军共同阵亡！");
-    } else {
-      // 单太平：正常起义，将军已在调用方删除
-      this.applyQiyi(role);
-    }
-  }
-
-  /**
-   * 对太平将军造成伤害（统一处理单/双太平血池）
-   * 返回true表示将军阵亡
-   */
-  private applyDamageToTaiping(damage: number, role: "player1" | "player2"): boolean {
-    const bothTaiping = this.state.player1General === "taiping" && this.state.player2General === "taiping";
-    if (bothTaiping) {
-      this.state.taipingSharedHp -= damage;
-      // 同步所有太平将军单位的hp显示
-      this.state.units.forEach((u) => {
-        if (u.type === "general" && u.generalType === "taiping") {
-          u.hp = Math.max(0, this.state.taipingSharedHp);
-        }
-      });
-      if (this.state.taipingSharedHp <= 0) {
-        this.applyQiyi(role);
-        const toDelete: string[] = [];
-        this.state.units.forEach((u, id) => {
-          if (u.type === "general" && u.generalType === "taiping") toDelete.push(id);
-        });
-        toDelete.forEach(id => this.state.units.delete(id));
-        this.addBattleLog("双太平将军共享血池耗尽，共同阵亡！");
-        return true;
-      }
-      return false;
-    } else {
-      const taipingGeneral = Array.from(this.state.units.values()).find(u =>
-        u.owner === role && u.type === "general" && u.generalType === "taiping"
-      );
-      if (!taipingGeneral) return false;
-      taipingGeneral.hp -= damage;
-      this.state.taipingSharedHp = taipingGeneral.hp;
-      if (taipingGeneral.hp <= 0) {
-        this.applyQiyi(role);
-        this.state.units.delete(taipingGeneral.id);
-        return true;
-      }
-      return false;
-    }
-  }
-
-  /**
-   * 作乱：单位完成一次行动后，检查相邻贼数量，造成等量系统伤害
-   * 只对当前回合行动方的行动单位触发
-   */
-  private applyZuoluan(unit: UnitSchema, role: "player1" | "player2") {
-    // 确认单位仍在场且属于当前行动方
-    if (!this.state.units.has(unit.id)) return;
-    // 黄巾力士/贼自身也可能受作乱影响，不限制owner
-    if (unit.owner !== role && unit.type !== "huangjin_lishi" && unit.type !== "huangjin_zei") return;
-
-    const unitPos = { q: unit.q, r: unit.r, s: unit.s };
-    const neighbors = hexNeighbors(unitPos);
-
-    // 统计相邻的黄巾贼单位数量（不分敌我）
-    let zeiCount = 0;
-    neighbors.forEach((pos: { q: number; r: number; s: number }) => {
-      this.state.units.forEach((u) => {
-        if (u.type === "huangjin_zei" && u.q === pos.q && u.r === pos.r && u.s === pos.s) {
-          zeiCount++;
-        }
-      });
-    });
-
-    if (zeiCount === 0) return;
-
-    this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的${unit.type}受到${zeiCount}点作乱伤害（相邻${zeiCount}个黄巾贼）`);
-
-    // 太平将军受到作乱伤害时走共享血池路径
-    if (unit.type === "general" && unit.generalType === "taiping") {
-      this.applyDamageToTaiping(zeiCount, role);
-      return;
-    }
-
-    unit.hp -= zeiCount;
-    if (unit.hp <= 0) {
-      this.state.units.delete(unit.id);
-      this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的${unit.type}因作乱伤害阵亡`);
-    }
+    return unit.owner === role;
   }
 
   /**

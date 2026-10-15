@@ -1017,3 +1017,51 @@ export function getFushuiTargets(
     .filter(u => isCivilian(u) && hexDistance(pos, { q: u.q, r: u.r, s: u.s }) === 1)
     .map(u => u.id);
 }
+
+/* ══════════════════ 太平 · 豆饭（强制征募） ══════════════════
+ *
+ * 太平最核心也最烫手的一条规则：回合开始时，所有在征募源两格内的平民
+ * **必须**被转化为黄巾力士，每人 2 AP。玩家只能决定顺序，不能拒绝。
+ * 军队铺得越开，被强制占用的行动点就越多 —— 这是「扩张会接管你的回合」
+ * 的机制来源。
+ */
+
+/** 每征募一名平民的行动点消耗 */
+export const DOUFAN_COST = 2;
+
+/** 征募范围：按六角格最短路径的步数算，**不要求视线** */
+export const DOUFAN_RANGE = 2;
+
+/**
+ * 合格的征募源：己方的**普通步兵**与**黄巾力士**。
+ *
+ * 太平本人不算，骑兵、弓箭手、所有机关也不算。
+ * 骑兵掉马退化成的步兵、战车崩解出的散架步兵都算 —— 它们的 type 就是 infantry。
+ * 残血力士照样是征募源，血量不影响。
+ */
+export function getDoufanSources(units: readonly UnitLike[], owner: string): UnitLike[] {
+  return units.filter(u =>
+    u.owner === owner && (u.type === 'infantry' || u.type === 'huangjin_lishi')
+  );
+}
+
+/**
+ * 本回合必须被征募的平民 id。
+ *
+ * 房间会在征募阶段开始时把结果**快照**下来，之后不再重算 ——
+ * 规则明确「本阶段新转化的黄巾力士不能继续扩大本次征募范围」，
+ * 快照就是这条规则的实现方式（而不是每次转化后重新查一遍）。
+ */
+export function getDoufanTargets(units: readonly UnitLike[], owner: string): string[] {
+  const sources = getDoufanSources(units, owner);
+  if (sources.length === 0) return [];
+
+  return units
+    .filter(u =>
+      isCivilian(u) &&
+      sources.some(s =>
+        hexDistance({ q: s.q, r: s.r, s: s.s }, { q: u.q, r: u.r, s: u.s }) <= DOUFAN_RANGE
+      )
+    )
+    .map(u => u.id);
+}

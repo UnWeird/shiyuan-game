@@ -386,144 +386,177 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   }
 
   /**
+   * 强制阶段（豆饭征募，以及步骤 11 的腐化）里仍然允许发的指令。
+   *
+   * 其余一律被 rejectIfForcedPhasePending 拦住 —— 这是
+   * 「玩家不能主动拒绝征募」那条规则的实现方式。
+   */
+  private static readonly FORCED_PHASE_EXEMPT: ReadonlySet<string> = new Set([
+    'taipingRecruit',   // 正是此刻要你做的事
+    'surrender',        // 任何时候都能认输
+    '__devSaveState',
+    '__devLoadState',
+  ]);
+
+  /**
+   * 注册一条玩家指令，并统一套上强制阶段的拦截。
+   *
+   * 走一个中间层而不是在 31 个 handler 里各加一句，是因为漏掉任何一个
+   * 都会留出一条绕过强制征募的后门 —— 而且那种后门只在特定兵种、
+   * 特定技能下才暴露出来。
+   */
+  private onAction(type: string, handler: (client: Client, data: any) => void) {
+    this.onMessage(type, (client: Client, data: any) => {
+      if (!ShiyuanRoom.FORCED_PHASE_EXEMPT.has(type) && this.rejectIfForcedPhasePending(client)) {
+        return;
+      }
+      handler(client, data);
+    });
+  }
+
+  /**
    * 注册所有消息处理器
    */
   private registerMessageHandlers() {
     // === 前置阶段 ===
-    this.onMessage("selectGeneral", (client, data) => {
+    this.onAction("selectGeneral", (client, data) => {
       this.handleSelectGeneral(client, data);
     });
 
-    this.onMessage("buildArmy", (client, data) => {
+    this.onAction("buildArmy", (client, data) => {
       this.handleBuildArmy(client, data);
     });
 
-    this.onMessage("setupBase", (client, data) => {
+    this.onAction("setupBase", (client, data) => {
       this.handleSetupBase(client, data);
     });
 
     // === 部署阶段 ===
-    this.onMessage("deployUnit", (client, data) => {
+    this.onAction("deployUnit", (client, data) => {
       this.handleDeployUnit(client, data);
     });
 
-    this.onMessage("finishDeploy", (client, data) => {
+    this.onAction("finishDeploy", (client, data) => {
       this.handleFinishDeploy(client);
     });
 
     // === 行动阶段 ===
-    this.onMessage("rollDice", (client, data) => {
+    this.onAction("rollDice", (client, data) => {
       this.handleRollDice(client);
     });
 
-    this.onMessage("rerollDice", (client, data) => {
+    this.onAction("rerollDice", (client, data) => {
       this.handleRerollDice(client, data);
     });
 
-    this.onMessage("moveUnit", (client, data) => {
+    this.onAction("moveUnit", (client, data) => {
       this.handleMoveUnit(client, data);
     });
 
-    this.onMessage("attackUnit", (client, data) => {
+    this.onAction("attackUnit", (client, data) => {
       this.handleAttackUnit(client, data);
     });
 
-    this.onMessage("rotateUnit", (client, data) => {
+    this.onAction("rotateUnit", (client, data) => {
       this.handleRotateUnit(client, data);
     });
 
-    this.onMessage("endTurn", (client, data) => {
+    this.onAction("endTurn", (client, data) => {
       this.handleEndTurn(client);
     });
 
     // === 无双将军扇形攻击 ===
-    this.onMessage("wushuangFanAttackStart", (client, data) => {
+    this.onAction("wushuangFanAttackStart", (client, data) => {
       this.handleWushuangFanAttackStart(client);
     });
 
-    this.onMessage("wushuangSelectDirection", (client, data) => {
+    this.onAction("wushuangSelectDirection", (client, data) => {
       this.handleWushuangSelectDirection(client, data);
     });
 
-    this.onMessage("wushuangExecuteAttack", (client, data) => {
+    this.onAction("wushuangExecuteAttack", (client, data) => {
       this.handleWushuangExecuteAttack(client);
     });
 
-    this.onMessage("wushuangSecondRoll", (client, data) => {
+    this.onAction("wushuangSecondRoll", (client, data) => {
       this.handleWushuangSecondRoll(client);
     });
 
-    this.onMessage("wushuangThirdRoll", (client, data) => {
+    this.onAction("wushuangThirdRoll", (client, data) => {
       this.handleWushuangThirdRoll(client);
     });
 
-    this.onMessage("wushuangCancel", (client, data) => {
+    this.onAction("wushuangCancel", (client, data) => {
       this.handleWushuangCancel(client);
     });
 
     // === 无双将军一次性技能 ===
-    this.onMessage("wushuangAbility", (client, data) => {
+    this.onAction("wushuangAbility", (client, data) => {
       this.handleWushuangAbility(client);
     });
 
     // === 神机将军技能 ===
-    this.onMessage("shenjiDeployMachine", (client, data) => {
+    this.onAction("shenjiDeployMachine", (client, data) => {
       this.handleShenjiDeployMachine(client, data);
     });
 
-    this.onMessage("shenjiModifyDice", (client, data) => {
+    this.onAction("shenjiModifyDice", (client, data) => {
       this.handleShenjiModifyDice(client, data);
     });
 
     // === 投石车蓄力 ===
-    this.onMessage("catapultCharge", (client, data) => {
+    this.onAction("catapultCharge", (client, data) => {
       this.handleCatapultCharge(client, data);
     });
 
     // === 弩车攻击 ===
-    this.onMessage("ballistaPierceAttack", (client, data) => {
+    this.onAction("ballistaPierceAttack", (client, data) => {
       this.handleBallistaPierceAttack(client, data);
     });
 
-    this.onMessage("ballistaMeleeAttack", (client, data) => {
+    this.onAction("ballistaMeleeAttack", (client, data) => {
       this.handleBallistaMeleeAttack(client, data);
     });
 
     // === 仁德将军技能 ===
-    this.onMessage("rendeConvertAdjacent", (client, data) => {
+    this.onAction("rendeConvertAdjacent", (client, data) => {
       this.handleRendeConvertAdjacent(client);
     });
 
-    this.onMessage("rendeConvertToInfantry", (client, data) => {
+    this.onAction("rendeConvertToInfantry", (client, data) => {
       this.handleRendeConvertToInfantry(client, data);
     });
 
-    this.onMessage("rendeCompleteKill", (client, data) => {
+    this.onAction("rendeCompleteKill", (client, data) => {
       this.handleRendeCompleteKill(client, data);
     });
 
-    this.onMessage("rendeSpareAsNeutral", (client, data) => {
+    this.onAction("rendeSpareAsNeutral", (client, data) => {
       this.handleRendeSpareAsNeutral(client, data);
     });
 
-    this.onMessage("surrender", (client) => {
+    this.onAction("surrender", (client) => {
       this.handleSurrender(client);
     });
 
     // === 太平将军技能 ===
-    this.onMessage("taipingFushui", (client, data: { civilianId: string }) => {
+    this.onAction("taipingFushui", (client, data: { civilianId: string }) => {
       this.handleTaipingFushui(client, data);
+    });
+
+    this.onAction("taipingRecruit", (client, data: { civilianId: string }) => {
+      this.handleTaipingRecruit(client, data);
     });
 
     // === 开发工具：存档 / 读档（仅 SHIYUAN_DEV_TOOLS=1 时注册） ===
     if (DEV_TOOLS) {
-      this.onMessage("__devSaveState", (client, data: { label?: string }) => {
+      this.onAction("__devSaveState", (client, data: { label?: string }) => {
         const snapshot = captureState(this.state, data?.label);
         client.send("__devSnapshot", snapshot);
         console.log(`[DEV] ${client.sessionId} 导出局面快照 (${this.state.units.size} 单位)`);
       });
 
-      this.onMessage("__devLoadState", (client, data: { snapshot: StateSnapshot }) => {
+      this.onAction("__devLoadState", (client, data: { snapshot: StateSnapshot }) => {
         const result = restoreState(this.state, data?.snapshot);
         // 快照里的 id 是上一局生成的，计数器必须跳到它们之后，
         // 否则接下来新建的单位会撞上已存在的 id（MapSchema 会被静默覆盖）
@@ -1144,8 +1177,10 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 太平：新回合开始，符水粥的每回合额度回满
     this.taipingOf(role).fushuiUsedThisTurn = false;
 
-    // 太平：回合开始、掷骰之后刷新公共平民（强制豆饭/腐化在此之后）
+    // 太平：回合开始、掷骰之后刷新公共平民，紧接着强制豆饭（§7.1 第 2、3 步）。
+    // 顺序不能换：新刷出来的平民**可以**立刻成为本回合的征募目标。
     this.refreshCivilians(role);
+    this.startDoufanPhase(role);
   }
 
   /**
@@ -3751,6 +3786,151 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       tp.destiny -= 1;
       this.addBattleLog(`平民${civ.id}身死，${who}的太平天命 ${before}→${tp.destiny}`);
     }
+  }
+
+  /**
+   * 开启强制豆饭阶段：把本回合必须征募的平民快照进 pendingRecruit。
+   *
+   * 快照而不是每次重算，正是「本阶段新转化的力士不能继续扩大本次征募范围」
+   * 的实现方式 —— 新力士虽然也是合格征募源，但它进场时这张名单已经定了。
+   *
+   * 太平阵亡后没有豆饭（那时是腐化，见步骤 11）。
+   */
+  private startDoufanPhase(role: "player1" | "player2"): void {
+    if (!this.isTaipingAlive(role)) return;
+
+    const tp = this.taipingOf(role);
+    tp.pendingRecruit.clear();
+
+    const targets = Rules.getDoufanTargets(this.unitList, role);
+    if (targets.length === 0) return;
+
+    targets.forEach(id => tp.pendingRecruit.push(id));
+
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    this.addBattleLog(
+      `强制豆饭：${targets.length} 名平民在征募范围内，每人 ${Rules.DOUFAN_COST} 点行动值`
+      + `（${who}自行决定顺序）`
+    );
+
+    // 本来就付不起的话立刻放行，别把玩家锁在一个做不了的阶段里
+    this.maybeEndDoufanPhase(role);
+  }
+
+  /**
+   * 行动点不足 2 时结束征募阶段：不透支、不欠账、不额外处罚。
+   *
+   * 强制阶段期间玩家的其他指令全被拦住，所以 AP 只可能因为征募本身减少，
+   * 在阶段开始和每次征募之后各查一次就够。
+   */
+  private maybeEndDoufanPhase(role: "player1" | "player2"): void {
+    const tp = this.taipingOf(role);
+    if (tp.pendingRecruit.length === 0) return;
+
+    const ap = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
+    if (ap >= Rules.DOUFAN_COST) return;
+
+    const left = tp.pendingRecruit.length;
+    tp.pendingRecruit.clear();
+    this.addBattleLog(`行动点不足，豆饭征募停止（${left} 名平民未被征募）`);
+  }
+
+  /**
+   * 征募一名平民为黄巾力士。玩家逐个发，顺序由他自己定。
+   *
+   * 不占用征募源步兵的行动次数 —— 豆饭是被动，不是那些步兵的动作。
+   * 新力士当回合不能行动（把行动次数和两个标记一起打满），但**立即计入
+   * 天命承载量**，所以同一回合末的天命难承会算上它。
+   */
+  private handleTaipingRecruit(client: Client, data: { civilianId: string }) {
+    const role = this.getPlayerRole(client);
+    if (!role || role !== this.state.currentPlayer) {
+      client.send("error", { message: "不是你的回合" });
+      return;
+    }
+
+    const tp = this.taipingOf(role);
+    const idx = tp.pendingRecruit.indexOf(data?.civilianId);
+    if (idx < 0) {
+      client.send("error", { message: "该平民不在本回合的征募名单里" });
+      return;
+    }
+
+    const civ = this.state.units.get(data.civilianId);
+    if (!civ) {
+      // 理论上进不来（强制阶段里其他指令都被拦住），留着兜底
+      tp.pendingRecruit.splice(idx, 1);
+      this.maybeEndDoufanPhase(role);
+      client.send("error", { message: "该平民已不在场" });
+      return;
+    }
+
+    const ap = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
+    if (ap < Rules.DOUFAN_COST) {
+      // maybeEndDoufanPhase 本该已经清空队列，这里兜底
+      this.maybeEndDoufanPhase(role);
+      client.send("error", { message: "行动点不足" });
+      return;
+    }
+    if (role === "player1") {
+      this.state.player1ActionPoints -= Rules.DOUFAN_COST;
+    } else {
+      this.state.player2ActionPoints -= Rules.DOUFAN_COST;
+    }
+
+    const pos = { q: civ.q, r: civ.r, s: civ.s };
+    this.state.units.delete(civ.id);
+
+    const lishi = new UnitSchema();
+    lishi.id = this.newUnitId("lishi");
+    lishi.type = "huangjin_lishi";
+    lishi.owner = role;
+    lishi.q = pos.q;
+    lishi.r = pos.r;
+    lishi.s = pos.s;
+    lishi.hp = 2;
+    lishi.maxHp = 2;
+    lishi.direction = 0;
+    // 当回合不能行动
+    lishi.actionsThisTurn = 2;
+    lishi.hasMoved = true;
+    lishi.hasAttacked = true;
+    lishi.hasActedThisTurn = true;
+    this.state.units.set(lishi.id, lishi);
+
+    tp.pendingRecruit.splice(idx, 1);
+
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    this.addBattleLog(
+      `${who}以豆饭征募平民${civ.id}，成为黄巾力士${lishi.id}`
+      + `（剩余 ${tp.pendingRecruit.length} 名待征募）`
+    );
+
+    this.maybeEndDoufanPhase(role);
+  }
+
+  /**
+   * 强制阶段未完成时拦住行动方的其他指令。
+   *
+   * 「只要存在合格目标且行动点足够，太平玩家就不能主动拒绝征募」——
+   * 这条规则靠拦截实现：队列非空期间移动、攻击、部署、符水粥、结束回合
+   * 一律被拒。队列会在 AP 不足时自动清空，所以玩家不会被永久锁住。
+   *
+   * @returns true = 已经回绝，调用方应直接 return
+   */
+  private rejectIfForcedPhasePending(client: Client): boolean {
+    const role = this.getPlayerRole(client);
+    // 不是行动方就不关这里的事，交给各 handler 自己回「不是你的回合」
+    if (!role || role !== this.state.currentPlayer) return false;
+
+    const tp = this.taipingOf(role);
+    if (tp.pendingRecruit.length > 0) {
+      client.send("error", {
+        message: `强制豆饭未完成：还有 ${tp.pendingRecruit.length} 名平民等待征募`,
+      });
+      return true;
+    }
+    return false;
   }
 
   /**

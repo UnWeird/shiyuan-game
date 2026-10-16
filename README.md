@@ -18,6 +18,8 @@
 1. **无双**: 扇形群体攻击，掷骰子决定攻击数
 2. **神机**: 可组装机关单位（弩车、战车）
 3. **仁德**: 可转化敌方/中立单位
+4. **太平**: 启用公共平民；救济涨天命、强制征募涨兵力，两者抢同一池行动点。
+   太平活着走「黄天当立」特殊胜利，死后黄巾化为只会作乱与腐化的流寇
 
 ### 行动系统
 - 行动点由骰子决定（每部署 1 元 = 1 颗骰子）
@@ -122,11 +124,11 @@ client/
 ### 测试
 
 ```bash
-npm test --prefix client   # 68 个
-npm test --prefix server   # 26 个
+npm test --prefix client   # 97 个
+npm test --prefix server   # 420 个
 ```
 
-两端都有测试（client 68 个 + server 26 个）：
+两端都有测试（client 97 个 + server 420 个）：
 
 - `client`：`shared/utils/hexUtils.ts` 的六边形与规则数学、以及「指令待确认」的落定判定
 - `server`：规则谓词 `checkAttackLegality` / `getAttackableTargets` / `getValidMoves`
@@ -163,12 +165,45 @@ npm test --prefix server   # 26 个
   所以参数只要一个单位数组，不需要把整个 GameState 抽象出来。
   服务端 `ShiyuanRoom` 只是薄委托，客户端也能直接 import（不需要 Colyseus）。
 - **高亮和校验共用同一份实现**，结构上不可能不一致。
+- 太平的派生数据同路下发：符水粥可救济目标、腐化可选目标、黄天当立四条件清单、
+  **作乱威胁格**。作乱那一项尤其不能省 —— 贼不会主动攻击，不画出来玩家就看不见威胁。
 - 机关的「范围型」攻击（弩车垂直贯穿、投石车沿朝向射击）通过 `attackHexes` 一起下发
   —— 这类攻击覆盖一条线而不是选某个目标，所以和 `attacks` 分开表达。
 - **同机对弈是服务端的 hotseat 房间**：一个客户端控制双方，
   `getPlayerRole()` 返回 `currentPlayer`。代价是单机也需要服务端在跑。
 
-### 局面存档 / 读档（开发工具）
+### 随机数与单位 id 的接缝
+
+两样东西原来都是写死的，后果是**规则没法测**：
+
+- `Math.floor(Math.random() * 6) + 1` 散在 20 处，掷骰分支（无双「≤2 才能再攻击」、
+  太平夺天命）只能靠运气跑到
+- `unit_${Date.now()}_${Math.random()...}` 散在 9 处，测试没法指代「那个被贯穿的弩车」
+
+现在：
+
+- 全项目唯一的 d6 入口是 `ShiyuanRoom.rollD6()`，随机源是可替换的 `private rng`。
+  测试里 `(room as any).rng = ...` 就能定死整条骰序。
+  有一条测试直接扫源码，断言房间里不再出现接缝之外的裸 `Math.random`。
+- 单位 id 由 `newUnitId(kind)` 产出 `infantry3` / `civ7` / `lishi2`，带类型前缀是为了
+  战报和断言能读。载入开发快照后必须调 `syncUnitIdCounter()` 把计数器推到快照里所有
+  id 之后，否则新建单位会撞上已存在的 id 而被 `MapSchema` 静默覆盖 —— 不报错，单位凭空消失。
+
+## 源码审计式的测试
+
+有几条规则的正确性取决于「所有路径都走了同一个出口」，这种不变量没法靠行为断言覆盖，
+所以用扫源码的测试钉住处数。它们不阻止你写代码，只是迫使下一个人做一次有意识的分类：
+
+| 审计 | 钉住什么 | 漏掉的后果 |
+|---|---|---|
+| 裸 `units.delete` 的处数 | 死亡走 `killUnit`，转化才用裸 delete | 力士转平民 / 平民扣天命 / 太平阵亡起义静默失效 |
+| 已注册指令数 + 逐条验证被拦 | 强制阶段拦截挂在 `onAction` 注册层 | 多一条绕过强制征募的后门 |
+| `charged = true` 的赋值点 | 只有起义、主动移动、腐化出生三处 | 被击退也回充，违背「只认主动移动」 |
+| `applyZuoluan` 钩子处数 | 8 条会生效的行动路径都挂上了 | 「在贼旁边用某个技能不挨打」的隐形漏洞 |
+
+数字变了不等于有 bug，但必须有人看一眼。
+
+## 局面存档 / 读档（开发工具）
 
 用来跳过「为了验一个中局 bug，开两个浏览器窗口从选将开始打十分钟」。
 
@@ -191,7 +226,7 @@ npm run dev:tools --prefix server
 - 载入不会重置组件内部的临时 UI 状态（比如正处于扇形攻击选方向中），必要时刷新页面后再载入。
 
 注意：客户端目前**不自己算**高亮，仍然用服务端推下来的结果。原因是客户端同步到的单位
-缺 4 个判定要用的字段（`hasActedThisTurn` / `generalType` / `bonusActionLimit` /
+缺几个判定要用的字段（`hasActedThisTurn` / `generalType` / `bonusActionLimit` /
 `unlimitedActions`）—— 这也正是当年客户端那份实现必然漂移的根源：
 它根本看不到 `unlimitedActions`，所以无论怎么写都实现不了那条规则。
 
@@ -214,8 +249,15 @@ npm run dev:tools --prefix server
 
 ### Colyseus Schema 字段上限
 
-`GameStateSchema` 目前正好 **64 个字段，已达上限**（见 commit `dc72383`）。再加 `@type` 字段会直接报错。
-需要新增同步状态时：复用现有字段、改用 `broadcast()` 消息，或把相关字段收进一个嵌套 Schema。
+`GameStateSchema` 一度正好 **64 个字段，已达上限**（见 commit `dc72383`），再加 `@type` 字段会直接报错。
+太平重做时腾出了空间：旧太平那 14 个字段（正好是第 51–64 格）全部删除，
+换成每方一个嵌套的 `TaipingSchema`，顶层只占 2 格。**当前 52 / 64，余 12 格。**
+
+嵌套 Schema 的代价在读档那一侧：`restoreState` 对普通字段是
+`state[key] = value`，碰上嵌套 Schema 会把实例换成普通对象，整棵子树从此不再同步
+（和 `units` 是同一类坑）。所以它走单独的 `restoreNested`，往现有实例里逐字段写。
+
+再需要新增同步状态时，仍然优先收进嵌套 Schema 而不是加顶层字段。
 
 ## License
 

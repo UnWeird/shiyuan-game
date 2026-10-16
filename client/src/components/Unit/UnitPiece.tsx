@@ -91,8 +91,15 @@ const ANGLE_BY_DIRECTION: Record<Direction, number> = {
 
 function skinOf(unit: Unit): PieceSkin {
   if (unit.type === UnitType.HUANGJIN_LISHI) return PIECE.huangjinLishi;
-  if (unit.type === UnitType.HUANGJIN_ZEI) return PIECE.huangjinZei;
-  if (unit.type === UnitType.NEUTRAL_MARKER) return PIECE.neutral;
+  // 充能的贼面色上浮：它此刻带着作乱之势，走到它旁边要挨 1 点。
+  // 这是玩家唯一能从棋子本身读出充能状态的地方。
+  if (unit.type === UnitType.HUANGJIN_ZEI) {
+    return (unit as { charged?: boolean }).charged ? PIECE.huangjinZeiCharged : PIECE.huangjinZei;
+  }
+  // 公共平民和仁德的中立标记同类型，靠 statusTag 分开
+  if (unit.type === UnitType.NEUTRAL_MARKER) {
+    return unit.statusTag === 'civilian' ? PIECE.civilian : PIECE.neutral;
+  }
   if (unit.owner === Player.PLAYER1) return PIECE.player1;
   if (unit.owner === Player.PLAYER2) return PIECE.player2;
   return PIECE.neutral;

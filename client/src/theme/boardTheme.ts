@@ -102,8 +102,17 @@ export const PIECE = {
   player1: { face: '#D98A74', glyph: '#6E2317' } as PieceSkin,
   player2: { face: '#8FC4A6', glyph: '#1D5B42' } as PieceSkin,
   neutral: { face: '#BDB49E', glyph: '#3E3626' } as PieceSkin,
+  /**
+   * 太平的公共平民。和仁德自造的中立标记同类型（neutral_marker），
+   * 但规则完全不同（会被征募 / 腐化 / 救济，死了扣天命），
+   * 所以必须一眼分得开：比中立标记更土褐、更低饱和 —— 流民的颜色。
+   */
+  civilian: { face: '#A79478', glyph: '#33281A' } as PieceSkin,
   huangjinLishi: { face: '#D4B55E', glyph: '#4A3A10' } as PieceSkin,
+  /** 黄巾贼（充能耗尽）：比力士更暗、更脏 */
   huangjinZei: { face: '#A08A4C', glyph: '#33280C' } as PieceSkin,
+  /** 黄巾贼（充能充满）：面色上浮，表示「这只还带着作乱之势」 */
+  huangjinZeiCharged: { face: '#C8A74E', glyph: '#33280C' } as PieceSkin,
   /** 金错边，双方共用 —— 把棋子和铜板缝成一体 */
   rim: '#C9A227',
   /** 体力弧：亮 = 还有，熄 = 已失去 */

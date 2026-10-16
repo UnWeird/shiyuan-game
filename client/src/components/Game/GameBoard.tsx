@@ -10,6 +10,8 @@ import { LegendPanel } from '../UI/LegendPanel';
 import { Die } from '../UI/Die';
 import RulesModal from '../UI/RulesModal';
 import { hexEquals, hexToPixel, generateHexMap, isInStartZone, getShootingPath, getFanShapedHexes, getMachineOccupiedHexes, hexDistance, hexNeighbors, getDistanceToBaseline } from '../../utils/hexUtils';
+// 承载量公式只有一份实现（服务端判定与界面展示共用）
+import { getDestinyCapacity } from '../../../../shared/rules/queries';
 import { colyseusService } from '../../services/ColyseusService';
 import { toast, askConfirm, useUIStore } from '../../stores/uiStore';
 import { BOARD_ASPECT, IMPERIAL, UNIT_NAME } from '../../theme/boardTheme';
@@ -93,6 +95,9 @@ export const GameBoard: React.FC = () => {
     wushuangAttackPhase: storeWushuangAttackPhase,
     wushuangSelectedDirection: storeWushuangSelectedDirection,
     wushuangDiceRolls: storeWushuangDiceRolls,
+    // 太平阵营状态（服务端嵌套 Schema 的镜像）
+    player1Taiping,
+    player2Taiping,
   } = useGameStore();
 
   // selectedUnit / currentActionPoints 原来由 useGameActions 派生。
@@ -114,7 +119,9 @@ export const GameBoard: React.FC = () => {
   const serverBattleLog = useGameStore(state => state.serverBattleLog);
 
   const [highlightedHexes, setHighlightedHexes] = useState<HexCoord[]>([]);
-  const [actionMode, setActionMode] = useState<'move' | 'attack' | 'deploy' | 'rotate' | 'rende-convert' | 'rende-neutral' | null>(null);
+  const [actionMode, setActionMode] = useState<'move' | 'attack' | 'deploy' | 'rotate' | 'rende-convert' | 'rende-neutral' | 'taiping-fushui' | null>(null);
+  /** 腐化阶段：当前正在为哪只黄巾贼挑目标 */
+  const [corruptPicking, setCorruptPicking] = useState<string | null>(null);
   const [deployUnitType, setDeployUnitType] = useState<UnitType | null>(null);
   const [battleLogs, setBattleLogs] = useState<BattleLogEntry[]>([]);
   const [rotationPaths, setRotationPaths] = useState<Map<Direction, HexCoord[]>>(new Map());
@@ -201,6 +208,10 @@ export const GameBoard: React.FC = () => {
   }, [selectedUnit, isNarrow, boardRotate]);
 
   const enemyThreatHexes = useValidActionsStore(state => state.threatHexes);
+  const zuoluanHexes = useValidActionsStore(state => state.zuoluanHexes);
+  const fushuiTargets = useValidActionsStore(state => state.fushuiTargets);
+  const corruptTargets = useValidActionsStore(state => state.corruptTargets);
+  const huangtian = useValidActionsStore(state => state.huangtian);
   const depthDefended = useValidActionsStore(state => state.depthDefended);
   // 扇形攻击本地状态（单机模式使用）
   const [localWushuangFanAttackActive, setLocalWushuangFanAttackActive] = useState(false);
@@ -560,6 +571,31 @@ export const GameBoard: React.FC = () => {
           setHighlightedHexes([]);
         }
       }
+      return;
+    }
+
+    // 太平：符水粥 —— 点一名高亮的相邻平民
+    if (actionMode === 'taiping-fushui') {
+      const target = Object.values(units).find(u => hexEquals(u.position, hex));
+      if (target && fushuiTargets.includes(target.id)) {
+        colyseusService.taipingFushui(target.id);
+        addLog('符水粥：救济平民，天命 +1', 'ability');
+      }
+      setActionMode(null);
+      setHighlightedHexes([]);
+      return;
+    }
+
+    // 太平：腐化 —— 已经选好了哪只贼，现在点它要腐化的平民
+    if (corruptPicking) {
+      const target = Object.values(units).find(u => hexEquals(u.position, hex));
+      const allowed = corruptTargets[corruptPicking] ?? [];
+      if (target && allowed.includes(target.id)) {
+        colyseusService.taipingCorrupt(corruptPicking, target.id);
+        addLog('腐化：平民化为黄巾贼', 'ability');
+      }
+      setCorruptPicking(null);
+      setHighlightedHexes([]);
       return;
     }
 
@@ -2304,6 +2340,9 @@ export const GameBoard: React.FC = () => {
                 /* 敌方下回合能打到的格子：常驻铺朱色斜纹，让站位失误在落子前就看得见。
                  * 由服务端委派 checkAttackLegality 算出，不含战车碾压 → 偏保守。 */
                 enemyThreatHexes={enemyThreatHexes}
+                /* 作乱区：充能黄巾贼的邻格。和敌方威胁区同色不同填充
+                 * （斜纹 = 下回合会被打，点阵 = 在这里行动立刻挨 1 点） */
+                zuoluanHexes={zuoluanHexes}
                 /* 被纵深抗击保护的单位：队首亮盾。
                  * 这条规则（弓箭手打步兵、背后有连续步兵则免伤）谁都发现不了，
                  * 画出来等于把一条隐藏规则变成一种可用的玩法。 */
@@ -2735,6 +2774,128 @@ export const GameBoard: React.FC = () => {
                     </div>
                   )}
 
+                  {/* 太平技能 */}
+                  {currentGeneral === 'taiping' && (() => {
+                    const tp = currentPlayer === Player.PLAYER1 ? player1Taiping : player2Taiping;
+                    const alive = Object.values(units).some(u =>
+                      u.owner === currentPlayer && u.type === UnitType.GENERAL
+                      && (u as any).generalType === 'taiping');
+                    const capacity = getDestinyCapacity(tp.destiny);
+                    const lishiCount = Object.values(units).filter(u =>
+                      u.type === UnitType.HUANGJIN_LISHI && u.owner === currentPlayer).length;
+                    const zeiCount = Object.values(units).filter(u =>
+                      u.type === UnitType.HUANGJIN_ZEI && u.owner === currentPlayer).length;
+                    const over = lishiCount > capacity;
+
+                    return (
+                      <div className="p-3 panel-sy rounded-lg">
+                        <h4 className="text-sm font-bold panel-sy-title mb-2">
+                          {alive ? '太平 · 黄天未立' : '太平 · 苍天已死'}
+                        </h4>
+
+                        {alive ? (
+                          <>
+                            {/* 天命 / 承载：超载时标红，玩家要能一眼看出回合末会掉血 */}
+                            <div className="mb-3 text-xs space-y-1 font-chinese rounded p-2"
+                              style={{ background: 'rgba(201,162,39,0.06)', color: 'rgba(245,230,200,0.75)' }}>
+                              <div className="flex justify-between">
+                                <span>天命</span>
+                                <span className="font-bold text-bronze-light">{tp.destiny} / 12</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>黄巾力士 / 承载</span>
+                                <span className={`font-bold ${over ? 'text-imperial-red-light' : 'text-imperial-jade-light'}`}>
+                                  {lishiCount} / {capacity}
+                                </span>
+                              </div>
+                              {over && (
+                                <div className="text-xs text-imperial-red-light">
+                                  ⚠️ 天命难承：回合结束将失去 1 点体力
+                                </div>
+                              )}
+                              {(tp.lastHuangtian > 0 || tp.lastCangtian > 0) && (
+                                <div className="flex justify-between" style={{ color: 'rgba(201,162,39,0.5)' }}>
+                                  <span>上次夺天命</span>
+                                  <span>黄天 {tp.lastHuangtian} / 苍天 {tp.lastCangtian}</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* 符水粥 */}
+                            <button
+                              onClick={() => {
+                                setActionMode('taiping-fushui');
+                                setHighlightedHexes(
+                                  fushuiTargets.map(id => units[id]?.position).filter(Boolean) as HexCoord[]
+                                );
+                                addLog('符水粥：点击一名相邻平民', 'info');
+                              }}
+                              disabled={!isMyTurn || fushuiTargets.length === 0 || currentActionPoints < 2}
+                              className="btn-sy btn-sy-gold btn-sy-ability w-full px-4 py-2 rounded-lg text-sm font-bold mb-2"
+                            >
+                              符水粥（2 点 → 天命 +1）
+                              {tp.fushuiUsedThisTurn ? ' [本回合已用]'
+                                : fushuiTargets.length === 0 ? ' [无相邻平民]' : ''}
+                            </button>
+
+                            {/* 黄天当立：四条件清单 + 宣告 */}
+                            {huangtian && (
+                              <div className="mb-1 text-xs font-chinese rounded p-2"
+                                style={{ background: 'rgba(201,162,39,0.06)' }}>
+                                <div className="font-bold mb-1" style={{ color: '#C9A227' }}>黄天当立</div>
+                                {([
+                                  ['天命 ≥ 10', huangtian.destinyEnough],
+                                  ['太平处于交战区', huangtian.inBattleZone],
+                                  ['本回合用过符水粥', huangtian.fushuiUsed],
+                                  ['黄巾力士未超载', huangtian.withinCapacity],
+                                ] as Array<[string, boolean]>).map(([label, ok]) => (
+                                  <div key={label} className="flex justify-between"
+                                    style={{ color: ok ? 'rgba(144,210,160,0.9)' : 'rgba(245,230,200,0.4)' }}>
+                                    <span>{ok ? '✓' : '○'} {label}</span>
+                                  </div>
+                                ))}
+                                {huangtian.declaredTurn >= 0 ? (
+                                  <p className="mt-2 font-bold text-imperial-gold-light">
+                                    已宣告，撑过对手这一回合即获胜
+                                  </p>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      colyseusService.taipingDeclareHuangtian();
+                                      addLog('宣布黄天当立！', 'ability');
+                                    }}
+                                    disabled={!isMyTurn || !huangtian.ok}
+                                    className="btn-sy btn-sy-gold w-full px-4 py-2 rounded-lg text-sm font-bold mt-2"
+                                  >
+                                    ⚡ 宣布黄天当立
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-xs space-y-1 font-chinese rounded p-2"
+                            style={{ background: 'rgba(201,162,39,0.06)', color: 'rgba(245,230,200,0.75)' }}>
+                            <div className="flex justify-between">
+                              <span>黄巾贼</span>
+                              <span className="font-bold text-imperial-red-light">{zeiCount}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>充能中</span>
+                              <span className="font-bold">
+                                {Object.values(units).filter(u =>
+                                  u.type === UnitType.HUANGJIN_ZEI && (u as any).charged).length}
+                              </span>
+                            </div>
+                            <p style={{ color: 'rgba(201,162,39,0.5)' }}>
+                              贼不能主动攻击；移动一次即可充满作乱之势
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* 仁德技能 */}
                   {currentGeneral === 'rende' && (
                     <>
@@ -2820,6 +2981,102 @@ export const GameBoard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 太平 · 强制豆饭：队列非空时服务端拦住一切其他指令，所以这里必须是模态 */}
+      {(() => {
+        const tp = currentPlayer === Player.PLAYER1 ? player1Taiping : player2Taiping;
+        if (!isMyTurn || tp.pendingRecruit.length === 0) return null;
+        const affordable = Math.floor(currentActionPoints / 2);
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+            <div className="rounded-lg p-6 max-w-sm w-full mx-4" style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.98) 0%, rgba(13,5,0,0.99) 100%)', border: '1px solid rgba(201,162,39,0.3)', boxShadow: '0 0 40px rgba(201,162,39,0.1)' }}>
+              <h3 className="font-ancient text-xl tracking-widest mb-1" style={{ color: '#C9A227' }}>豆饭</h3>
+              <p className="text-sm font-chinese mb-4" style={{ color: 'rgba(245,230,200,0.7)' }}>
+                两格内的流民必须接受征募，每人 <span className="font-bold" style={{ color: '#E8C84A' }}>2</span> 点行动值。
+                <br/>
+                顺序由你决定；行动点不足时自动停止。
+                <br/>
+                剩余行动点 <span className="font-bold" style={{ color: '#E8C84A' }}>{currentActionPoints}</span>
+                （还能征募 {affordable} 人 / 待征募 {tp.pendingRecruit.length} 人）
+              </p>
+
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {tp.pendingRecruit.map(id => {
+                  const u = units[id];
+                  if (!u) return null;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => colyseusService.taipingRecruit(id)}
+                      className="w-full text-left px-3 py-2 rounded text-sm font-chinese transition-all"
+                      style={{
+                        border: '1px solid rgba(201,162,39,0.35)',
+                        background: 'rgba(201,162,39,0.08)',
+                        color: '#E8C84A',
+                      }}
+                    >
+                      征募平民 ({u.position.q}, {u.position.r})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 太平 · 强制腐化：同样是服务端拦住一切指令的阶段 */}
+      {(() => {
+        const tp = currentPlayer === Player.PLAYER1 ? player1Taiping : player2Taiping;
+        if (!isMyTurn || tp.pendingCorrupt.length === 0) return null;
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+            <div className="rounded-lg p-6 max-w-sm w-full mx-4" style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.98) 0%, rgba(13,5,0,0.99) 100%)', border: '1px solid rgba(201,162,39,0.3)', boxShadow: '0 0 40px rgba(201,162,39,0.1)' }}>
+              <h3 className="font-ancient text-xl tracking-widest mb-1" style={{ color: '#C9A227' }}>腐化</h3>
+              <p className="text-sm font-chinese mb-4" style={{ color: 'rgba(245,230,200,0.7)' }}>
+                充能的黄巾贼必须各自腐化一名相邻平民，代价是自己全部的作乱之势。
+                <br/>
+                不消耗行动点。待处理 {tp.pendingCorrupt.length} 名。
+              </p>
+
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {tp.pendingCorrupt.map(zid => {
+                  const z = units[zid];
+                  const targets = corruptTargets[zid] ?? [];
+                  if (!z) return null;
+                  return (
+                    <div key={zid} className="rounded p-2" style={{ border: '1px solid rgba(201,162,39,0.2)' }}>
+                      <p className="text-xs font-chinese mb-1" style={{ color: 'rgba(245,230,200,0.6)' }}>
+                        黄巾贼 ({z.position.q}, {z.position.r})
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {targets.map(cid => {
+                          const c = units[cid];
+                          if (!c) return null;
+                          return (
+                            <button
+                              key={cid}
+                              onClick={() => colyseusService.taipingCorrupt(zid, cid)}
+                              className="px-2 py-1 rounded text-xs font-chinese"
+                              style={{
+                                border: '1px solid rgba(226,86,75,0.4)',
+                                background: 'rgba(226,86,75,0.1)',
+                                color: '#E8C84A',
+                              }}
+                            >
+                              腐化 ({c.position.q}, {c.position.r})
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 仁德击杀确认对话框 */}
       {rendeKillConfirm && (

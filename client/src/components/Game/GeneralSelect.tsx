@@ -8,6 +8,8 @@ interface GeneralCardProps {
   name: string;
   ability: string;
   passive: string;
+  /** 特殊胜利条件之类的第三段，只有太平有 */
+  special?: string;
   onSelect: () => void;
   isSelected: boolean;
   disabled?: boolean;
@@ -17,6 +19,7 @@ const GeneralCard: React.FC<GeneralCardProps> = ({
   name,
   ability,
   passive,
+  special,
   onSelect,
   isSelected,
   disabled = false,
@@ -65,7 +68,7 @@ const GeneralCard: React.FC<GeneralCardProps> = ({
       </h3>
       <div className="space-y-2.5">
         <div>
-          <h4 className="font-chinese text-xs tracking-widest mb-1" style={{ color: 'rgba(201,162,39,0.6)' }}>一次性技能</h4>
+          <h4 className="font-chinese text-xs tracking-widest mb-1" style={{ color: 'rgba(201,162,39,0.6)' }}>主动技能</h4>
           <p className="font-chinese text-xs leading-relaxed" style={{ color: 'rgba(245,230,200,0.75)' }}>{ability}</p>
         </div>
         <div className="border-t" style={{ borderColor: 'rgba(201,162,39,0.1)' }} />
@@ -73,6 +76,12 @@ const GeneralCard: React.FC<GeneralCardProps> = ({
           <h4 className="font-chinese text-xs tracking-widest mb-1" style={{ color: 'rgba(201,162,39,0.6)' }}>被动技能</h4>
           <p className="font-chinese text-xs leading-relaxed" style={{ color: 'rgba(245,230,200,0.75)' }}>{passive}</p>
         </div>
+        {special && (
+          <div>
+            <h4 className="font-chinese text-xs tracking-widest mb-1" style={{ color: 'rgba(201,162,39,0.6)' }}>特殊胜利</h4>
+            <p className="font-chinese text-xs leading-relaxed" style={{ color: 'rgba(245,230,200,0.75)' }}>{special}</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -224,8 +233,9 @@ export const GeneralSelect: React.FC = () => {
           <GeneralCard
             general={GeneralType.TAIPING}
             name="太平 (体力上限3)"
-            ability="豆饭：消耗3点行动值，掷d6在将军相邻空位召唤等量黄巾力士"
-            passive="符水粥：回合开始可将残血步兵升为2血力士（消耗行动点）。夺天命：回合结束掷苍天/黄天骰更新天命值，若力士数超过天命值则承载扣1血。将军阵亡后力士变贼，贼相邻单位行动时受系统伤害"
+            ability="符水粥：消耗2点救济相邻平民，天命+1（每回合一次，占用攻击行动）"
+            passive="启用公共平民。豆饭：步兵/力士两格内的平民强制征募为黄巾力士，每人2点。夺天命：回合结束掷骰调整天命；力士超出承载则太平扣1血。太平阵亡后力士化为黄巾贼，靠作乱与腐化作战"
+            special="特殊胜利「黄天当立」：天命≥10、太平在交战区、本回合用过符水粥、力士未超载时宣告，撑过对手一个完整回合即胜"
             onSelect={() => handleSelectGeneral(GeneralType.TAIPING)}
             isSelected={myGeneral === GeneralType.TAIPING}
             disabled={isVersus && !!myGeneral}

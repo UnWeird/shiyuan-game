@@ -129,6 +129,17 @@ const initialState: GameState & Pick<GameStore, 'isOnlineMode' | 'isHotseat' | '
   wushuangSelectedDirection: null,
   wushuangDiceRolls: [],
 
+  player1Taiping: {
+    destiny: 5, destinyLostThisRound: 0, fushuiUsedThisTurn: false,
+    lastHuangtian: 0, lastCangtian: 0, huangtianDeclaredTurn: -1,
+    pendingRecruit: [], pendingCorrupt: [],
+  },
+  player2Taiping: {
+    destiny: 5, destinyLostThisRound: 0, fushuiUsedThisTurn: false,
+    lastHuangtian: 0, lastCangtian: 0, huangtianDeclaredTurn: -1,
+    pendingRecruit: [], pendingCorrupt: [],
+  },
+
   serverBattleLog: [],
 
   history: [],

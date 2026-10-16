@@ -37,7 +37,8 @@ export interface Unit {
   movementRestrictionSourceS?: number; // 步兵移动限制来源S坐标
   cannotMoveNextTurn?: boolean;  // 弩车贯穿击中的最后单位：下回合不能移动
   cannotRotateNextTurn?: boolean; // 弩车贯穿击中的最后单位：下回合不能转向
-  statusTag?: string; // 太平将军专属：'' 普通 | 'lishi' 力士 | 'zei' 贼
+  statusTag?: string; // 太平：'' 普通中立标记 | 'civilian' 公共平民
+  charged?: boolean;  // 黄巾贼：作乱充能是否充满
 }
 
 // 将军单位 (继承 Unit)
@@ -60,6 +61,30 @@ export interface MachineUnit extends Unit {
   pierceCount?: number;           // 弩车：贯穿单位数（包含友方）
   hasActedThisTurn?: boolean;     // 机关单位：本回合是否已行动（移动或攻击）
   chargeLevel?: number;           // 投石车：蓄力层数（0/1/2）
+}
+
+/**
+ * 太平阵营状态（镜像服务端的 TaipingSchema）
+ *
+ * 刻意**不含**「太平是否存活」：它由「选了太平」+「units 里还有没有
+ * 太平将军」推出来，存一份会漂移。界面要用的话自己推。
+ */
+export interface TaipingState {
+  /** 天命值 0-12 */
+  destiny: number;
+  /** 本轮已因平民之死失去的天命（上限 2） */
+  destinyLostThisRound: number;
+  /** 本回合是否用过符水粥 */
+  fushuiUsedThisTurn: boolean;
+  /** 上次夺天命的两颗骰子，仅展示用 */
+  lastHuangtian: number;
+  lastCangtian: number;
+  /** 宣告黄天当立时的回合数，-1 为未宣告 */
+  huangtianDeclaredTurn: number;
+  /** 豆饭待征募的平民 id */
+  pendingRecruit: string[];
+  /** 腐化待处理的黄巾贼 id */
+  pendingCorrupt: string[];
 }
 
 // 游戏状态
@@ -136,6 +161,10 @@ export interface GameState {
   wushuangAttackPhase: 'select-direction' | 'second-roll' | 'second-attack' | 'third-roll' | 'third-attack';
   wushuangSelectedDirection: number | null;
   wushuangDiceRolls: number[];
+
+  // 太平阵营状态（服务端的嵌套 TaipingSchema，每方一份）
+  player1Taiping: TaipingState;
+  player2Taiping: TaipingState;
 
   // 服务端权威战报（仅在线模式有值；单机模式用 GameBoard 本地日志）
   serverBattleLog: string[];

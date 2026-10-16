@@ -5,11 +5,31 @@ import { playSfx } from '../audio/sfx';
 import { pendingAction, reconcilePending } from '../game/pendingAction';
 import { validActions, type ValidActionsPayload } from '../game/validActions';
 import { GeneralType, Player } from '../types';
+import type { TaipingState } from '../types';
 
 /**
  * Colyseus 网络服务
  * 负责与服务器通信、房间管理、状态同步
  */
+/**
+ * 嵌套的 TaipingSchema → 普通对象。
+ *
+ * ArraySchema 必须显式展开：直接塞进 zustand 的话组件拿到的是同一个
+ * 可变引用，内容变了引用没变，React 不会重渲染。
+ */
+function toTaipingState(tp: any): TaipingState {
+  return {
+    destiny: tp?.destiny ?? 5,
+    destinyLostThisRound: tp?.destinyLostThisRound ?? 0,
+    fushuiUsedThisTurn: tp?.fushuiUsedThisTurn ?? false,
+    lastHuangtian: tp?.lastHuangtian ?? 0,
+    lastCangtian: tp?.lastCangtian ?? 0,
+    huangtianDeclaredTurn: tp?.huangtianDeclaredTurn ?? -1,
+    pendingRecruit: tp?.pendingRecruit ? Array.from(tp.pendingRecruit) as string[] : [],
+    pendingCorrupt: tp?.pendingCorrupt ? Array.from(tp.pendingCorrupt) as string[] : [],
+  };
+}
+
 class ColyseusService {
   private client: Client;
   private room: Room | null = null;
@@ -306,6 +326,8 @@ class ColyseusService {
           cannotMoveNextTurn: unit.cannotMoveNextTurn,
           cannotRotateNextTurn: unit.cannotRotateNextTurn,
           statusTag: unit.statusTag || '',
+          // 黄巾贼的作乱充能：棋子面色靠它区分，必须同步
+          charged: unit.charged || false,
         };
 
         // 将军专属字段
@@ -447,6 +469,10 @@ class ColyseusService {
       wushuangAttackPhase: state.wushuangAttackPhase ? state.wushuangAttackPhase as any : 'select-direction',
       wushuangSelectedDirection: state.wushuangSelectedDirection === -1 ? null : state.wushuangSelectedDirection,
       wushuangDiceRolls,
+
+      // 太平阵营状态（嵌套 Schema → 普通对象，ArraySchema 要展开成数组）
+      player1Taiping: toTaipingState(state.player1Taiping),
+      player2Taiping: toTaipingState(state.player2Taiping),
     });
   }
 
@@ -714,6 +740,32 @@ class ColyseusService {
   rendeSpareAsNeutral(targetId: string) {
     if (!this.room) return;
     this.room.send('rendeSpareAsNeutral', { targetId });
+  }
+
+  // ==================== 太平将军 ====================
+
+  /** 符水粥：救济一名相邻平民，天命 +1 */
+  taipingFushui(civilianId: string) {
+    if (!this.room) return;
+    this.room.send('taipingFushui', { civilianId });
+  }
+
+  /** 豆饭：征募一名平民为黄巾力士（强制阶段，顺序由玩家定） */
+  taipingRecruit(civilianId: string) {
+    if (!this.room) return;
+    this.room.send('taipingRecruit', { civilianId });
+  }
+
+  /** 腐化：让一只充能黄巾贼腐化一名相邻平民 */
+  taipingCorrupt(zeiId: string, civilianId: string) {
+    if (!this.room) return;
+    this.room.send('taipingCorrupt', { zeiId, civilianId });
+  }
+
+  /** 宣告黄天当立 */
+  taipingDeclareHuangtian() {
+    if (!this.room) return;
+    this.room.send('taipingDeclareHuangtian', {});
   }
 
   /**

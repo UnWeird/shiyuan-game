@@ -33,7 +33,7 @@ interface HexMapProps {
    * 可达/可攻击格。`damageUp` / `noAttack` 由服务端在 validActions 里下发
    * （见 shared/rules/queries.ts 的 MOVE_FLAG_*），客户端不自己按 steps 推。
    */
-  highlightedHexes?: (HexCoord & { steps?: number; damageUp?: boolean; noAttack?: boolean })[];
+  highlightedHexes?: (HexCoord & { steps?: number; damageUp?: boolean; noAttack?: boolean; zuoluan?: boolean })[];
   /**
    * 高亮的语义。移动用青、攻击用朱 ——
    * 原来两者都走同一套填充，攻击范围显示成"可移动"的青色，是实打实的误导。
@@ -52,6 +52,11 @@ interface HexMapProps {
    * 同一个色相靠填充方式区分，不额外占一个信息色。
    */
   enemyThreatHexes?: HexCoord[];
+  /**
+   * 作乱区：充能黄巾贼的相邻格。在这些格子上**行动**会立刻挨 1 点系统伤害。
+   * 和 enemyThreatHexes 分开，因为语义不同（那是「下回合会被打」）。
+   */
+  zuoluanHexes?: HexCoord[];
   /** 被纵深抗击保护着的单位位置，画一个盾 */
   shieldedHexes?: HexCoord[];
   /**
@@ -93,6 +98,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
   threatHexes = [],
   lethalHexes = [],
   enemyThreatHexes = [],
+  zuoluanHexes = [],
   shieldedHexes = [],
   damageFlashes = [],
   machineFootprints = [],
@@ -190,6 +196,18 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
         >
           <line x1={0} y1={0} x2={0} y2={7} stroke={INFO.threat} strokeWidth={2.2} opacity={0.4} />
         </pattern>
+        {/* 作乱区的点阵。
+          * 和敌方威胁区同色（threat），但换成点阵而不是斜纹 ——
+          * 信息层四色锁死，扩展语义只能改填充方式。
+          * 语义差别：斜纹 = 敌方下回合能打到；点阵 = 在这里行动立刻挨 1 点。 */}
+        <pattern
+          id="sy-zuoluan-dots"
+          width={6}
+          height={6}
+          patternUnits="userSpaceOnUse"
+        >
+          <circle cx={3} cy={3} r={1.25} fill={INFO.threat} opacity={0.55} />
+        </pattern>
       </defs>
 
       <g transform={rotate ? `rotate(${rotate})` : undefined}>
@@ -231,11 +249,20 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
         {enemyThreatHexes.map((h) => (
           <path key={`th-${h.q},${h.r}`} d={hexPath(h, hexSize)} fill="url(#sy-threat-hatch)" />
         ))}
+        {/* 作乱区：点阵。叠在斜纹之上，两者同时存在时也分得清 */}
+        {zuoluanHexes.map((h) => (
+          <path key={`zl-${h.q},${h.r}`} d={hexPath(h, hexSize)} fill="url(#sy-zuoluan-dots)" />
+        ))}
         {highlightedHexes.map((h) => {
           const c = tileColor(h);
           const isHovered = hovered === `${h.q},${h.r}`;
           return (
             <g key={`hl-${h.q},${h.r}`}>
+              {/* 落在这一格会被作乱打掉 1 点：在青色范围之上叠朱色点阵。
+                * 不改范围本身的颜色 —— 「可以走」和「走了要挨打」是两件事。 */}
+              {h.zuoluan && (
+                <path d={hexPath(h, hexSize)} fill="url(#sy-zuoluan-dots)" />
+              )}
               <path
                 d={hexPath(h, hexSize)}
                 fill={c}

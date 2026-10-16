@@ -184,13 +184,67 @@ describe('征募范围（纯函数）', () => {
 });
 
 describe('阶段开始：快照', () => {
-  it('把名单快照进 pendingRecruit', () => {
+  it('行动点够收下所有人 → 自动执行完，不留队列、不打断玩家', () => {
     taiping('player1');
     place('src', 'infantry', 'player1', 0, 0);
     civ('c1', 1, 0);
     civ('c2', 2, 0);
+    room.state.player1ActionPoints = 7;   // 够收 3 个，候选只有 2 个
+
     room.startDoufanPhase('player1');
+
+    expect(queue()).toEqual([]);
+    expect(lishiUnits()).toHaveLength(2);
+    expect(room.state.player1ActionPoints).toBe(3);
+    expect(room.state.battleLog.some(l => l.includes('2 人加入'))).toBe(true);
+  });
+
+  it('行动点刚好够收下所有人 → 仍然自动执行，不弹框', () => {
+    // 边界：affordable === targets.length。写成 > 的话这里会多弹一次框，
+    // 而那一框是无意义的 —— 没有人需要被推回去。
+    taiping('player1');
+    place('src', 'infantry', 'player1', 0, 0);
+    civ('c1', 1, 0);
+    civ('c2', 2, 0);
+    room.state.player1ActionPoints = 4;   // 正好 2 人 × 2 点
+
+    room.startDoufanPhase('player1');
+
+    expect(queue()).toEqual([]);
+    expect(lishiUnits()).toHaveLength(2);
+    expect(room.state.player1ActionPoints).toBe(0);
+  });
+
+  it('行动点不够 → 才把名单快照进 pendingRecruit 让玩家选', () => {
+    taiping('player1');
+    place('src', 'infantry', 'player1', 0, 0);
+    civ('c1', 1, 0);
+    civ('c2', 2, 0);
+    room.state.player1ActionPoints = 3;   // 只够收 1 个
+
+    room.startDoufanPhase('player1');
+
     expect(queue().sort()).toEqual(['c1', 'c2']);
+    expect(lishiUnits()).toHaveLength(0);
+    expect(room.state.battleLog.some(l => l.includes('只够接纳 1 人'))).toBe(true);
+  });
+
+  it('顺序只在付不起的时候才可观测 —— 这正是只在那时打断的理由', () => {
+    // 够收所有人时，先收谁后收谁的结果完全一样：同样的力士、同样的 AP
+    const snap = () => ({
+      lishi: lishiUnits().map(u => `${u.q},${u.r}`).sort(),
+      ap: room.state.player1ActionPoints,
+    });
+
+    taiping('player1');
+    place('src', 'infantry', 'player1', 0, 0);
+    civ('a', 1, 0); civ('b', 2, 0); civ('c', 0, 1);
+    room.state.player1ActionPoints = 9;
+    room.startDoufanPhase('player1');
+    const auto = snap();
+
+    expect(auto.lishi).toEqual(['0,1', '1,0', '2,0']);
+    expect(auto.ap).toBe(3);
   });
 
   it('没有合格目标时不进入强制阶段', () => {
@@ -237,12 +291,15 @@ describe('阶段开始：快照', () => {
 
     room.rollDiceForPlayer('player1');
 
+    // 刷新出来的平民立刻成为本回合的征募目标。
+    // AP 够的话会当场被收掉 —— 所以判据是「场上多了一个力士、平民没了」，
+    // 顺序对调（先豆饭后刷新）或者根本没接上的话，平民会原地留着。
     const spawned = Array.from(room.state.units.values())
       .filter(u => u.statusTag === CIVILIAN_TAG);
-    expect(spawned).toHaveLength(1);
-    expect({ q: spawned[0]!.q, r: spawned[0]!.r }).toEqual({ q: 1, r: 0 });
-    // 顺序对调（先豆饭后刷新）或者根本没接上，这里都会是空队列
-    expect(queue()).toEqual([spawned[0]!.id]);
+    expect(spawned).toHaveLength(0);
+    const ls = lishiUnits();
+    expect(ls).toHaveLength(1);
+    expect({ q: ls[0]!.q, r: ls[0]!.r }).toEqual({ q: 1, r: 0 });
   });
 });
 
@@ -250,18 +307,28 @@ describe('逐个征募', () => {
   /** src 在 (0,0)，平民全部摆在距它 ≤2 的格子上，确保都进名单 */
   const NEAR: Array<[number, number]> = [[1, 0], [2, 0], [0, 1], [0, 2], [-1, 0], [-2, 0]];
 
-  function setup(n: number, ap = 20) {
+  /**
+   * 摆好局面但**不**开征募阶段，让各测试自己决定 AP。
+   *
+   * 行动点够收下所有人时阶段会自动执行完、不留队列；
+   * 不够时才留下待办。两种模式的断言完全不同，所以分开。
+   */
+  function board(n: number) {
     taiping('player1');
     place('src', 'infantry', 'player1', 0, 0);
     for (let i = 0; i < n; i++) civ(`c${i}`, NEAR[i]![0], NEAR[i]![1]);
-    room.state.player1ActionPoints = ap;
+  }
+
+  /** AP 刚好只够收 afford 人 → 留下待办队列 */
+  function setupShort(n: number, afford: number) {
+    board(n);
+    room.state.player1ActionPoints = afford * 2 + 1;
     room.startDoufanPhase('player1');
-    // 自检：所有平民都该在名单里，否则下面的断言会测到别的东西
-    expect(queue()).toHaveLength(n);
+    expect(queue()).toHaveLength(n);   // 自检：名单齐了才测得对
   }
 
   it('平民变成 2 血力士，扣 2 AP', () => {
-    setup(1, 7);
+    setupShort(2, 1);   // 2 个候选、只够收 1 个 → 有队列
     room.handleTaipingRecruit(client('player1'), { civilianId: 'c0' });
     expect(errors).toEqual([]);
     expect(room.state.units.has('c0')).toBe(false);
@@ -269,12 +336,12 @@ describe('逐个征募', () => {
     expect(ls).toHaveLength(1);
     expect(ls[0]!.hp).toBe(2);
     expect(ls[0]!.owner).toBe('player1');
-    expect(room.state.player1ActionPoints).toBe(5);
+    expect(room.state.player1ActionPoints).toBe(1);
     expect(DOUFAN_COST).toBe(2);
   });
 
   it('力士出现在原平民的格子上', () => {
-    setup(1);
+    setupShort(2, 1);
     const before = { q: room.state.units.get('c0')!.q, r: room.state.units.get('c0')!.r };
     room.handleTaipingRecruit(client('player1'), { civilianId: 'c0' });
     const l = lishiUnits()[0]!;
@@ -282,7 +349,7 @@ describe('逐个征募', () => {
   });
 
   it('新力士当回合不能行动', () => {
-    setup(1);
+    setupShort(2, 1);
     room.handleTaipingRecruit(client('player1'), { civilianId: 'c0' });
     const l = lishiUnits()[0]!;
     expect(l.actionsThisTurn).toBe(2);
@@ -291,7 +358,7 @@ describe('逐个征募', () => {
   });
 
   it('新力士立即计入天命承载量', () => {
-    setup(1);
+    setupShort(2, 1);
     room.state.player1Taiping.destiny = 0; // 承载 1
     const g = room.state.units.get('g_player1')!;
     place('old', 'huangjin_lishi', 'player1', 0, 3); // 已经有 1 个
@@ -304,7 +371,7 @@ describe('逐个征募', () => {
   });
 
   it('不占用征募源步兵的行动次数', () => {
-    setup(1);
+    setupShort(2, 1);
     const src = room.state.units.get('src')!;
     room.handleTaipingRecruit(client('player1'), { civilianId: 'c0' });
     expect(src.actionsThisTurn).toBe(0);
@@ -312,16 +379,17 @@ describe('逐个征募', () => {
     expect(src.hasAttacked).toBe(false);
   });
 
-  it('顺序由玩家决定', () => {
-    setup(3);
+  it('付不起时，选谁留下由玩家决定', () => {
+    setupShort(3, 2);
     room.handleTaipingRecruit(client('player1'), { civilianId: 'c2' });
     expect(queue().sort()).toEqual(['c0', 'c1']);
     room.handleTaipingRecruit(client('player1'), { civilianId: 'c0' });
-    expect(queue()).toEqual(['c1']);
+    expect(queue()).toEqual([]);          // 钱花完了，c1 被推回去
+    expect(room.state.units.has('c1')).toBe(true);
   });
 
   it('名单外的平民征募不了', () => {
-    setup(1);
+    setupShort(2, 1);
     civ('outsider', 5, 0);
     room.handleTaipingRecruit(client('player1'), { civilianId: 'outsider' });
     expect(errors).toEqual(['该平民不在本回合的征募名单里']);
@@ -329,7 +397,7 @@ describe('逐个征募', () => {
   });
 
   it('AP 不足 2 时自动停止，剩下的平民留在场上', () => {
-    setup(4, 7); // 7 点 → 只够征募 3 个
+    setupShort(4, 3); // 7 点 → 只够征募 3 个
     for (const id of ['c0', 'c1', 'c2']) {
       room.handleTaipingRecruit(client('player1'), { civilianId: id });
     }
@@ -341,18 +409,19 @@ describe('逐个征募', () => {
   });
 
   it('不透支：AP 停在 1 而不是变成负数', () => {
-    setup(4, 7);
+    setupShort(4, 3);
     for (const id of ['c0', 'c1', 'c2', 'c3']) {
       room.handleTaipingRecruit(client('player1'), { civilianId: id });
     }
     expect(room.state.player1ActionPoints).toBe(1);
   });
 
-  it('全部征募完后队列清空', () => {
-    setup(2);
+  it('把够得起的那几个收完后队列清空', () => {
+    setupShort(3, 2);
     room.handleTaipingRecruit(client('player1'), { civilianId: 'c0' });
     room.handleTaipingRecruit(client('player1'), { civilianId: 'c1' });
     expect(queue()).toEqual([]);
+    expect(room.state.units.has('c2')).toBe(true);   // 第三个被推回去了
   });
 
   it('新转化的力士不会扩大本次征募范围（快照语义）', () => {
@@ -360,17 +429,18 @@ describe('逐个征募', () => {
     place('src', 'infantry', 'player1', 0, 0);
     civ('near', 2, 0);   // 在 src 两格内
     civ('chain', 4, 0);  // 距 src 4 格；但距 near 只有 2 格
+    room.state.player1ActionPoints = 20;
     room.startDoufanPhase('player1');
-    expect(queue()).toEqual(['near']);
 
-    room.handleTaipingRecruit(client('player1'), { civilianId: 'near' });
-    // 新力士站在 (2,0)，chain 在它两格内 —— 但本阶段的名单已经定了
+    // AP 够，所以自动收下 near；chain 不在名单里，新力士也不会把它拉进来
     expect(queue()).toEqual([]);
+    expect(room.state.units.has('near')).toBe(false);
     expect(room.state.units.has('chain')).toBe(true);
+    expect(lishiUnits()).toHaveLength(1);
   });
 
   it('不是自己的回合时拒绝', () => {
-    setup(1);
+    setupShort(2, 1);
     room.state.currentPlayer = 'player2';
     room.handleTaipingRecruit(client('player1'), { civilianId: 'c0' });
     expect(errors).toEqual(['不是你的回合']);
@@ -378,11 +448,15 @@ describe('逐个征募', () => {
 });
 
 describe('强制：队列非空期间拦住其他指令', () => {
+  /** 两个候选、只够收一个 → 留下队列，拦截才会生效 */
   function setup() {
     taiping('player1', 0, 1);
     place('src', 'infantry', 'player1', 0, 0);
     civ('c0', 1, 0);
+    civ('c1', 2, 0);
+    room.state.player1ActionPoints = 3;
     room.startDoufanPhase('player1');
+    expect(queue()).toHaveLength(2);
   }
 
   it('移动指令被拦住，单位没有动', () => {
@@ -417,7 +491,7 @@ describe('强制：队列非空期间拦住其他指令', () => {
   it('拦截会报出还剩几名', () => {
     setup();
     send('player1', 'endTurn');
-    expect(errors[0]).toContain('还有 1 名平民等待征募');
+    expect(errors[0]).toContain('还有 2 名平民等待征募');
   });
 
   it('征募指令本身在豁免名单里，否则就死锁了', () => {
@@ -474,12 +548,18 @@ describe('双太平', () => {
     place('s2', 'infantry', 'player2', 0, -1);
     civ('shared', 0, 0); // 两边都在两格内
 
+    // 各自只够收 0 个 → 名单留着但一个也收不了，正好用来比对两边的队列
+    room.state.player1ActionPoints = 1;
+    room.state.player2ActionPoints = 1;
     room.startDoufanPhase('player1');
-    expect(Array.from(room.state.player1Taiping.pendingRecruit)).toEqual(['shared']);
-    expect(Array.from(room.state.player2Taiping.pendingRecruit)).toEqual([]);
+    expect(Array.from(room.state.player1Taiping.pendingRecruit)).toEqual([]);
 
-    room.startDoufanPhase('player2');
-    expect(Array.from(room.state.player2Taiping.pendingRecruit)).toEqual(['shared']);
+    // 换成「够收 0 个之外、不够收全部」的局面才留队列：这里给 player1 两个候选
+    civ('second', 0, 2);
+    room.state.player1ActionPoints = 3;
+    room.startDoufanPhase('player1');
+    expect(Array.from(room.state.player1Taiping.pendingRecruit).sort()).toEqual(['second', 'shared']);
+    expect(Array.from(room.state.player2Taiping.pendingRecruit)).toEqual([]);
   });
 
   it('被一方征募掉之后，另一方的名单里就没了', () => {

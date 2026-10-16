@@ -193,6 +193,39 @@ class ColyseusService {
       toast.success(data.message, '对手已重连');
     });
 
+    /* ── 太平：这几件事都「发生在玩家身上」，不是他操作的结果 ──
+     *
+     * 强制豆饭够付时服务端会自动执行完，不打断玩家。但它吃掉的行动点很可观，
+     * 只写进战报玩家会以为自己的骰子投小了 —— 所以必须有一个当面的提示。
+     * 这正是「被不断膨胀的队伍拖垮」要让人感觉到的东西。
+     */
+    this.room.onMessage('doufanAuto', (data: { by: string; count: number }) => {
+      if (data.by !== this.myPlayerRole) return;
+      toast.warn(`${data.count} 名流民加入黄巾军，耗去 ${data.count * 2} 点行动值`, '豆饭');
+    });
+
+    // 起义：将领倒下的那一瞬间，全部力士同时失去信仰
+    this.room.onMessage('qiyi', (data: { by: string; count: number }) => {
+      const mine = data.by === this.myPlayerRole;
+      toast.warn(
+        `${data.count} 名黄巾力士失去信仰，化为黄巾贼`,
+        mine ? '苍天已死' : '敌方黄巾哗变'
+      );
+    });
+
+    this.room.onMessage('huangtianDeclared', (data: { by: string }) => {
+      const mine = data.by === this.myPlayerRole;
+      toast.warn(
+        mine ? '撑过对手这一回合即可取胜' : '对方宣告黄天当立 —— 你只有这一个回合反制',
+        '黄天当立'
+      );
+    });
+
+    this.room.onMessage('huangtianCancelled', (data: { by: string; reason: string }) => {
+      const mine = data.by === this.myPlayerRole;
+      toast.info(`${mine ? '你的' : '对方的'}黄天当立宣告失效（${data.reason}）`, '宣告失效');
+    });
+
     // 监听游戏结束：交给结算画面，不再用 alert
     this.room.onMessage('gameEnd', (data: { winner: string; message: string }) => {
       console.log('🏆 游戏结束:', data.message);

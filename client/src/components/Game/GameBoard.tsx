@@ -2990,14 +2990,16 @@ export const GameBoard: React.FC = () => {
         return (
           <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
             <div className="rounded-lg p-6 max-w-sm w-full mx-4" style={{ background: 'linear-gradient(180deg, rgba(26,10,0,0.98) 0%, rgba(13,5,0,0.99) 100%)', border: '1px solid rgba(201,162,39,0.3)', boxShadow: '0 0 40px rgba(201,162,39,0.1)' }}>
+              {/* 这个框只在「付不起全部」时出现 —— 行动点够收下所有人时服务端
+                * 已经自动执行完了。所以它的语气不是「请操作」，而是
+                * 「你得把一部分人推回去」：这是整个角色最该被看见的一刻。 */}
               <h3 className="font-ancient text-xl tracking-widest mb-1" style={{ color: '#C9A227' }}>豆饭</h3>
-              <p className="text-sm font-chinese mb-4" style={{ color: 'rgba(245,230,200,0.7)' }}>
-                两格内的流民必须接受征募，每人 <span className="font-bold" style={{ color: '#E8C84A' }}>2</span> 点行动值。
-                <br/>
-                顺序由你决定；行动点不足时自动停止。
-                <br/>
-                剩余行动点 <span className="font-bold" style={{ color: '#E8C84A' }}>{currentActionPoints}</span>
-                （还能征募 {affordable} 人 / 待征募 {tp.pendingRecruit.length} 人）
+              <p className="text-sm font-chinese mb-1" style={{ color: 'rgba(245,230,200,0.85)' }}>
+                {tp.pendingRecruit.length} 名流民跪在军前，你只够接纳{' '}
+                <span className="font-bold text-lg" style={{ color: '#E8C84A' }}>{affordable}</span> 人。
+              </p>
+              <p className="text-xs font-chinese mb-4" style={{ color: 'rgba(201,162,39,0.5)' }}>
+                每人 2 点行动值（剩余 {currentActionPoints} 点）。选谁留下 —— 其余的会散去。
               </p>
 
               <div className="space-y-2 max-h-48 overflow-y-auto">
@@ -3015,7 +3017,7 @@ export const GameBoard: React.FC = () => {
                         color: '#E8C84A',
                       }}
                     >
-                      征募平民 ({u.position.q}, {u.position.r})
+                      收下 ({u.position.q}, {u.position.r}) 的流民
                     </button>
                   );
                 })}

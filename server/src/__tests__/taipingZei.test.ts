@@ -167,9 +167,13 @@ describe('起义转化', () => {
   it('未完成的豆饭征募随太平阵亡而中止', () => {
     const g = taiping('player1', 0, 1);
     place('src', 'infantry', 'player1', 0, 0);
+    // 两个候选、只够收一个 → 才会留下待办队列
+    // （够收所有人时阶段会自动执行完，没有「未完成」可言）
     place('c1', 'neutral_marker', 'neutral', 1, 0, { hp: 1, maxHp: 1, statusTag: CIVILIAN_TAG });
+    place('c2', 'neutral_marker', 'neutral', 2, 0, { hp: 1, maxHp: 1, statusTag: CIVILIAN_TAG });
+    room.state.player1ActionPoints = 3;
     room.startDoufanPhase('player1');
-    expect(room.state.player1Taiping.pendingRecruit.length).toBe(1);
+    expect(room.state.player1Taiping.pendingRecruit.length).toBe(2);
 
     room.killUnit(g);
     expect(room.state.player1Taiping.pendingRecruit.length).toBe(0);

@@ -4111,15 +4111,48 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     const targets = Rules.getDoufanTargets(this.unitList, role);
     if (targets.length === 0) return;
 
-    targets.forEach(id => tp.pendingRecruit.push(id));
-
+    const ap = role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints;
+    const affordable = Math.floor(ap / Rules.DOUFAN_COST);
     const who = role === "player1" ? "玩家1" : "玩家2";
+
+    /**
+     * 行动点够收下所有人时**自动执行**，不问玩家。
+     *
+     * 规则说「太平玩家选择转化顺序」，但顺序只在一种情况下可观测：
+     * 付不起全部。快照是固定的、每人固定 2 点、转化之间互不影响位置
+     * —— 所以 AP ≥ 2×人数 时，先收谁后收谁的结果完全一样。
+     *
+     * 那种情况下弹框要玩家点 N 次，改变不了任何事，只是把
+     * 「队伍自己膨胀」变成了「你亲手在膨胀队伍」—— 手感正好拧反了。
+     * 这是被迫承担的负担，应该像天气一样发生在玩家身上。
+     */
+    if (affordable >= targets.length) {
+      const born: string[] = [];
+      for (const id of targets) {
+        const civ = this.state.units.get(id);
+        if (!civ) continue;
+        born.push(this.recruitCivilian(role, civ).id);
+      }
+      this.addBattleLog(
+        `流民涌来：${born.length} 人加入${who}的黄巾军`
+        + `（耗去 ${born.length * Rules.DOUFAN_COST} 点行动值，剩余 ${
+          role === "player1" ? this.state.player1ActionPoints : this.state.player2ActionPoints
+        } 点）`
+      );
+      this.broadcast("doufanAuto", { by: role, count: born.length, ids: born });
+      return;
+    }
+
+    /**
+     * 付不起全部 —— 这才是真正的决策，也是这个角色最该被看见的一刻：
+     * 得把一部分百姓推回去。所以只在这时候才打断玩家。
+     */
+    targets.forEach(id => tp.pendingRecruit.push(id));
     this.addBattleLog(
-      `强制豆饭：${targets.length} 名平民在征募范围内，每人 ${Rules.DOUFAN_COST} 点行动值`
-      + `（${who}自行决定顺序）`
+      `流民涌来 ${targets.length} 人，但${who}只够接纳 ${affordable} 人 —— 得选谁留下`
     );
 
-    // 本来就付不起的话立刻放行，别把玩家锁在一个做不了的阶段里
+    // 一个都付不起：没得选，直接放行
     this.maybeEndDoufanPhase(role);
   }
 
@@ -4178,6 +4211,24 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       client.send("error", { message: "行动点不足" });
       return;
     }
+    this.recruitCivilian(role, civ);
+    tp.pendingRecruit.splice(idx, 1);
+
+    const who = role === "player1" ? "玩家1" : "玩家2";
+    this.addBattleLog(
+      `${who}只收下了平民${civ.id}（还剩 ${tp.pendingRecruit.length} 人等在外面）`
+    );
+
+    this.maybeEndDoufanPhase(role);
+  }
+
+  /**
+   * 征募一名平民为黄巾力士：扣 AP、平民离场、原格生出 2 血力士。
+   *
+   * 自动执行（AP 够收下所有人）和玩家逐个选择（AP 不够）共用这一段，
+   * 所以两条路径不可能产生不同的结果。
+   */
+  private recruitCivilian(role: "player1" | "player2", civ: UnitSchema): UnitSchema {
     if (role === "player1") {
       this.state.player1ActionPoints -= Rules.DOUFAN_COST;
     } else {
@@ -4203,16 +4254,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     lishi.hasAttacked = true;
     lishi.hasActedThisTurn = true;
     this.state.units.set(lishi.id, lishi);
-
-    tp.pendingRecruit.splice(idx, 1);
-
-    const who = role === "player1" ? "玩家1" : "玩家2";
-    this.addBattleLog(
-      `${who}以豆饭征募平民${civ.id}，成为黄巾力士${lishi.id}`
-      + `（剩余 ${tp.pendingRecruit.length} 名待征募）`
-    );
-
-    this.maybeEndDoufanPhase(role);
+    return lishi;
   }
 
   /**

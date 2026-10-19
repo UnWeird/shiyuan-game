@@ -63,6 +63,11 @@ export interface MachineUnit extends Unit {
   hasActedThisTurn?: boolean;     // 机关单位：本回合是否已行动（移动或攻击）
   chargeLevel?: number;           // 投石车：蓄力层数（0/1/2）
   hasCharged?: boolean;           // 投石车：本回合是否已蓄力（每种行动一回合一次）
+  /**
+   * 部署时的阵营。决定车身朝向，被仁德招降后不变 ——
+   * 弩车和投石车的 V 形是镜像而不是平移，跟着 owner 翻会把车身挪到另一组格子上。
+   */
+  deployedBy?: string;
 }
 
 /**

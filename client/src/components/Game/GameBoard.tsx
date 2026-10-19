@@ -49,6 +49,16 @@ const getMachineTypeStr = (unitType: UnitType): 'ballista' | 'chariot' | 'catapu
   return null;
 };
 
+/**
+ * 机关车身朝向用**部署时**的阵营，不是当前归属。
+ *
+ * 必须和服务端的 occupiedHexesOf 用同一个判据，否则被仁德招降过的机关
+ * 会画在一组格子上、而碰撞判定按另一组算。弩车和投石车的 V 形是镜像
+ * 不是平移，换核心对不齐，所以车身在部署时就冻结了（见 deployedBy）。
+ */
+const machineBodyIsP1 = (u: { owner: string; deployedBy?: string }): boolean =>
+  ((u.deployedBy || u.owner) as Player) === Player.PLAYER1;
+
 export const GameBoard: React.FC = () => {
   const {
     phase,
@@ -181,7 +191,7 @@ export const GameBoard: React.FC = () => {
         hexes: getMachineOccupiedHexes(
           u.position,
           getMachineTypeStr(u.type)!,
-          u.owner === Player.PLAYER1
+          machineBodyIsP1(u)
         ),
         side: (u.owner === Player.PLAYER1 ? 'p1' : 'p2') as 'p1' | 'p2',
       })),
@@ -304,7 +314,7 @@ export const GameBoard: React.FC = () => {
 
         if (isMachineUnit(u.type)) {
           const machineType = getMachineTypeStr(u.type)!;
-          const isPlayerOne = u.owner === Player.PLAYER1;
+          const isPlayerOne = machineBodyIsP1(u);
           const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
           const isAdjacent = occupiedHexes.some(hex =>
             adjacentHexes.some(adjHex => hexEquals(adjHex, hex))
@@ -475,7 +485,7 @@ export const GameBoard: React.FC = () => {
     // 如果是机关单位，高亮其所有占用的格子
     if (isMachineUnit(unit.type)) {
       const machineTypeStr = getMachineTypeStr(unit.type)!;
-      const isPlayerOne = unit.owner === Player.PLAYER1;
+      const isPlayerOne = machineBodyIsP1(unit);
       const occupiedHexes = getMachineOccupiedHexes(unit.position, machineTypeStr, isPlayerOne);
       // 排除中心位置，只高亮额外占用的格子
       setHighlightedHexes(occupiedHexes.slice(1));
@@ -535,7 +545,7 @@ export const GameBoard: React.FC = () => {
         // 检查是否是机关单位
         if (isMachineUnit(u.type)) {
           const machineType = getMachineTypeStr(u.type)!;
-          const isPlayerOne = u.owner === Player.PLAYER1;
+          const isPlayerOne = machineBodyIsP1(u);
           const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
           return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
         }
@@ -606,7 +616,7 @@ export const GameBoard: React.FC = () => {
         // 检查是否是机关单位
         if (isMachineUnit(u.type)) {
           const machineType = getMachineTypeStr(u.type)!;
-          const isPlayerOne = u.owner === Player.PLAYER1;
+          const isPlayerOne = machineBodyIsP1(u);
           const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
           return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
         }
@@ -647,7 +657,7 @@ export const GameBoard: React.FC = () => {
       // 弩车：根据点击位置判断使用贯穿攻击还是近战攻击
       if (selectedUnit.type === UnitType.BALLISTA) {
         // 检查点击位置是否与弩车的任意占用格子相邻（近战范围）
-        const ballistaOccupiedHexes = getMachineOccupiedHexes(selectedUnit.position, 'ballista');
+        const ballistaOccupiedHexes = getMachineOccupiedHexes(selectedUnit.position, 'ballista', machineBodyIsP1(selectedUnit));
         const isAdjacentToClick = ballistaOccupiedHexes.some(ballistaHex =>
           hexDistance(ballistaHex, hex) === 1
         );
@@ -660,7 +670,7 @@ export const GameBoard: React.FC = () => {
             // 检查是否是机关单位
             if (isMachineUnit(u.type)) {
               const machineType = getMachineTypeStr(u.type)!;
-              const isPlayerOne = u.owner === Player.PLAYER1;
+              const isPlayerOne = machineBodyIsP1(u);
               const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
               return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
             }
@@ -696,7 +706,7 @@ export const GameBoard: React.FC = () => {
           // 检查是否是机关单位
           if (isMachineUnit(u.type)) {
             const machineType = getMachineTypeStr(u.type)!;
-            const isPlayerOne = u.owner === Player.PLAYER1;
+            const isPlayerOne = machineBodyIsP1(u);
             const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
             return occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex));
           }
@@ -769,7 +779,7 @@ export const GameBoard: React.FC = () => {
           // 检查是否是机关单位
           if (isMachineUnit(u.type)) {
             const machineType = getMachineTypeStr(u.type)!;
-            const isPlayerOne = u.owner === Player.PLAYER1;
+            const isPlayerOne = machineBodyIsP1(u);
             const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
 
             // 如果机关单位的任意占据格子与相邻格子重合，高亮机关单位的核心位置（主要棋子）
@@ -884,7 +894,7 @@ export const GameBoard: React.FC = () => {
           if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT) {
             const machineType = u.type === UnitType.BALLISTA ? 'ballista' :
                                u.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
-            const isPlayerOne = u.owner === Player.PLAYER1;
+            const isPlayerOne = machineBodyIsP1(u);
             const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
             blockedPositions.push(...occupiedHexes);
           } else {
@@ -908,7 +918,7 @@ export const GameBoard: React.FC = () => {
           if (u.type === UnitType.BALLISTA || u.type === UnitType.CHARIOT || u.type === UnitType.CATAPULT) {
             const machineType = u.type === UnitType.BALLISTA ? 'ballista' :
                                u.type === UnitType.CHARIOT ? 'chariot' : 'catapult';
-            const isPlayerOne = u.owner === Player.PLAYER1;
+            const isPlayerOne = machineBodyIsP1(u);
             const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
             blockedPositions.push(...occupiedHexes);
           } else {
@@ -1927,7 +1937,7 @@ export const GameBoard: React.FC = () => {
                         onClick={() => {
                           if (!selectedUnit) return;
                           // 近战攻击：获取弩车所有占用格子的相邻格子
-                          const ballistaOccupiedHexes = getMachineOccupiedHexes(selectedUnit.position, 'ballista');
+                          const ballistaOccupiedHexes = getMachineOccupiedHexes(selectedUnit.position, 'ballista', machineBodyIsP1(selectedUnit));
                           const allNeighbors: HexCoord[] = [];
 
                           // 获取所有占用格子的相邻格子（去重）
@@ -1954,7 +1964,7 @@ export const GameBoard: React.FC = () => {
                               // 检查机关单位的占用格子
                               if (isMachineUnit(u.type)) {
                                 const machineType = getMachineTypeStr(u.type)!;
-                                const isPlayerOne = u.owner === Player.PLAYER1;
+                                const isPlayerOne = machineBodyIsP1(u);
                                 const occupiedHexes = getMachineOccupiedHexes(u.position, machineType, isPlayerOne);
                                 return occupiedHexes.some(hex => hexEquals(hex, neighborHex));
                               }
@@ -2656,7 +2666,7 @@ export const GameBoard: React.FC = () => {
                             onClick={() => handleStartDeploy(UnitType.CHARIOT)}
                             disabled={!isMyTurn || currentActionPoints < 4}
                           >
-                            战车 (4步) - 4点 {!isMyTurn ? '(非你的回合)' : ''}
+                            战车 (6步) - 4点 {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
                           <button
  className="btn-sy btn-sy-bronze w-full px-4 py-2 rounded-lg text-sm font-bold"
@@ -3127,7 +3137,7 @@ export const GameBoard: React.FC = () => {
                   let requiredPoints = 1;
                   if (isMachineUnit(rendeKillConfirm.target.type)) {
                     const machineType = getMachineTypeStr(rendeKillConfirm.target.type)!;
-                    const isPlayerOne = rendeKillConfirm.target.owner === Player.PLAYER1;
+                    const isPlayerOne = machineBodyIsP1(rendeKillConfirm.target);
                     const occupiedHexes = getMachineOccupiedHexes(rendeKillConfirm.target.position, machineType, isPlayerOne);
                     requiredPoints = occupiedHexes.length;
                   }
@@ -3139,7 +3149,7 @@ export const GameBoard: React.FC = () => {
                   let requiredPoints = 1;
                   if (isMachineUnit(rendeKillConfirm.target.type)) {
                     const machineType = getMachineTypeStr(rendeKillConfirm.target.type)!;
-                    const isPlayerOne = rendeKillConfirm.target.owner === Player.PLAYER1;
+                    const isPlayerOne = machineBodyIsP1(rendeKillConfirm.target);
                     const occupiedHexes = getMachineOccupiedHexes(rendeKillConfirm.target.position, machineType, isPlayerOne);
                     requiredPoints = occupiedHexes.length;
                   }

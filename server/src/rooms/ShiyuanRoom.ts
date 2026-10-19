@@ -1763,9 +1763,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 检查单位是否触碰到敌方大本营（游戏胜利）
     let reachedBase = false;
 
-    if (unit.type === 'ballista' || unit.type === 'chariot') {
-      const machineType = unit.type === 'ballista' ? 'ballista' : 'chariot';
-      const occupiedHexes = getMachineOccupiedHexes({ q: unit.q, r: unit.r, s: unit.s }, machineType);
+    if (unit.type === 'ballista' || unit.type === 'chariot' || unit.type === 'catapult') {
+      // 投石车原来不在这张名单里：它的车身压到敌方大本营上不算夺营
+      const occupiedHexes = Rules.occupiedHexesOf(unit as unknown as Rules.UnitLike);
       console.log(`[DEBUG checkVictoryCondition] 机关单位占用格子:`, occupiedHexes);
       reachedBase = occupiedHexes.some(hex => hexEquals(hex, enemyBase));
     } else {
@@ -2239,10 +2239,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       const unit = Array.from(this.state.units.values()).find(u => {
         if (u.id === ballista.id || hitUnitsIds.has(u.id)) return false;
 
-        // 检查是否是机关单位
-        if (u.type === 'ballista' || u.type === 'chariot') {
-          const machineType = u.type === 'ballista' ? 'ballista' : 'chariot';
-          const occupiedHexes = getMachineOccupiedHexes({ q: u.q, r: u.r, s: u.s }, machineType);
+        // 检查是否是机关单位（投石车原来不在名单里，弩箭穿不到它的车身）
+        if (u.type === 'ballista' || u.type === 'chariot' || u.type === 'catapult') {
+          const occupiedHexes = Rules.occupiedHexesOf(u as unknown as Rules.UnitLike);
           return occupiedHexes.some(hex => hexEquals(hex, hexPos));
         }
 
@@ -2307,10 +2306,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       if (u.id === firstTarget.id) return false;
 
       // 检查是否是机关单位
-      if (u.type === 'ballista' || u.type === 'chariot') {
-        const machineType = u.type === 'ballista' ? 'ballista' : 'chariot';
-        const unitIsPlayerOne = u.owner === 'player1';
-        const occupiedHexes = getMachineOccupiedHexes({ q: u.q, r: u.r, s: u.s }, machineType, unitIsPlayerOne);
+      if (u.type === 'ballista' || u.type === 'chariot' || u.type === 'catapult') {
+        const occupiedHexes = Rules.occupiedHexesOf(u as unknown as Rules.UnitLike);
         return occupiedHexes.some(hex => hexEquals(hex, knockbackPos));
       }
 
@@ -3285,7 +3282,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 用表驱动之后，下一个新机关要么在表里、要么编译不过。
     const MACHINE_SPECS = {
       ballista: { points: 5, infantry: 4, archer: 1, name: '弩车',   troops: '4步兵+1弓箭手' },
-      chariot:  { points: 4, infantry: 4, archer: 0, name: '战车',   troops: '4步兵' },
+      // 战车 0.6 元 = 6 个一角：4 个站在场上（菱形占 4 格），
+      // 另 2 个压在车里，崩解时爆出来的那两个满血步兵就是它们
+      //（handleChariotDeath 生成时不再扣库存，等于这里预付过了）。
+      // 原来这里写的是 4，和 getUnitValue 的 0.6、GAMEPLAY 的 0.6 元
+      // 以及战报里的「6步兵」三处都对不上 —— 只有这个数是错的。
+      chariot:  { points: 4, infantry: 6, archer: 0, name: '战车',   troops: '6步兵' },
       catapult: { points: 3, infantry: 2, archer: 1, name: '投石车', troops: '2步兵+1弓箭手' },
     } as const;
     const spec = MACHINE_SPECS[data.machineType];
@@ -3386,6 +3388,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     machine.killCount = 0;
     machine.pierceCount = 0;
     machine.hasActedThisTurn = false;
+    // 车身朝向就此冻结：之后被仁德招降也不会把车身翻到另一组格子上
+    machine.deployedBy = role;
 
     // 添加到地图
     this.state.units.set(machine.id, machine);
@@ -3506,9 +3510,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       // 检查是否是机关单位
       if (u.type === 'ballista' || u.type === 'chariot' || u.type === 'catapult') {
-        const machineType = u.type === 'ballista' ? 'ballista' : u.type === 'catapult' ? 'catapult' : 'chariot';
-        const isPlayerOne = u.owner === 'player1';
-        const occupiedHexes = getMachineOccupiedHexes({ q: u.q, r: u.r, s: u.s }, machineType, isPlayerOne);
+        const occupiedHexes = Rules.occupiedHexesOf(u as unknown as Rules.UnitLike);
         return occupiedHexes.some(hex =>
           neighbors.some(neighbor => hexEquals(neighbor, hex))
         );
@@ -3550,7 +3552,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       // 直接改变单位的所有者为仁德所属阵营
       enemy.owner = role;
 
-      // 机关单位需要翻转方向（因为它们不是中心对称的）
+      // 翻转的是**射击朝向**，不是车身。
+      //
+      // 车身几何由 deployedBy 冻结（见 GameState.ts）：机器被俘获时没人把它
+      // 拆了重砌，体积不该变。而射击朝向必须翻，否则捞来一台弩车只会
+      // 朝自己这边放箭 —— 它固定朝向、不能转向，没法自己调回来。
       //
       // 弩车用 NORTH(6)/SOUTH(7)，投石车**不能** —— 6/7 不是 HEX_DIRECTIONS
       // 的下标（只有 6 项），而投石车的射击走 getShootingPath → hexNeighbor，

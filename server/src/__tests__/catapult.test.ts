@@ -126,7 +126,7 @@ describe('部署费用与库存', () => {
     expect(room.state.player1ConsumedInfantry).toBe(0);
   });
 
-  it('弩车和战车的造价不变（5 点 / 4 点）', () => {
+  it('弩车 5 点 + 4步1弓；战车 4 点 + 6 步', () => {
     shenji('player1', 3, 0); // 挪开，免得挡住下面两台机关的车身格
     const before = ap('player1');
     send('player1', 'shenjiDeployMachine', { machineType: 'ballista', position: { q: -3, r: 4, s: -1 } });
@@ -135,13 +135,30 @@ describe('部署费用与库存', () => {
     expect(room.state.player1ConsumedInfantry).toBe(4);
     expect(room.state.player1ConsumedArcher).toBe(1);
 
+    // 战车 0.6 元 = 6 个一角：4 个在场上占格，另 2 个压在车里，
+    // 崩解时爆出来的那两个步兵就是它们。原来这里只扣 4，和 getUnitValue
+    // 的 0.6、GAMEPLAY 的 0.6 元、战报里的「6步兵」三处都对不上
     const mid = ap('player1');
     send('player1', 'shenjiDeployMachine', { machineType: 'chariot', position: { q: 0, r: 4, s: -4 } });
     expect(errors).toEqual([]);
     expect(mid - ap('player1')).toBe(4);
-    expect(room.state.player1ConsumedInfantry).toBe(8);
+    expect(room.state.player1ConsumedInfantry).toBe(4 + 6);
     // 战车不吃弓箭手库存
     expect(room.state.player1ConsumedArcher).toBe(1);
+  });
+
+  it('战车崩解生成的 2 个步兵不再另扣库存（已经预付在 6 个一角里）', () => {
+    shenji('player1', 3, 0);
+    send('player1', 'shenjiDeployMachine', { machineType: 'chariot', position: { q: 0, r: 4, s: -4 } });
+    expect(room.state.player1ConsumedInfantry).toBe(6);
+
+    const chariot = Array.from(room.state.units.values()).find(u => u.type === 'chariot')!;
+    const before = room.state.player1ConsumedInfantry;
+    (room as unknown as { handleChariotDeath: (c: unknown) => void }).handleChariotDeath(chariot);
+
+    expect(room.state.player1ConsumedInfantry).toBe(before);
+    const infantry = Array.from(room.state.units.values()).filter(u => u.type === 'infantry' && u.owner === 'player1');
+    expect(infantry).toHaveLength(2);
   });
 });
 
@@ -355,6 +372,64 @@ describe('仁德招降投石车', () => {
     expect(cat.direction).toBeLessThan(6);
     expect(() => getShootingPath({ q: cat.q, r: cat.r, s: cat.s }, cat.direction, 5)).not.toThrow();
     expect(() => room.buildValidActions('player1')).not.toThrow();
+  });
+});
+
+describe('车身朝向在部署时冻结', () => {
+  /**
+   * 弩车和投石车的 V 形在六边形网格里是**镜像**而不是平移：
+   * 玩家1 的投石车是核心 + 上方两格，玩家2 是核心 + 下方两格，
+   * 换任何核心都对不齐（±3 范围穷举确认过）。
+   * 所以车身一旦跟着 owner 变，招降就会把它原地翻到另一组格子上。
+   */
+  it.each(['ballista', 'catapult'] as const)('%s：招降换了归属，车身占格不变', (type) => {
+    const m = place('m', type, 'player2', 0, 0, { hp: 4, maxHp: 4, deployedBy: 'player2' });
+    const before = occupiedHexesOf(m as unknown as UnitLike);
+
+    m.owner = 'player1'; // 招降
+
+    const after = occupiedHexesOf(m as unknown as UnitLike);
+    const key = (hs: { q: number; r: number }[]) => hs.map(h => `${h.q},${h.r}`).sort().join('|');
+    expect(key(after)).toBe(key(before));
+  });
+
+  it('战车是菱形，形状本来就与归属无关', () => {
+    const ch = place('ch', 'chariot', 'player2', 0, 0, { hp: 4, maxHp: 4, deployedBy: 'player2' });
+    const key = (hs: { q: number; r: number }[]) => hs.map(h => `${h.q},${h.r}`).sort().join('|');
+    const before = key(occupiedHexesOf(ch as unknown as UnitLike));
+    ch.owner = 'player1';
+    expect(key(occupiedHexesOf(ch as unknown as UnitLike))).toBe(before);
+  });
+
+  it('deployedBy 为空时回退到当前 owner（测试夹具与老单位）', () => {
+    const a = place('a', 'catapult', 'player1', 0, 0, { hp: 4, maxHp: 4 });
+    const b = place('b', 'catapult', 'player1', 2, 0, { hp: 4, maxHp: 4, deployedBy: 'player1' });
+    const rel = (u: UnitSchema) => occupiedHexesOf(u as unknown as UnitLike)
+      .map(h => `${h.q - u.q},${h.r - u.r}`).sort().join('|');
+    expect(rel(a)).toBe(rel(b));
+  });
+
+  it('部署时写入 deployedBy', () => {
+    shenji();
+    send('player1', 'shenjiDeployMachine', { machineType: 'catapult', position: { q: -2, r: 4, s: -2 } });
+    expect(errors).toEqual([]);
+    const cat = Array.from(room.state.units.values()).find(u => u.type === 'catapult')!;
+    expect(cat.deployedBy).toBe('player1');
+  });
+
+  it('招降后射击朝向仍然翻转（否则捞来的弩车只会朝自己放箭）', () => {
+    room.state.player1General = 'rende';
+    place('rende', 'general', 'player1', 0, 0, { generalType: 'rende', hp: 4, maxHp: 4 });
+    const ball = place('ball', 'ballista', 'player2', 1, 0, {
+      hp: 4, maxHp: 4, direction: 7, deployedBy: 'player2',
+    });
+
+    send('player1', 'rendeConvertAdjacent', {});
+
+    expect(errors).toEqual([]);
+    expect(ball.owner).toBe('player1');
+    expect(ball.direction).toBe(6);       // 射击朝向翻了
+    expect(ball.deployedBy).toBe('player2'); // 车身没翻
   });
 });
 

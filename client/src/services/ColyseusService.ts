@@ -385,6 +385,7 @@ class ColyseusService {
             hasActedThisTurn: unit.hasActedThisTurn,
             chargeLevel: unit.chargeLevel, // 投石车蓄力层数
             hasCharged: unit.hasCharged,   // 投石车本回合是否已蓄力
+            deployedBy: unit.deployedBy,   // 车身朝向的依据（招降后不变）
           });
         }
       });

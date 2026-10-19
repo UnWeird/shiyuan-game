@@ -93,6 +93,26 @@ export interface UnitLike {
    * 主动移动一次即充满。
    */
   charged: boolean;
+  /**
+   * 机关部署时的阵营。决定车身朝向，招降不改它。
+   * 空字符串 = 未记录，回退到当前 owner（测试夹具和老存档）。
+   */
+  deployedBy?: string;
+}
+
+/**
+ * 机关的车身朝向取**部署时**的阵营，不是当前归属。
+ *
+ * 弩车和投石车的 V 形在六边形网格里是镜像而不是平移：玩家1 的投石车是
+ * 核心 + 上方两格，玩家2 是核心 + 下方两格，换任何核心都对不齐
+ *（±3 范围穷举确认过）。所以一旦车身跟着 owner 变，仁德招降就会把
+ * 车身原地翻到另一组格子，可能压进已占格或伸出棋盘 —— 而机器被俘获时
+ * 并没有人把它拆了重砌，体积本就不该变。
+ *
+ * 战车是菱形，形状与阵营无关，这条对它没有影响。
+ */
+function bodyAsPlayerOne(unit: UnitLike): boolean {
+  return (unit.deployedBy || unit.owner) === 'player1';
 }
 
 /** 单位占据的格子：机关占多格，其余就是自己那一格 */
@@ -102,7 +122,7 @@ export function occupiedHexesOf(unit: UnitLike): HexCoord[] {
     return getMachineOccupiedHexes(
       pos,
       unit.type as 'ballista' | 'chariot' | 'catapult',
-      unit.owner === 'player1'
+      bodyAsPlayerOne(unit)
     );
   }
   return [pos];
@@ -265,14 +285,10 @@ units: readonly UnitLike[]
   const attackerPos = { q: attacker.q, r: attacker.r, s: attacker.s };
   const targetPos   = { q: target.q,   r: target.r,   s: target.s   };
 
-  // 机关单位占多格，用体积间的最小距离判定
-  const attackerHexes = (attacker.type === 'ballista' || attacker.type === 'chariot' || attacker.type === 'catapult')
-    ? getMachineOccupiedHexes(attackerPos, attacker.type as 'ballista' | 'chariot' | 'catapult', attacker.owner === 'player1')
-    : [attackerPos];
-
-  const targetHexes = (target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult')
-    ? getMachineOccupiedHexes(targetPos, target.type as 'ballista' | 'chariot' | 'catapult', target.owner === 'player1')
-    : [targetPos];
+  // 机关单位占多格，用体积间的最小距离判定。
+  // 一律走 occupiedHexesOf —— 它是唯一一处正确处理三种机关和车身朝向的实现
+  const attackerHexes = occupiedHexesOf(attacker);
+  const targetHexes = occupiedHexesOf(target);
 
   let minBodyDist = Infinity;
   for (const a of attackerHexes) {
@@ -716,8 +732,10 @@ export function getValidMoves(unit: UnitLike, units: readonly UnitLike[]): { q: 
     return possibleMoves.filter(hex => {
       if (hexEquals(hex, unitPos)) return false;
 
-      // 检查目标位置及其占用的所有格子
-      const targetOccupiedHexes = getMachineOccupiedHexes(hex, 'ballista');
+      // 检查目标位置及其占用的所有格子。
+      // 第三个参数以前没传，默认按玩家1 的形状算 —— 玩家2 的弩车
+      // 落点判定用的是镜像反了的车身，查错了格子
+      const targetOccupiedHexes = getMachineOccupiedHexes(hex, 'ballista', bodyAsPlayerOne(unit));
 
       // 检查是否有任何格子被占用
       const hasCollision = targetOccupiedHexes.some(occupiedHex => {
@@ -759,7 +777,7 @@ export function getValidMoves(unit: UnitLike, units: readonly UnitLike[]): { q: 
       // 整个车身都必须在棋盘内，和战车/弩车分支一致。
       // 只查中心格的话，会有落点让投石车的车身伸出棋盘一格
       //（全地图统计：480 个落点里 60 个属于这种），那一格画不出来也打不到。
-      const bodyInMap = getMachineOccupiedHexes(hex, 'catapult', unit.owner === 'player1')
+      const bodyInMap = getMachineOccupiedHexes(hex, 'catapult', bodyAsPlayerOne(unit))
         .every(h => isInMapRange(h, MAP_RADIUS));
 
       return !occupied && bodyInMap;

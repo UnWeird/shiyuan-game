@@ -530,22 +530,34 @@ describe('投石车溅射 getCatapultSplashTargets', () => {
     expect(hexDistance(attacker, t[0])).toBeGreaterThan(hexDistance(attacker, target));
   });
 
-  it('蓄力 1 层和 2 层 —— 目标背后 120° 扇形 3 格', () => {
-    for (const charge of [1, 2]) {
-      const t = getCatapultSplashTargets(attacker, target, charge, MAP_RADIUS);
-      expect(t, `蓄力 ${charge} 层`).toHaveLength(3);
-      expect(keys(t).size, `蓄力 ${charge} 层不应有重复`).toBe(3);
-      for (const h of t) {
-        expect(hexDistance(target, h)).toBe(1);
-      }
+  it('蓄力 1 层 —— 目标背后 120° 扇形 3 格', () => {
+    const t = getCatapultSplashTargets(attacker, target, 1, MAP_RADIUS);
+    expect(t).toHaveLength(3);
+    expect(keys(t).size, '不应有重复').toBe(3);
+    for (const h of t) {
+      expect(hexDistance(target, h)).toBe(1);
     }
   });
 
+  it('蓄力 2 层 —— 目标周围 360° 6 格', () => {
+    // 三档形状必须真的不一样。1 层和 2 层原来共用一个分支（都是扇形 3 格），
+    // 等于 2 层白蓄，0/1/2 三档退化成两档。
+    const t = getCatapultSplashTargets(attacker, target, 2, MAP_RADIUS);
+    expect(t).toHaveLength(6);
+    expect(keys(t).size, '不应有重复').toBe(6);
+    for (const h of t) {
+      expect(hexDistance(target, h)).toBe(1);
+    }
+    // 2 层不看朝向，所以连攻击者这一侧的格子也在内
+    const towardAttacker = t.filter(h => hexDistance(attacker, h) < hexDistance(attacker, target));
+    expect(towardAttacker.length).toBeGreaterThan(0);
+  });
+
   it('溅射格全部在地图内；贴边时数量减少', () => {
-    // 目标已在东侧边缘，背后的扇形有格子出界
+    // 目标已在东侧边缘，周围有格子出界
     const edgeTarget = H(5, 0);
     const t = getCatapultSplashTargets(ORIGIN, edgeTarget, 2, MAP_RADIUS);
-    expect(t.length).toBeLessThan(3);
+    expect(t.length).toBeLessThan(6);
     for (const h of t) {
       expect(isInMapRange(h, MAP_RADIUS)).toBe(true);
     }

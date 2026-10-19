@@ -1581,10 +1581,14 @@ export const GameBoard: React.FC = () => {
                           return false;
                         }
 
-                        // 投石车特殊处理：行动次数上限为1
+                        // 投石车：每回合 2 个行动，但移动只能 1 次。
+                        //
+                        // 原来这里只看 hasActedThisTurn，而移动并不置这个标记
+                        //（服务端用 hasMoved 拦第二次移动），所以按钮一直亮着，
+                        // 点下去才吃一个「非法移动：目标位置不可达」。
                         if (selectedUnit.type === UnitType.CATAPULT) {
-                          // 只检查hasActedThisTurn，因为投石车每回合只能行动一次
-                          if ('hasActedThisTurn' in selectedUnit && selectedUnit.hasActedThisTurn) return true;
+                          if (selectedUnit.actionsThisTurn >= 2) return true;
+                          if (selectedUnit.hasMoved) return true;
                           return false;
                         }
 
@@ -1974,7 +1978,12 @@ export const GameBoard: React.FC = () => {
                       战车通过移动碾压敌人
                     </div>
                   ) : selectedUnit.type === UnitType.CATAPULT ? (
-                    /* 投石车：转向、蓄力、攻击 */
+                    /* 投石车：转向、蓄力、攻击
+                     *
+                     * 门槛必须和服务端逐条对齐：每回合 2 个行动，每种行动各 1 次。
+                     * 原来这三个按钮都是 `hasActedThisTurn || actionsThisTurn >= 1`，
+                     * 既比服务端严（蓄力过就不让开火，而服务端允许同回合蓄力+开火），
+                     * 又在移动那一路比服务端松。 */
                     <div className="space-y-2">
                       {/* 蓄力按钮 */}
                       <button
@@ -1986,10 +1995,10 @@ export const GameBoard: React.FC = () => {
                             addLog('投石车蓄力', 'ability');
                           }
                         }}
-                        disabled={!isMyTurn || currentActionPoints < 1 || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1 || ((selectedUnit as any).chargeLevel >= 2)}
+                        disabled={!isMyTurn || currentActionPoints < 1 || phase === GamePhase.DEPLOY || (selectedUnit as any).hasCharged || selectedUnit.actionsThisTurn >= 2 || ((selectedUnit as any).chargeLevel >= 2)}
  className="btn-sy btn-sy-gold btn-sy-ability w-full px-4 py-2 rounded-lg text-sm"
                       >
-                        蓄力 {`(${(selectedUnit as any).chargeLevel || 0}/2)`} {!isMyTurn ? '(非你的回合)' : ''}
+                        蓄力 {`(${(selectedUnit as any).chargeLevel || 0}/2)`} {!isMyTurn ? '(非你的回合)' : (selectedUnit as any).hasCharged ? '(本回合已蓄力)' : ''}
                       </button>
                       {/* 攻击按钮 */}
                       <button
@@ -1999,7 +2008,7 @@ export const GameBoard: React.FC = () => {
                           setHighlightedHexes(getServerAttackHexes(selectedUnit.id));
                           setActionMode('attack');
                         }}
-                        disabled={!isMyTurn || phase === GamePhase.DEPLOY || ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) || selectedUnit.actionsThisTurn >= 1}
+                        disabled={!isMyTurn || phase === GamePhase.DEPLOY || selectedUnit.hasAttacked || selectedUnit.actionsThisTurn >= 2}
  className="btn-sy btn-sy-red w-full px-4 py-2 rounded-lg text-sm"
                       >
                         投射攻击 {`(蓄力${(selectedUnit as any).chargeLevel || 0}层)`} {!isMyTurn ? '(非你的回合)' : phase === GamePhase.DEPLOY ? '(部署阶段不可攻击)' : ''}
@@ -2010,8 +2019,8 @@ export const GameBoard: React.FC = () => {
                         disabled={
                           !isMyTurn ||
                           phase === GamePhase.DEPLOY ||
-                          ('hasActedThisTurn' in selectedUnit && (selectedUnit as any).hasActedThisTurn) ||
-                          selectedUnit.actionsThisTurn >= 1 ||
+                          selectedUnit.hasRotated ||
+                          selectedUnit.actionsThisTurn >= 2 ||
                           ('cannotRotateNextTurn' in selectedUnit && selectedUnit.cannotRotateNextTurn === true)
                         }
  className="btn-sy btn-sy-bronze w-full px-4 py-2 rounded-lg text-sm"
@@ -2520,10 +2529,7 @@ export const GameBoard: React.FC = () => {
                       if (selectedUnit.type === UnitType.CHARIOT) {
                         return 1;
                       }
-                      // 投石车特殊处理：行动次数上限为1
-                      if (selectedUnit.type === UnitType.CATAPULT) {
-                        return 1;
-                      }
+                      // 投石车：和普通单位一样是 2 个行动（移动/转向/蓄力/开火各 1 次）
                       // 将军可能有额外行动次数
                       const bonusActions = (selectedUnit.type === UnitType.GENERAL && 'bonusActionLimit' in selectedUnit && typeof selectedUnit.bonusActionLimit === 'number')
                         ? selectedUnit.bonusActionLimit
@@ -2634,13 +2640,16 @@ export const GameBoard: React.FC = () => {
                       {/* 部署机关区域 */}
                       <div className="mb-4 p-3 rounded-lg" style={{ background: 'rgba(60,0,90,0.2)', border: '1px solid rgba(150,0,220,0.3)' }}>
                         <h4 className="text-sm font-chinese font-bold mb-2" style={{ color: 'rgba(180,100,255,0.9)' }}>部署机关单位</h4>
+                        {/* 造价必须和服务端 MACHINE_SPECS 一致。
+                            弩车这里原来写的是「2步+1弓 - 3点」，而服务端收的是
+                            4步+1弓 + 5点 —— 按钮亮着，点下去报行动点不足。 */}
                         <div className="space-y-2">
                           <button
  className="btn-sy btn-sy-bronze w-full px-4 py-2 rounded-lg text-sm font-bold"
                             onClick={() => handleStartDeploy(UnitType.BALLISTA)}
-                            disabled={!isMyTurn || currentActionPoints < 3}
+                            disabled={!isMyTurn || currentActionPoints < 5}
                           >
-                            弩车 (2步+1弓) - 3点 {!isMyTurn ? '(非你的回合)' : ''}
+                            弩车 (4步+1弓) - 5点 {!isMyTurn ? '(非你的回合)' : ''}
                           </button>
                           <button
  className="btn-sy btn-sy-bronze w-full px-4 py-2 rounded-lg text-sm font-bold"

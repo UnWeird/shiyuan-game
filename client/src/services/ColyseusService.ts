@@ -384,6 +384,7 @@ class ColyseusService {
             pierceCount: unit.pierceCount,
             hasActedThisTurn: unit.hasActedThisTurn,
             chargeLevel: unit.chargeLevel, // 投石车蓄力层数
+            hasCharged: unit.hasCharged,   // 投石车本回合是否已蓄力
           });
         }
       });

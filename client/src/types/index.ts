@@ -30,6 +30,7 @@ export interface Unit {
   actionsThisTurn: number;  // 本回合已执行的行动次数
   hasMoved: boolean;        // 本回合是否已移动
   hasAttacked: boolean;     // 本回合是否已攻击
+  hasRotated?: boolean;     // 本回合是否已转向
   moveDistance?: number;    // 骑兵：本回合移动的距离（1/2/3）
   movementRestricted?: boolean; // 步兵：是否被限制前进（纵深抗击效果）
   movementRestrictionSourceQ?: number; // 步兵移动限制来源Q坐标
@@ -61,6 +62,7 @@ export interface MachineUnit extends Unit {
   pierceCount?: number;           // 弩车：贯穿单位数（包含友方）
   hasActedThisTurn?: boolean;     // 机关单位：本回合是否已行动（移动或攻击）
   chargeLevel?: number;           // 投石车：蓄力层数（0/1/2）
+  hasCharged?: boolean;           // 投石车：本回合是否已蓄力（每种行动一回合一次）
 }
 
 /**

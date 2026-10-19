@@ -143,11 +143,18 @@ describe('checkAttackLegality —— 弓箭手', () => {
     if (!r.ok) expect(r.reason).toBe('该单位本回合已达行动次数上限');
   });
 
-  it('弓箭手已攻击过但未达行动上限，仍可再攻击', () => {
-    // 这是弓箭手与其他兵种的区别：不看 hasAttacked，只看行动次数
+  it('弓箭手已攻击过就不能再攻击，即使还有行动次数', () => {
+    // 基础规则是「每回合最多 2 个行动，每种行动最多 1 次」，弓箭手没有双射特权。
+    //
+    // 这条断言原来是反的（「仍可再攻击」），来历是两次各实现一半：
+    // a4c6d30 只给弓箭手加了「最多 2 个行动」，8cd8a2a 补「每种行动 1 次」时
+    // 为了不和前者打架写成 `type !== 'archer' && hasAttacked`。
+    // 第二个行动应该用来移动或转向，不是再射一箭。
     const a = place('a', 'archer', 'player1', 0, 4, { hasAttacked: true, actionsThisTurn: 1 });
     const t = place('t', 'infantry', 'player2', 0, 2);
-    expect(room.checkAttackLegality(a, t).ok).toBe(true);
+    const r = room.checkAttackLegality(a, t);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('该单位本回合已攻击过');
   });
 
   it('射击路径经过友军时报告 archerBlocked 并额外消耗 1 点', () => {

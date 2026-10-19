@@ -110,40 +110,23 @@ export function occupiedHexesOf(unit: UnitLike): HexCoord[] {
 
 /**
  * 检查一个格子是否被机关单位占据
- * 机关单位（弩车、战车）占据多个格子，任何一个格子都不能被其他单位通过或占用
+ * 机关单位（弩车、战车、投石车）占据多个格子，任何一个格子都不能被其他单位通过或占用
+ *
+ * 这里必须走 occupiedHexesOf，不能自己再推一遍 machineType：原来这两个函数
+ * 手写的分支**漏掉了投石车**（任何单位都能站进它那两格车身），
+ * 而且没传 isPlayerOne（玩家2 的弩车按玩家1 的形状算，占错格）。
  */
 export function isHexOccupiedByMachine(hex: { q: number; r: number; s: number }, units: readonly UnitLike[]): boolean {
-  // 遍历所有单位，检查是否有机关单位占据了这个格子
-  for (const unit of units) {
-    if (unit.type === 'ballista' || unit.type === 'chariot') {
-      const machineType = unit.type === 'ballista' ? 'ballista' : 'chariot';
-      const occupiedHexes = getMachineOccupiedHexes(
-        { q: unit.q, r: unit.r, s: unit.s },
-        machineType
-      );
-
-      // 检查这个hex是否在机关单位占据的格子中
-      if (occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex))) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return isHexOccupiedByMachineExcluding(hex, '', units);
 }
 
 /** 同 isHexOccupiedByMachine，但排除指定 id 的单位（用于战车崩毁时自身尚未删除的情况） */
 export function isHexOccupiedByMachineExcluding(hex: { q: number; r: number; s: number }, excludeId: string, units: readonly UnitLike[]): boolean {
   for (const unit of units) {
     if (unit.id === excludeId) continue;
-    if (unit.type === 'ballista' || unit.type === 'chariot') {
-      const machineType = unit.type === 'ballista' ? 'ballista' : 'chariot';
-      const occupiedHexes = getMachineOccupiedHexes(
-        { q: unit.q, r: unit.r, s: unit.s },
-        machineType
-      );
-      if (occupiedHexes.some(occupiedHex => hexEquals(occupiedHex, hex))) {
-        return true;
-      }
+    if (unit.type !== 'ballista' && unit.type !== 'chariot' && unit.type !== 'catapult') continue;
+    if (occupiedHexesOf(unit).some(occupiedHex => hexEquals(occupiedHex, hex))) {
+      return true;
     }
   }
   return false;
@@ -198,8 +181,13 @@ export function getAttackRangeHexes(unit: UnitLike): HexCoord[] {
   }
 
   if (unit.type === 'catapult') {
-    if (unit.actionsThisTurn >= 2) return [];
-    return getShootingPath(pos, unit.direction, 5);
+    if (unit.actionsThisTurn >= 2 || unit.hasAttacked) return [];
+    // 滤掉自己的车身格：V 形的两格在正前方，所以**任何朝前的方向**
+    // 射击路径第一格都落在自己身上。那一格永远不可能有敌人，
+    // 画出来只会让玩家以为能打自己。
+    const body = occupiedHexesOf(unit);
+    return getShootingPath(pos, unit.direction, 5)
+      .filter(hex => !body.some(b => hexEquals(b, hex)));
   }
 
   return [];
@@ -246,10 +234,19 @@ target: UnitLike,
 units: readonly UnitLike[]
 ): { ok: true; cost: number; archerBlocked: boolean } | { ok: false; reason: string } {
   // --- 行动次数限制 ---
+  //
+  // 基础规则（GAMEPLAY.md「行动限制」）是两条，必须都查：
+  //   1. 每个单位每回合最多 2 个行动 —— actionsThisTurn
+  //   2. 每种行动最多 1 次 —— hasMoved / hasAttacked / hasRotated / hasCharged
+  //
+  // 这两条历史上被分两次、各实现一半：先只给弓箭手加了第 1 条，
+  // 六周后加第 2 条时为了不和前者打架写成了 `type !== 'archer' && hasAttacked`，
+  // 于是弓箭手拿到了「两个行动都用来射箭」。规则书给弓箭手的行动次数
+  // 和步兵骑兵一样是 2，并没有双射特权，所以这里对所有单位一视同仁。
   if (attacker.type === 'archer' && attacker.actionsThisTurn >= 2) {
     return { ok: false, reason: "该单位本回合已达行动次数上限" };
   }
-  if (attacker.type !== 'archer' && attacker.hasAttacked) {
+  if (attacker.hasAttacked) {
     return { ok: false, reason: "该单位本回合已攻击过" };
   }
   if (attacker.type === 'catapult' && attacker.actionsThisTurn >= 2) {
@@ -580,14 +577,27 @@ export function adjacentFriendlyInfantryCount(
   ).length;
 }
 
+/** 只能打相邻格的兵种 —— 也就是「近战攻击」的定义 */
+const MELEE_ATTACKER_TYPES = ['infantry', 'cavalry', 'general', 'huangjin_lishi'];
+
+/** 受近战伤害 +1 的机关。战车不在内 —— 规则书只给弩车和投石车写了这条 */
+const MELEE_FRAGILE_MACHINES = ['ballista', 'catapult'];
+
 /**
- * 预测一次普通攻击造成的伤害。
+ * 预测一次攻击造成的伤害。
  *
  *   基础 1
  *   骑兵本回合移动满 2 格 → +1，但目标相邻己方步兵 ≥2 时该加成被抵消
+ *   近战打弩车 / 投石车 → +1
  *   触发纵深抗击 → 0
  *
- * 注意这只覆盖 handleAttack 的普通攻击路径；弩车贯穿、投石车溅射、
+ * 「受近战伤害 +1」这条曾经实现过，又被当成 bug 删掉（见 8cd8a2a
+ * 「删除近战攻击机关单位+1伤害逻辑」），而规则书两处从没停止声称它存在。
+ * 这里按规则书恢复，并且放在 predictDamage 里而不是某个 handler 里 ——
+ * 客户端的「这一下能杀」高亮走的是同一个函数，所以不会再出现
+ * 界面算 1 伤、服务端扣 2 伤的分歧。
+ *
+ * 注意这只覆盖普通攻击与弩车近战；弩车贯穿、投石车溅射、
  * 无双扇形各有自己的结算，不走这里。
  */
 export function predictDamage(
@@ -600,6 +610,12 @@ export function predictDamage(
   let damage = 1;
   if (attacker.type === 'cavalry' && attacker.moveDistance === 2) {
     if (adjacentFriendlyInfantryCount(target, units) < 2) damage += 1;
+  }
+  // 弩车的近战也算近战（它有专用的 handleBallistaMeleeAttack），
+  // 所以判据是「目标是脆皮机关」而不是「攻击者在近战名单里」
+  const isMelee = MELEE_ATTACKER_TYPES.includes(attacker.type) || attacker.type === 'ballista';
+  if (isMelee && MELEE_FRAGILE_MACHINES.includes(target.type)) {
+    damage += 1;
   }
   return damage;
 }

@@ -19,7 +19,7 @@ import {
   getShootingPath,
   hexLineDraw,
 } from '../../../shared/utils/hexUtils';
-import { HexCoord } from '../../../shared/types';
+import { HexCoord, Direction } from '../../../shared/types';
 import { captureState, restoreState, StateSnapshot } from '../dev/stateSnapshot';
 import * as Rules from '../../../shared/rules/queries';
 
@@ -1024,6 +1024,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     if (unitType === "archer") return 0.5;
     if (unitType === "ballista") return 0.9;
     if (unitType === "chariot") return 0.6;
+    if (unitType === "catapult") return 0.7; // 2步+1弓
     return 0; // 将军不计入
   }
 
@@ -1639,11 +1640,13 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           crushedUnits.push(enemyUnit);
         }
 
-        // 检查机关单位的体积
+        // 检查机关单位的体积。
+        // 这里原来漏了投石车，于是战车从投石车车身上压过去什么也不会发生 ——
+        // 规则书的「碾压到机关单位双方互毁」对投石车不生效。
+        // 占格一律走 occupiedHexesOf（它带 isPlayerOne，手写那版没有）。
         Array.from(this.state.units.values()).forEach(u => {
-          if (u.owner !== role && (u.type === 'ballista' || u.type === 'chariot')) {
-            const machineType = u.type === 'ballista' ? 'ballista' : 'chariot';
-            const machineOccupiedHexes = getMachineOccupiedHexes({ q: u.q, r: u.r, s: u.s }, machineType);
+          if (u.owner !== role && (u.type === 'ballista' || u.type === 'chariot' || u.type === 'catapult')) {
+            const machineOccupiedHexes = Rules.occupiedHexesOf(u as unknown as Rules.UnitLike);
             const isCrushed = machineOccupiedHexes.some(machineHex => hexEquals(machineHex, hex));
             if (isCrushed && !crushedMachines.includes(u) && !crushedUnits.includes(u)) {
               crushedMachines.push(u);
@@ -2054,51 +2057,64 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         const splashType = chargeLevel === 0 ? "常态" : `蓄力${chargeLevel}层`;
         this.addBattleLog(`投石车${splashType}溅射效果触发！`);
 
-        // 对每个溅射格子上的单位造成1点伤害
-        for (const splashHex of splashHexes) {
-          // 查找该格子上的单位
-          const splashTarget = Array.from(this.state.units.values()).find(u =>
-            u.q === splashHex.q && u.r === splashHex.r && u.s === splashHex.s
-          );
+        /**
+         * 被溅射波及的单位。
+         *
+         * 按**单位**去重而不是按格子遍历，有三个原因：
+         *  1. 原来只比中心格，机关单位的车身格溅射打不到（走 occupiedHexesOf 修掉）
+         *  2. 2 层的 360° 可能同时覆盖同一台机关的两三格车身，按格子算会重复扣血
+         *  3. 主目标自己是机关时，它的车身格也在溅射范围里，会被扣第二次
+         *
+         * 攻击者也要排掉：目标贴着投石车时，目标的邻格可能正是投石车自己的车身。
+         * 友军和平民不排 —— 溅射带友伤是明确的规则决定。
+         */
+        const splashVictims = Array.from(this.state.units.values()).filter(u => {
+          if (u.id === attacker.id || u.id === target.id) return false;
+          return Rules.occupiedHexesOf(u as unknown as Rules.UnitLike)
+            .some(body => splashHexes.some(hex => hexEquals(hex, body)));
+        });
 
-          if (splashTarget) {
-            // 造成1点溅射伤害
-            splashTarget.hp -= 1;
-            this.addBattleLog(`溅射伤害：${splashTarget.owner}的${splashTarget.type}受到1点伤害`);
+        for (const splashTarget of splashVictims) {
+          // 造成1点溅射伤害
+          splashTarget.hp -= 1;
+          this.addBattleLog(`溅射伤害：${splashTarget.owner}的${splashTarget.type}受到1点伤害`);
 
-            // 检查溅射目标是否被击杀
-            if (splashTarget.hp <= 0) {
-              // 骑兵特殊机制：掉马变成1血步兵
-              if (splashTarget.type === "cavalry") {
-                splashTarget.type = "infantry";
-                splashTarget.maxHp = 2;
-                splashTarget.hp = 1;
-                this.addBattleLog(`${splashTarget.owner}的骑兵受溅射致命伤，掉马变成1血步兵！`);
-              } else {
-                // 其他单位直接击杀
-                if (splashTarget.type === 'chariot') {
-                  this.handleChariotDeath(splashTarget);
-                }
-                this.killUnit(splashTarget);
-                this.addBattleLog(`溅射击杀：${splashTarget.owner}的${splashTarget.type}被击杀！`);
+          // 检查溅射目标是否被击杀
+          if (splashTarget.hp <= 0) {
+            // 骑兵特殊机制：掉马变成1血步兵
+            if (splashTarget.type === "cavalry") {
+              splashTarget.type = "infantry";
+              splashTarget.maxHp = 2;
+              splashTarget.hp = 1;
+              this.addBattleLog(`${splashTarget.owner}的骑兵受溅射致命伤，掉马变成1血步兵！`);
+            } else {
+              // 其他单位直接击杀
+              if (splashTarget.type === 'chariot') {
+                this.handleChariotDeath(splashTarget);
+              }
+              this.killUnit(splashTarget);
+              this.addBattleLog(`溅射击杀：${splashTarget.owner}的${splashTarget.type}被击杀！`);
 
-                // 处理首次击杀奖励
-                this.grantFirstKillReward(role, splashTarget, '（溅射）');
+              // 处理首次击杀奖励
+              this.grantFirstKillReward(role, splashTarget, '（溅射）');
 
-                // 检查是否溅射击杀了将军
-                if (splashTarget.type === "general") {
-                  this.addBattleLog(`溅射击杀将军！${splashTarget.owner === "player1" ? "玩家1" : "玩家2"}下回合失去基础骰子`);
-                }
+              // 检查是否溅射击杀了将军
+              if (splashTarget.type === "general") {
+                this.addBattleLog(`溅射击杀将军！${splashTarget.owner === "player1" ? "玩家1" : "玩家2"}下回合失去基础骰子`);
               }
             }
           }
         }
       }
 
-      // 攻击后消耗1层蓄力（不是清零）
+      // 开火清零全部蓄力层数。
+      //
+      // 原来是 -1 层，配上「一回合两个行动」就退化成：开火那回合顺手再蓄一层，
+      // 永远停在满层，0/1/2 三档形状里只有 2 层会被用到。
+      // 清零之后三档才是真的三选一 —— 要 360° 就得花两回合蓄满再开一次火。
       if (chargeLevel > 0) {
-        attacker.chargeLevel = chargeLevel - 1;
-        this.addBattleLog(`投石车蓄力层数：${chargeLevel} -> ${attacker.chargeLevel}`);
+        attacker.chargeLevel = 0;
+        this.addBattleLog(`投石车开火，蓄力层数清零（${chargeLevel} -> 0）`);
       }
     }
 
@@ -2442,13 +2458,20 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 作乱：非移动行动在效果生效前结算（已付 AP 不返还）
     if (this.applyZuoluan(ballista)) return;
 
-    // 弩车近战攻击造成1点伤害
-    target.hp -= 1;
+    // 弩车近战伤害走 predictDamage（原来硬编码 1 点），
+    // 这样「近战打弩车/投石车 +1」对弩车自己的近战也成立，
+    // 而且和客户端的「这一下能杀」高亮共用同一份计算
+    const meleeDamage = Rules.predictDamage(
+      ballista as unknown as Rules.UnitLike,
+      target as unknown as Rules.UnitLike,
+      this.unitList
+    );
+    target.hp -= meleeDamage;
     ballista.hasActedThisTurn = true;
     ballista.hasAttacked = true;
     ballista.actionsThisTurn = (ballista.actionsThisTurn || 0) + 1;
 
-    this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的弩车近战攻击${target.owner}的${target.type}，造成1点伤害`);
+    this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}的弩车近战攻击${target.owner}的${target.type}，造成${meleeDamage}点伤害`);
 
     // 骑兵特殊机制：骑兵的死亡等同于变成1血步兵
     if (target.type === "cavalry" && target.hp <= 0) {
@@ -2543,6 +2566,13 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
+    // 验证「每种行动一回合一次」—— 蓄力这条以前没查，
+    // 所以一回合蓄两次就能直接满层，绕过了基础规则
+    if (catapult.hasCharged) {
+      client.send("error", { message: "投石车本回合已蓄力过" });
+      return;
+    }
+
     // 验证蓄力层数（最多2层）
     const currentCharge = catapult.chargeLevel || 0;
     if (currentCharge >= 2) {
@@ -2566,6 +2596,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     // 执行蓄力
     catapult.chargeLevel = currentCharge + 1;
     catapult.hasActedThisTurn = true;
+    catapult.hasCharged = true;
     catapult.actionsThisTurn = (catapult.actionsThisTurn || 0) + 1;
 
     // 消耗行动点
@@ -2685,6 +2716,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
           unit.hasMoved = false;
           unit.hasAttacked = false;
           unit.hasRotated = false;
+          unit.hasCharged = false;
           unit.actionsThisTurn = 0;
           if (unit.type === "ballista" || unit.type === "chariot" || unit.type === "catapult") {
             unit.hasActedThisTurn = false;
@@ -2721,6 +2753,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         unit.hasMoved = false;
         unit.hasAttacked = false;
         unit.hasRotated = false; // 重置转向标记
+        unit.hasCharged = false; // 重置投石车蓄力标记
         unit.actionsThisTurn = 0;
 
         // 重置将军的特殊状态
@@ -3226,7 +3259,7 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
   /**
    * 处理神机将军部署机关单位
    */
-  private handleShenjiDeployMachine(client: Client, data: { machineType: 'ballista' | 'chariot'; position: { q: number; r: number; s: number } }) {
+  private handleShenjiDeployMachine(client: Client, data: { machineType: 'ballista' | 'chariot' | 'catapult'; position: { q: number; r: number; s: number } }) {
     const role = this.getPlayerRole(client);
     if (!role || role !== this.state.currentPlayer) {
       client.send("error", { message: "不是你的回合" });
@@ -3243,9 +3276,26 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
+    // 三种机关的造价，一张表说完。
+    //
+    // 原来这些数字散在四个 `if (ballista) ... else if (chariot) ...` 里，
+    // 而投石车是后来加的兵种 —— 它在「费用」那处落进 else（按战车收 4 点），
+    // 在「库存校验」和「库存扣减」两处两个分支都不进（于是**完全免费**），
+    // 在「朝向」那处也落进 else（direction = 0，炮口朝东而不是朝敌方）。
+    // 用表驱动之后，下一个新机关要么在表里、要么编译不过。
+    const MACHINE_SPECS = {
+      ballista: { points: 5, infantry: 4, archer: 1, name: '弩车',   troops: '4步兵+1弓箭手' },
+      chariot:  { points: 4, infantry: 4, archer: 0, name: '战车',   troops: '4步兵' },
+      catapult: { points: 3, infantry: 2, archer: 1, name: '投石车', troops: '2步兵+1弓箭手' },
+    } as const;
+    const spec = MACHINE_SPECS[data.machineType];
+    if (!spec) {
+      client.send("error", { message: "未知的机关类型" });
+      return;
+    }
+
     // 检查行动点是否足够
-    // 弩车需要5点，战车需要4点
-    const requiredPoints = data.machineType === 'ballista' ? 5 : 4;
+    const requiredPoints = spec.points;
     const currentActionPoints = role === "player1"
       ? this.state.player1ActionPoints
       : this.state.player2ActionPoints;
@@ -3256,8 +3306,6 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 检查是否有足够的兵力库存
-    // 弩车需要：4步兵 + 1弓箭手
-    // 战车需要：4步兵
     const totalInfantryStock = role === 'player1' ? this.state.player1Infantry : this.state.player2Infantry;
     const totalArcherStock = role === 'player1' ? this.state.player1Archer : this.state.player2Archer;
     const consumedInfantry = role === 'player1' ? this.state.player1ConsumedInfantry : this.state.player2ConsumedInfantry;
@@ -3267,16 +3315,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     const availableInfantry = totalInfantryStock - consumedInfantry;
     const availableArcher = totalArcherStock - consumedArcher;
 
-    if (data.machineType === 'ballista') {
-      if (availableInfantry < 4 || availableArcher < 1) {
-        client.send("error", { message: `兵力库存不足：部署弩车需要4步兵+1弓箭手（剩余：${availableInfantry}步兵，${availableArcher}弓箭手）` });
-        return;
-      }
-    } else if (data.machineType === 'chariot') {
-      if (availableInfantry < 4) {
-        client.send("error", { message: `兵力库存不足：部署战车需要4步兵（剩余：${availableInfantry}步兵）` });
-        return;
-      }
+    if (availableInfantry < spec.infantry || availableArcher < spec.archer) {
+      client.send("error", { message: `兵力库存不足：部署${spec.name}需要${spec.troops}（剩余：${availableInfantry}步兵，${availableArcher}弓箭手）` });
+      return;
     }
 
     // 检查位置是否在地图范围内且所有占用格子都没有被占用
@@ -3324,11 +3365,19 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     machine.q = data.position.q;
     machine.r = data.position.r;
     machine.s = data.position.s;
-    // 弩车方向指向对方：player1的弩车指向北(6)，player2的弩车指向南(7)
-    // 战车方向无意义，设为0
-    // 弩车和战车血量都是4
+    // 朝向：都指向对方，战车方向无意义设为 0。
+    //
+    // 弩车用 NORTH(6)/SOUTH(7) —— 这两个值**不是** HEX_DIRECTIONS 的下标
+    //（那个数组只有 6 项），弩车能用是因为它走 getBallistaVerticalPath，
+    // 从不把 direction 喂给 hexNeighbor。
+    // 投石车恰恰相反：它走 getShootingPath → hexNeighbor，拿到 6 会读到
+    // undefined 直接抛异常，所以只能用 0~5 里朝敌方的那个斜向。
     if (data.machineType === 'ballista') {
       machine.direction = role === 'player1' ? 6 : 7;  // NORTH : SOUTH
+    } else if (data.machineType === 'catapult') {
+      machine.direction = role === 'player1'
+        ? Direction.NORTH_EAST  // 玩家1 敌人在北
+        : Direction.SOUTH_WEST; // 玩家2 敌人在南
     } else {
       machine.direction = 0;
     }
@@ -3342,22 +3391,12 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     this.state.units.set(machine.id, machine);
 
     // 增加已消耗库存（永久消耗）
-    if (data.machineType === 'ballista') {
-      // 弩车：消耗4步兵 + 1弓箭手库存
-      if (role === 'player1') {
-        this.state.player1ConsumedInfantry += 4;
-        this.state.player1ConsumedArcher += 1;
-      } else {
-        this.state.player2ConsumedInfantry += 4;
-        this.state.player2ConsumedArcher += 1;
-      }
-    } else if (data.machineType === 'chariot') {
-      // 战车：消耗4步兵库存
-      if (role === 'player1') {
-        this.state.player1ConsumedInfantry += 4;
-      } else {
-        this.state.player2ConsumedInfantry += 4;
-      }
+    if (role === 'player1') {
+      this.state.player1ConsumedInfantry += spec.infantry;
+      this.state.player1ConsumedArcher += spec.archer;
+    } else {
+      this.state.player2ConsumedInfantry += spec.infantry;
+      this.state.player2ConsumedArcher += spec.archer;
     }
 
     // 消耗行动点
@@ -3367,10 +3406,8 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.state.player2ActionPoints -= requiredPoints;
     }
 
-    const machineName = data.machineType === 'ballista' ? '弩车' : '战车';
-    const troopInfo = data.machineType === 'ballista' ? '4步兵+1弓箭手' : '6步兵';
-    this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}消耗${troopInfo}库存和${requiredPoints}点行动值部署了${machineName}`);
-    client.send("info", { message: `${machineName}部署成功（消耗${troopInfo}库存和${requiredPoints}点行动值）` });
+    this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}消耗${spec.troops}库存和${requiredPoints}点行动值部署了${spec.name}`);
+    client.send("info", { message: `${spec.name}部署成功（消耗${spec.troops}库存和${requiredPoints}点行动值）` });
 
     // 累加部署价值
     const machineValue = this.getUnitValue(data.machineType);
@@ -3513,11 +3550,18 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       // 直接改变单位的所有者为仁德所属阵营
       enemy.owner = role;
 
-      // 机关单位需要翻转方向（因为它们��是中心对称的）
-      if (enemy.type === 'ballista' || enemy.type === 'catapult') {
-        // 弩车和投石车的朝向需要翻转
-        // player1的机关朝北（敌人在北），player2的机关朝南（敌人在南）
+      // 机关单位需要翻转方向（因为它们不是中心对称的）
+      //
+      // 弩车用 NORTH(6)/SOUTH(7)，投石车**不能** —— 6/7 不是 HEX_DIRECTIONS
+      // 的下标（只有 6 项），而投石车的射击走 getShootingPath → hexNeighbor，
+      // 拿到 6 会读出 undefined 当场抛异常，把整个 buildValidActions 带崩。
+      // 招降一台投石车就能让房间不可用，所以这里必须给它 0~5 内的朝向。
+      if (enemy.type === 'ballista') {
         enemy.direction = role === 'player1' ? 6 : 7;  // NORTH : SOUTH
+      } else if (enemy.type === 'catapult') {
+        enemy.direction = role === 'player1'
+          ? Direction.NORTH_EAST
+          : Direction.SOUTH_WEST;
       }
 
       convertedCount++;
@@ -3694,13 +3738,17 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       return;
     }
 
-    // 计算需要消耗的行动点：机关单位根据占用格子数，普通单位1点
-    let requiredActionPoints = 1;
-    if (target.type === 'ballista' || target.type === 'chariot') {
-      const machineType = target.type === 'ballista' ? 'ballista' : 'chariot';
-      const occupiedHexes = getMachineOccupiedHexes({ q: target.q, r: target.r, s: target.s }, machineType);
-      requiredActionPoints = occupiedHexes.length;
-    }
+    // 计算需要消耗的行动点：机关单位根据占用格子数，普通单位1点。
+    //
+    // 原来这两处（费用、留下的标记）都漏了投石车：按普通单位只收 1 点，
+    // 而且只在中心格留一个标记 —— 另外两格车身凭空消失。
+    // 占格统一走 occupiedHexesOf，它带 isPlayerOne（手写那版没传，
+    // 玩家2 的弩车会按玩家1 的形状留错位置）。
+    const isMachine = target.type === 'ballista' || target.type === 'chariot' || target.type === 'catapult';
+    const machineHexes = isMachine
+      ? Rules.occupiedHexesOf(target as unknown as Rules.UnitLike)
+      : [];
+    const requiredActionPoints = isMachine ? machineHexes.length : 1;
 
     // 检查行动点是否足够
     const currentActionPoints = role === "player1"
@@ -3720,10 +3768,9 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
     }
 
     // 检查是否是机关单位
-    if (target.type === 'ballista' || target.type === 'chariot') {
+    if (isMachine) {
       // 机关单位：在所有占用的格子上分别创建中立标记
-      const machineType = target.type === 'ballista' ? 'ballista' : 'chariot';
-      const occupiedHexes = getMachineOccupiedHexes({ q: target.q, r: target.r, s: target.s }, machineType);
+      const occupiedHexes = machineHexes;
 
       occupiedHexes.forEach((hex, index) => {
         const neutral = new UnitSchema();

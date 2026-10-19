@@ -216,7 +216,7 @@ export const GeneralSelect: React.FC = () => {
             general={GeneralType.SHENJI}
             name="神机 (体力上限3)"
             ability="直接修改一个骰子点数（不论敌我）"
-            passive="可以将士兵单位组合成机关（弩车、战车）后直接部署"
+            passive="可以将士兵单位组合成机关（弩车、战车、投石车）后直接部署"
             onSelect={() => handleSelectGeneral(GeneralType.SHENJI)}
             isSelected={myGeneral === GeneralType.SHENJI}
             disabled={isVersus && !!myGeneral}

@@ -39,6 +39,15 @@ export class UnitSchema extends Schema {
   @type("boolean") hasActedThisTurn: boolean = false;
   @type("number") chargeLevel: number = 0; // 投石车蓄力层数
 
+  /**
+   * 投石车：本回合是否已蓄力。
+   *
+   * 基础规则是「每回合最多 2 个行动，每种行动最多 1 次」，另三种行动各有
+   * 自己的标记（hasMoved / hasAttacked / hasRotated），蓄力一直缺一个 ——
+   * 于是它是唯一能在一回合内做两次的行动，两次就直接满层。
+   */
+  @type("boolean") hasCharged: boolean = false;
+
   // 战斗状态标记
   @type("number") moveDistance: number = 0; // 骑兵本回合移动距离
   @type("boolean") movementRestricted: boolean = false; // 步兵纵深抗击限制

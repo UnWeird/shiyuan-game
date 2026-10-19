@@ -623,9 +623,14 @@ export function knockbackInfantryChain(
 
 /**
  * 获取投石车攻击的溅射目标格子
+ *
+ * 三档形状，由蓄力层数决定 —— 这是投石车唯一的「档位」机制，
+ * 所以三档必须真的不一样。原来 1 层和 2 层共用 `>= 1` 一个分支，
+ * 等于 2 层白蓄，三档退化成两档。
+ *
  * @param attackerPos 攻击者位置
  * @param targetPos 主要目标位置
- * @param chargeLevel 蓄力层数（0=常态溅射，背后1格；1+=蓄力溅射，背后120°扇形）
+ * @param chargeLevel 蓄力层数（0=背后1格；1=背后120°扇形3格；2=目标周围360°6格）
  * @param mapRadius 地图半径
  * @returns 溅射目标格子数组
  */
@@ -689,8 +694,8 @@ export function getCatapultSplashTargets(
     if (isInMapRange(behindTarget, mapRadius)) {
       splashTargets.push(behindTarget);
     }
-  } else if (chargeLevel >= 1) {
-    // 蓄力溅射（1层或2层）：溅射目标背后120°扇形的3个格子
+  } else if (chargeLevel === 1) {
+    // 蓄力1层：溅射目标背后120°扇形的3个格子
     // 中心方向 + 左右各60°
     const centerDir = knockbackDirection;
     const leftDir = ((knockbackDirection + 5) % 6) as Direction; // 逆时针60度
@@ -711,6 +716,15 @@ export function getCatapultSplashTargets(
     if (isInMapRange(rightSplash, mapRadius)) {
       splashTargets.push(rightSplash);
     }
+  } else {
+    // 蓄力2层（满层）：目标周围360°的6个格子
+    //
+    // 这一档不再看朝向 —— 石头落在目标头上，碎片四散，
+    // 所以连攻击者这一侧的格子也在内。打密集阵的终极手段，
+    // 代价是满层要两回合（蓄力每回合只能做一次），而且开火清零。
+    splashTargets.push(
+      ...hexNeighbors(targetPos).filter(hex => isInMapRange(hex, mapRadius))
+    );
   }
 
   return splashTargets;

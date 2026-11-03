@@ -500,6 +500,20 @@ export const GameBoard: React.FC = () => {
 
   // 点击地图
   const handleHexClick = (hex: HexCoord) => {
+    // 踏阵模式：点击可踏格子
+    if (isOnlineMode && wushuangTacticsActive && wushuangTacticsPlayer === myPlayerRole) {
+      // 检查点击的格子是否是可踏位置
+      const killHexStr = `${hex.q},${hex.r},${hex.s}`;
+      if (wushuangTacticsKillHexes.length > 0 && wushuangTacticsKillHexes[0] === killHexStr) {
+        playSfx('place');
+        colyseusService.wushuangTactics(hex);
+        // 不清除 actionMode，让界面继续显示踏阵面板直到所有击杀都处理完
+        return;
+      }
+      // 如果点击的不是可踏位置，忽略（或可以弹提示）
+      return;
+    }
+
     // 在线模式下的部署处理
     if (isOnlineMode && actionMode === 'deploy' && deployUnitType) {
       // 检查是否是机关单位
@@ -1919,6 +1933,39 @@ export const GameBoard: React.FC = () => {
                               </div>
                             </div>
                           )}
+                        </div>
+                      )}
+
+                      {/* 无双被动技能：踏阵选择面板 */}
+                      {wushuangTacticsActive && wushuangTacticsPlayer === myPlayerRole && (
+                        <div className="mt-3 p-3 panel-sy rounded-lg">
+                          <h4 className="text-sm font-bold mb-2 panel-sy-title">踏阵机会</h4>
+                          <p className="text-xs panel-sy-text mb-2">
+                            {wushuangTacticsKillHexes.length > 0
+                              ? `可踏向 (${wushuangTacticsKillHexes[0].split(',')[0]},${wushuangTacticsKillHexes[0].split(',')[1]}) 位置`
+                              : '没有待踏的击杀'}
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                // 点击格子进行踏阵
+                                if (wushuangTacticsKillHexes.length > 0) {
+                                  const [q, r, s] = wushuangTacticsKillHexes[0].split(',').map(Number);
+                                  setHighlightedHexes([{ q, r, s }]);
+                                  // 用户点击格子时会触发 handleHexClick，需要选择目标格子（暂时高亮被击杀位置以示意）
+                                }
+                              }}
+                              className="flex-1 px-2 py-1 btn-sy btn-sy-jade rounded text-xs"
+                            >
+                              选择踏阵格子
+                            </button>
+                            <button
+                              onClick={() => colyseusService.wushuangTactics(null)}
+                              className="flex-1 px-2 py-1 btn-sy btn-sy-ghost rounded text-xs"
+                            >
+                              跳过
+                            </button>
+                          </div>
                         </div>
                       )}
                     </>

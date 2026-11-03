@@ -206,4 +206,9 @@ export class GameStateSchema extends Schema {
   // 太平将军专属状态：收进嵌套 Schema，顶层只占 2 格（见 TaipingSchema 注释）
   @type(TaipingSchema) player1Taiping = new TaipingSchema();
   @type(TaipingSchema) player2Taiping = new TaipingSchema();
+
+  // 无双被动技能：踏阵选择状态
+  @type("boolean") wushuangTacticsActive: boolean = false;
+  @type("string") wushuangTacticsPlayer: string = ""; // 哪方无双可踏阵
+  @type(["string"]) wushuangTacticsKillHexes = new ArraySchema<string>(); // 击杀地点列表 "q,r,s"
 }

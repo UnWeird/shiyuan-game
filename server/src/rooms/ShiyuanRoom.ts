@@ -536,6 +536,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.handleRendeSpareAsNeutral(client, data);
     });
 
+    // === 无双被动技能：踏阵 ===
+    this.onAction("wushuangTactics", (client, data) => {
+      this.handleWushuangTactics(client, data);
+    });
+
     this.onAction("surrender", (client) => {
       this.handleSurrender(client);
     });
@@ -1710,6 +1715,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         // 首次击杀奖励（只对敌方单位）
         if (crushedUnit.owner !== role) {
           this.grantFirstKillReward(role, crushedUnit);
+
+          // 记录踏阵机会（无双被动技能）
+          if (!Rules.isCivilian(crushedUnit)) {
+            this.recordWushuangTacticsKill(crushedUnit, role);
+          }
         }
       });
 
@@ -2098,6 +2108,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
               // 处理首次击杀奖励
               this.grantFirstKillReward(role, splashTarget, '（溅射）');
 
+              // 记录踏阵机会（无双被动技能）
+              if (!Rules.isCivilian(splashTarget)) {
+                this.recordWushuangTacticsKill(splashTarget, role);
+              }
+
               // 检查是否溅射击杀了将军
               if (splashTarget.type === "general") {
                 this.addBattleLog(`溅射击杀将军！${splashTarget.owner === "player1" ? "玩家1" : "玩家2"}下回合失去基础骰子`);
@@ -2179,6 +2194,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
 
       // 首次击杀奖励：立即获得额外骰子和行动点
       this.grantFirstKillReward(role, target);
+
+      // 记录踏阵机会（无双被动技能）
+      if (!Rules.isCivilian(target)) {
+        this.recordWushuangTacticsKill(target, role);
+      }
 
       // 检查是否击杀了将军（失去基础骰子，下回合生效）
       if (target.type === "general") {
@@ -3160,6 +3180,11 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
         // 记录击杀
         this.grantFirstKillReward(attacker, target);
 
+        // 记录踏阵机会（无双被动技能）
+        if (!Rules.isCivilian(target)) {
+          this.recordWushuangTacticsKill(target, attacker);
+        }
+
         // 如果击杀了将军，减少骰子
         if (target.type === "general") {
           this.addBattleLog(`${target.owner === "player1" ? "玩家1" : "玩家2"}的将军阵亡！下回合失去基础骰子`);
@@ -3246,6 +3271,98 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
       this.addBattleLog(`${role === "player1" ? "玩家1" : "玩家2"}使用无双技能：当前满血，行动次数上限不变（仍为2次）`);
       this.addBattleLog("本回合移动和扇形攻击次数限制解除！");
       client.send("info", { message: "技能生效！当前满血，行动次数上限不变，但移动和攻击次数限制解除" });
+    }
+  }
+
+  // ========================================
+  // 无双被动技能：踏阵（tajo）处理器
+  // ========================================
+
+  /**
+   * 击杀时记录踏阵机会（被击杀单位的位置）
+   * @param victim 被击杀单位
+   * @param attacker 击杀方的角色标识
+   */
+  private recordWushuangTacticsKill(victim: UnitSchema, attacker: "player1" | "player2"): void {
+    // 找敌方无双将军
+    const defendingRole = attacker === "player1" ? "player2" : "player1";
+    const enemyWushuang = Array.from(this.state.units.values()).find(u =>
+      u.owner === defendingRole &&
+      u.type === "general" &&
+      u.generalType === "wushuang"
+    );
+
+    if (!enemyWushuang) return;
+
+    // 记录被击杀位置
+    const killHex = `${victim.q},${victim.r},${victim.s}`;
+    this.state.wushuangTacticsKillHexes.push(killHex);
+    this.state.wushuangTacticsActive = true;
+    this.state.wushuangTacticsPlayer = defendingRole;
+    this.addBattleLog(`[踏阵] 敌方无双可踏向 (${victim.q},${victim.r})`);
+  }
+
+  /**
+   * 处理无双踏阵选择
+   * @param client 发起选择的客户端
+   * @param data { tacticHex?: { q, r, s } | null } - 选择的踏阵格子，null 表示跳过
+   */
+  private handleWushuangTactics(client: Client, data: { tacticHex?: { q: number; r: number; s: number } | null }): void {
+    const role = this.getPlayerRole(client);
+
+    if (!role || !this.state.wushuangTacticsActive || this.state.wushuangTacticsPlayer !== role) {
+      client.send("error", { message: "踏阵未激活或权限不对" });
+      return;
+    }
+
+    // 查找我方无双将军
+    const wushuang = Array.from(this.state.units.values()).find(u =>
+      u.owner === role &&
+      u.type === "general" &&
+      u.generalType === "wushuang"
+    );
+
+    if (!wushuang) {
+      client.send("error", { message: "找不到我方无双将军" });
+      return;
+    }
+
+    // 如果选择了踏阵格子，执行移动
+    if (data.tacticHex) {
+      const targetHex = data.tacticHex;
+
+      // 检验目标格子有效性：必须在地图范围内、不能被占据
+      const isInRange = Math.abs(targetHex.q) <= 4 && Math.abs(targetHex.r) <= 4 && Math.abs(targetHex.s) <= 4;
+      if (!isInRange) {
+        client.send("error", { message: "踏阵目标超出地图范围" });
+        return;
+      }
+
+      const occupied = Array.from(this.state.units.values()).some(u =>
+        u.q === targetHex.q && u.r === targetHex.r && u.s === targetHex.s
+      );
+      if (occupied) {
+        client.send("error", { message: "踏阵目标已被占据" });
+        return;
+      }
+
+      // 执行踏阵移动
+      wushuang.q = targetHex.q;
+      wushuang.r = targetHex.r;
+      wushuang.s = targetHex.s;
+      this.addBattleLog(`无双踏阵至 (${targetHex.q},${targetHex.r})`);
+    }
+
+    // 清理已处理的击杀记录
+    if (this.state.wushuangTacticsKillHexes.length > 0) {
+      this.state.wushuangTacticsKillHexes.shift();
+    }
+
+    // 如果还有待踏的击杀，继续；否则关闭踏阵状态
+    if (this.state.wushuangTacticsKillHexes.length === 0) {
+      this.state.wushuangTacticsActive = false;
+      this.state.wushuangTacticsPlayer = "";
+      client.send("info", { message: "踏阵完成" });
     }
   }
 

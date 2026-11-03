@@ -914,6 +914,20 @@ export function getValidMoves(unit: UnitLike, units: readonly UnitLike[]): { q: 
     // 可以走到棋盘外（handleMoveUnit 正是拿这里的结果做合法性校验的）。
     return !occupied && isInMapRange(hex, MAP_RADIUS) && hexDistance(unitPos, hex) <= finalRange;
   });
+
+  // === 辟易：敌方无双的相邻格无法进入 ===
+  // 禁入检测（"已相邻的不受影响"由于这里只看 <= 1 排除了自己，所以自动满足）
+  const enemyWushuang = units.find(u =>
+    u.owner !== unit.owner &&
+    u.type === 'general' &&
+    u.generalType === 'wushuang'
+  );
+  if (enemyWushuang) {
+    const wushuangPos = { q: enemyWushuang!.q, r: enemyWushuang!.r, s: enemyWushuang!.s };
+    return possibleMoves.filter(hex => hexDistance(hex, wushuangPos) > 1);
+  }
+
+  return possibleMoves;
 }
 
 /* ══════════════════ 太平 · 公共平民 ══════════════════

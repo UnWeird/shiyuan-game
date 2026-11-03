@@ -505,6 +505,11 @@ class ColyseusService {
       wushuangSelectedDirection: state.wushuangSelectedDirection === -1 ? null : state.wushuangSelectedDirection,
       wushuangDiceRolls,
 
+      // 踏阵状态（ArraySchema 需要展开成数组）
+      wushuangTacticsActive: state.wushuangTacticsActive || false,
+      wushuangTacticsPlayer: state.wushuangTacticsPlayer || '',
+      wushuangTacticsKillHexes: state.wushuangTacticsKillHexes ? Array.from(state.wushuangTacticsKillHexes) : [],
+
       // 太平阵营状态（嵌套 Schema → 普通对象，ArraySchema 要展开成数组）
       player1Taiping: toTaipingState(state.player1Taiping),
       player2Taiping: toTaipingState(state.player2Taiping),
@@ -801,6 +806,15 @@ class ColyseusService {
   taipingDeclareHuangtian() {
     if (!this.room) return;
     this.room.send('taipingDeclareHuangtian', {});
+  }
+
+  /**
+   * 无双被动技能：踏阵选择
+   * @param tacticHex 选择的踏阵格子，null 表示跳过
+   */
+  wushuangTactics(tacticHex: { q: number; r: number; s: number } | null) {
+    if (!this.room) return;
+    this.room.send('wushuangTactics', { tacticHex });
   }
 
   /**

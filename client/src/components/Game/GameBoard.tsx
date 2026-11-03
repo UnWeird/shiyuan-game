@@ -105,6 +105,10 @@ export const GameBoard: React.FC = () => {
     wushuangAttackPhase: storeWushuangAttackPhase,
     wushuangSelectedDirection: storeWushuangSelectedDirection,
     wushuangDiceRolls: storeWushuangDiceRolls,
+    // 踏阵状态
+    wushuangTacticsActive: storeWushuangTacticsActive,
+    wushuangTacticsPlayer: storeWushuangTacticsPlayer,
+    wushuangTacticsKillHexes: storeWushuangTacticsKillHexes,
     // 太平阵营状态（服务端嵌套 Schema 的镜像）
     player1Taiping,
     player2Taiping,

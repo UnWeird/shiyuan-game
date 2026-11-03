@@ -16,6 +16,11 @@ interface GameStore extends GameState {
   wushuangSelectedDirection: number | null;
   wushuangDiceRolls: number[];
 
+  // 无双被动技能：踏阵状态
+  wushuangTacticsActive: boolean;
+  wushuangTacticsPlayer: string;
+  wushuangTacticsKillHexes: string[];
+
   // 规则书模态状态
   isRulesModalOpen: boolean;
   setRulesModalOpen: (open: boolean) => void;
@@ -128,6 +133,11 @@ const initialState: GameState & Pick<GameStore, 'isOnlineMode' | 'isHotseat' | '
   wushuangAttackPhase: 'select-direction',
   wushuangSelectedDirection: null,
   wushuangDiceRolls: [],
+
+  // 无双被动技能：踏阵状态
+  wushuangTacticsActive: false,
+  wushuangTacticsPlayer: '',
+  wushuangTacticsKillHexes: [],
 
   player1Taiping: {
     destiny: 5, destinyLostThisRound: 0, fushuiUsedThisTurn: false,

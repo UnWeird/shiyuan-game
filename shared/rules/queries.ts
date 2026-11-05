@@ -1276,6 +1276,33 @@ export function getZuoluanThreatHexes(
   return dedupeHexes(out);
 }
 
+/**
+ * 辟易禁区：`forPlayer` 的部队进不去的那一圈格子。
+ *
+ * 就是敌方无双的相邻 6 格（在图内的部分）。客户端据此铺一层禁行色。
+ *
+ * **不包含无双自己站的那一格** —— 那一格进不去的原因是「有人占着」，
+ * 和辟易无关（无双死了或走了，那格立刻可进，而禁区会随之整体移走）。
+ * 把两件事画成一种颜色会让玩家以为禁区是 7 格。
+ *
+ * 口径必须和 getValidMoves 里的过滤一致：只看落点、中立单位不受约束。
+ * 这里只负责「画给谁看」，所以中立方传进来会得到空数组。
+ */
+export function getBiyiForbiddenHexes(
+  forPlayer: string,
+  units: readonly UnitLike[],
+  radius: number = MAP_RADIUS
+): HexCoord[] {
+  if (forPlayer !== 'player1' && forPlayer !== 'player2') return [];
+  const enemy = forPlayer === 'player1' ? 'player2' : 'player1';
+  const w = units.find(u =>
+    u.owner === enemy && u.type === 'general' && u.generalType === 'wushuang'
+  );
+  if (!w) return [];
+  return hexNeighbors({ q: w.q, r: w.r, s: w.s })
+    .filter(h => isInMapRange(h, radius));
+}
+
 /* ══════════════════ 太平 · 腐化 ══════════════════
  *
  * 「苍天已死」阶段的扩张手段，和豆饭同构但不花行动点：

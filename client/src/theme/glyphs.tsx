@@ -205,4 +205,21 @@ export const LEGEND_ITEMS: LegendItem[] = [
     render: (u) => <Slash u={u} color="rgba(255,255,255,0.6)" /> },
   { key: 'chevron', name: '行进步数', desc: '尖角数 = 走几格，指向行进方向（只用于通道型移动）',
     render: (u) => <Chevron n={2} u={u} /> },
+  /* 辟易是「范围填充」而不是贴在棋子上的记号，所以这一格画的是一小片
+   * 交叉栅格本身。用 muted 而不是 threat：贴着无双不会挨打，只是进不去。 */
+  { key: 'biyi', name: '禁入 · 辟易', desc: '交叉栅格：敌方无双的相邻 6 格，我方部队无法走进去（已在圈内的可以留下）',
+    render: (u) => (
+      <g>
+        {[-0.5, 0, 0.5].map((k) => (
+          <line key={`a${k}`}
+            x1={-u * 0.42} y1={u * (k - 0.42)} x2={u * 0.42} y2={u * (k + 0.42)}
+            stroke={INFO.muted} strokeWidth={1.3} opacity={0.5} />
+        ))}
+        {[-0.5, 0, 0.5].map((k) => (
+          <line key={`b${k}`}
+            x1={-u * 0.42} y1={u * (k + 0.42)} x2={u * 0.42} y2={u * (k - 0.42)}
+            stroke={INFO.muted} strokeWidth={1.3} opacity={0.5} />
+        ))}
+      </g>
+    ) },
 ];

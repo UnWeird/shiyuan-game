@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ShiyuanRoom } from '../rooms/ShiyuanRoom';
 import { GameStateSchema, UnitSchema } from '../schema/GameState';
 import { Direction } from '../../../shared/types';
-import { getValidMoves, occupiedHexesOf, type UnitLike } from '../../../shared/rules/queries';
+import { getBiyiForbiddenHexes, getValidMoves, occupiedHexesOf, type UnitLike } from '../../../shared/rules/queries';
 import { hexDistance } from '../../../shared/utils/hexUtils';
 
 /**
@@ -298,6 +298,55 @@ describe('辟易 · 禁区真的生效', () => {
     if (moves.length > 0) {
       expect(moves.some(m => hexDistance(m, { q: 0, r: 0, s: 0 }) <= 1)).toBe(true);
     }
+  });
+});
+
+describe('辟易 · 禁区可视化下发', () => {
+  it('禁区 = 敌方无双的相邻 6 格，不含它自己站的那一格', () => {
+    wushuang('player2', 0, 0);
+
+    const zone = getBiyiForbiddenHexes('player1', room.unitList);
+    expect(zone).toHaveLength(6);
+    for (const h of zone) {
+      expect(hexDistance(h, { q: 0, r: 0, s: 0 })).toBe(1);
+    }
+    // 无双自己那格进不去是因为「有人占着」，不是辟易 —— 混在一起画会让玩家以为是 7 格
+    expect(zone.some(h => h.q === 0 && h.r === 0)).toBe(false);
+  });
+
+  it('贴边时只报在图内的那几格', () => {
+    wushuang('player2', 0, -5);   // 顶边
+    const zone = getBiyiForbiddenHexes('player1', room.unitList);
+    expect(zone.length).toBeGreaterThan(0);
+    expect(zone.length).toBeLessThan(6);
+  });
+
+  it('禁区只画给对手，无双自己那方拿到空', () => {
+    wushuang('player2', 0, 0);
+    expect(getBiyiForbiddenHexes('player1', room.unitList)).toHaveLength(6);
+    expect(getBiyiForbiddenHexes('player2', room.unitList)).toHaveLength(0);
+  });
+
+  it('没有无双 / 中立方：空数组', () => {
+    place('g', 'general', 'player2', 0, 0, { generalType: 'rende' });
+    expect(getBiyiForbiddenHexes('player1', room.unitList)).toHaveLength(0);
+    wushuang('player2', 2, 0);
+    expect(getBiyiForbiddenHexes('neutral', room.unitList)).toHaveLength(0);
+  });
+
+  it('禁区和实际禁掉的落点口径一致', () => {
+    wushuang('player2', 0, 0);
+    const inf = place('i1', 'infantry', 'player1', 0, 2);
+
+    const zone = getBiyiForbiddenHexes('player1', room.unitList)
+      .map(h => `${h.q},${h.r}`);
+    const moves = getValidMoves(inf as unknown as UnitLike, room.unitList)
+      .map(m => `${m.q},${m.r}`);
+
+    // 画出来的禁格，一个都不该出现在合法落点里
+    for (const k of zone) expect(moves).not.toContain(k);
+    // 而 (0,1) 既该被画成禁格、也该不在落点里（若两者脱钩这条会挂）
+    expect(zone).toContain('0,1');
   });
 });
 

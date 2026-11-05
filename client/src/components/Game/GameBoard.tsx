@@ -223,6 +223,7 @@ export const GameBoard: React.FC = () => {
 
   const enemyThreatHexes = useValidActionsStore(state => state.threatHexes);
   const zuoluanHexes = useValidActionsStore(state => state.zuoluanHexes);
+  const biyiHexes = useValidActionsStore(state => state.biyiHexes);
   const fushuiTargets = useValidActionsStore(state => state.fushuiTargets);
   const corruptTargets = useValidActionsStore(state => state.corruptTargets);
   const huangtian = useValidActionsStore(state => state.huangtian);
@@ -2387,6 +2388,7 @@ export const GameBoard: React.FC = () => {
                 /* 作乱区：充能黄巾贼的邻格。和敌方威胁区同色不同填充
                  * （斜纹 = 下回合会被打，点阵 = 在这里行动立刻挨 1 点） */
                 zuoluanHexes={zuoluanHexes}
+                biyiHexes={biyiHexes}
                 /* 被纵深抗击保护的单位：队首亮盾。
                  * 这条规则（弓箭手打步兵、背后有连续步兵则免伤）谁都发现不了，
                  * 画出来等于把一条隐藏规则变成一种可用的玩法。 */

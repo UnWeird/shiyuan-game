@@ -1376,6 +1376,14 @@ export class ShiyuanRoom extends Room<GameStateSchema> {
        */
       zuoluanHexes: Rules.getZuoluanThreatHexes(this.unitList)
         .map(h => [h.q, h.r] as [number, number]),
+      /**
+       * 辟易禁区：敌方无双相邻 6 格，这一方的部队进不去。
+       *
+       * 必须下发而不是让客户端自己算：禁区是规则的一部分，
+       * 客户端重算一份就又多了一处会漂移的实现（和 moves/attacks 同理）。
+       */
+      biyiHexes: Rules.getBiyiForbiddenHexes(forPlayer, this.unitList)
+        .map(h => [h.q, h.r] as [number, number]),
       fushuiTargets,
       /**
        * 强制腐化阶段：每只待办的贼各自能腐化哪些相邻平民。

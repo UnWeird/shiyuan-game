@@ -46,6 +46,12 @@ export interface ValidActionsPayload {
    * 和 threatHexes（敌方下回合能打到哪）含义不同，所以分开下发。
    */
   zuoluanHexes?: Array<[number, number]>;
+  /**
+   * 辟易禁区：敌方无双相邻 6 格，我方部队进不去。
+   * 与 threatHexes / zuoluanHexes 都不同 —— 那两个是「会挨打」，
+   * 这个是「根本走不进去」，所以画法也该不一样。
+   */
+  biyiHexes?: Array<[number, number]>;
   /** 当前被纵深抗击保护着的单位 id（队首亮盾） */
   depthDefended?: string[];
   /**
@@ -105,6 +111,8 @@ interface ValidActionsState {
   threatHexes: HexCoord[];
   /** 充能黄巾贼的相邻格（在此行动会挨 1 伤） */
   zuoluanHexes: HexCoord[];
+  /** 辟易禁区：敌方无双相邻 6 格，我方走不进去 */
+  biyiHexes: HexCoord[];
   /** 被纵深抗击保护着的单位 id */
   depthDefended: Set<string>;
   /** unitId -> 范围型攻击覆盖格 */
@@ -127,6 +135,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
   lethal: {},
   threatHexes: [],
   zuoluanHexes: [],
+  biyiHexes: [],
   depthDefended: new Set<string>(),
   attackHexes: {},
   fushuiTargets: [],
@@ -154,6 +163,7 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
       lethal: payload.lethal ?? {},
       threatHexes: (payload.threatHexes ?? []).map(([q, r]) => ({ q, r, s: -q - r })),
       zuoluanHexes: (payload.zuoluanHexes ?? []).map(([q, r]) => ({ q, r, s: -q - r })),
+      biyiHexes: (payload.biyiHexes ?? []).map(([q, r]) => ({ q, r, s: -q - r })),
       depthDefended: new Set(payload.depthDefended ?? []),
       attackHexes,
       fushuiTargets: payload.fushuiTargets ?? [],
@@ -164,7 +174,8 @@ export const useValidActionsStore = create<ValidActionsState>((set) => ({
 
   clear: () => set({
     forPlayer: null, moves: {}, attacks: {}, lethal: {},
-    threatHexes: [], zuoluanHexes: [], depthDefended: new Set<string>(), attackHexes: {},
+    threatHexes: [], zuoluanHexes: [], biyiHexes: [],
+    depthDefended: new Set<string>(), attackHexes: {},
     fushuiTargets: [], corruptTargets: {}, huangtian: null,
   }),
 }));
@@ -198,6 +209,11 @@ export function getServerThreatHexes(): HexCoord[] {
 /** 充能黄巾贼的相邻格：在这些格子上行动会挨 1 点作乱伤害 */
 export function getServerZuoluanHexes(): HexCoord[] {
   return useValidActionsStore.getState().zuoluanHexes;
+}
+
+/** 辟易禁区：敌方无双相邻 6 格，我方部队走不进去 */
+export function getServerBiyiHexes(): HexCoord[] {
+  return useValidActionsStore.getState().biyiHexes;
 }
 
 /** 这个单位此刻是否被纵深抗击保护着 */

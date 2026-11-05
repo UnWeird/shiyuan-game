@@ -57,6 +57,8 @@ interface HexMapProps {
    * 和 enemyThreatHexes 分开，因为语义不同（那是「下回合会被打」）。
    */
   zuoluanHexes?: HexCoord[];
+  /** 辟易禁区：敌方无双相邻 6 格，我方部队走不进去 */
+  biyiHexes?: HexCoord[];
   /** 被纵深抗击保护着的单位位置，画一个盾 */
   shieldedHexes?: HexCoord[];
   /**
@@ -99,6 +101,7 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
   lethalHexes = [],
   enemyThreatHexes = [],
   zuoluanHexes = [],
+  biyiHexes = [],
   shieldedHexes = [],
   damageFlashes = [],
   machineFootprints = [],
@@ -208,6 +211,20 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
         >
           <circle cx={3} cy={3} r={1.25} fill={INFO.threat} opacity={0.55} />
         </pattern>
+        {/* 辟易禁区的交叉栅格。
+          * 用 muted（既有的「不可用」灰蓝）而不是 threat ——
+          * 贴着无双并不会挨打，只是走不进去。四色语义里这是**移动**轴上的否定，
+          * 画成红色会被误读成「这里危险」。
+          * 交叉线而不是单向斜纹：栅栏感 = 封死，和 threat 的单向斜纹区分开。 */}
+        <pattern
+          id="sy-biyi-lattice"
+          width={8}
+          height={8}
+          patternUnits="userSpaceOnUse"
+        >
+          <line x1={0} y1={0} x2={8} y2={8} stroke={INFO.muted} strokeWidth={1.4} opacity={0.45} />
+          <line x1={8} y1={0} x2={0} y2={8} stroke={INFO.muted} strokeWidth={1.4} opacity={0.45} />
+        </pattern>
       </defs>
 
       <g transform={rotate ? `rotate(${rotate})` : undefined}>
@@ -252,6 +269,23 @@ export const HexMap: React.FC<HexMapProps> = React.memo(({
         {/* 作乱区：点阵。叠在斜纹之上，两者同时存在时也分得清 */}
         {zuoluanHexes.map((h) => (
           <path key={`zl-${h.q},${h.r}`} d={hexPath(h, hexSize)} fill="url(#sy-zuoluan-dots)" />
+        ))}
+        {/* 辟易禁区：交叉栅格 + 一圈虚线轮廓。
+          * 压在威胁层之上 —— 贴着无双的格子必然也在它的扇形射界里，
+          * 两层同时存在时「走不进去」是更要紧的那条信息。
+          * 永远不会和 highlightedHexes 重叠：服务端已经把这些格子从落点里滤掉了。 */}
+        {biyiHexes.map((h) => (
+          <g key={`by-${h.q},${h.r}`}>
+            <path d={hexPath(h, hexSize)} fill="url(#sy-biyi-lattice)" />
+            <path
+              d={hexPath(h, hexSize, 0.9)}
+              fill="none"
+              stroke={INFO.muted}
+              strokeWidth={1.1}
+              strokeDasharray="3 3"
+              opacity={0.5}
+            />
+          </g>
         ))}
         {highlightedHexes.map((h) => {
           const c = tileColor(h);

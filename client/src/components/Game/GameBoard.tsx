@@ -239,6 +239,12 @@ export const GameBoard: React.FC = () => {
   const wushuangAttackPhase = isOnlineMode ? storeWushuangAttackPhase : localWushuangAttackPhase;
   const wushuangDiceRolls = isOnlineMode ? storeWushuangDiceRolls : localWushuangDiceRolls;
 
+  // 踏阵没有本地副本：它整个由服务端裁决（候选落点也是服务端给的），
+  // 客户端只是显示 + 回传选择，所以直接用同步下来的那份。
+  const wushuangTacticsActive = storeWushuangTacticsActive;
+  const wushuangTacticsPlayer = storeWushuangTacticsPlayer;
+  const wushuangTacticsKillHexes = storeWushuangTacticsKillHexes;
+
   // 状态setter包装函数（单机模式使用本地setter，在线模式不需要setter因为由服务器控制）
   const setWushuangFanAttackActive = (value: boolean) => {
     if (!isOnlineMode) setLocalWushuangFanAttackActive(value);
@@ -500,18 +506,19 @@ export const GameBoard: React.FC = () => {
 
   // 点击地图
   const handleHexClick = (hex: HexCoord) => {
-    // 踏阵模式：点击可踏格子
+    /* 踏阵：点在候选格上就踏过去。
+     *
+     * 只拦「确实点中候选格」这一种情况 —— 不能因为踏阵挂着就把所有点击吞掉：
+     * 踏阵是可选的，玩家完全可以无视它去走别的棋，那一下点击必须照常生效。
+     *（第一版在这里无条件 return，于是棋盘整个点不动，只能等回合结束。） */
     if (isOnlineMode && wushuangTacticsActive && wushuangTacticsPlayer === myPlayerRole) {
-      // 检查点击的格子是否是可踏位置
-      const killHexStr = `${hex.q},${hex.r},${hex.s}`;
-      if (wushuangTacticsKillHexes.length > 0 && wushuangTacticsKillHexes[0] === killHexStr) {
+      if (wushuangTacticsKillHexes.includes(`${hex.q},${hex.r},${hex.s}`)) {
         playSfx('place');
         colyseusService.wushuangTactics(hex);
-        // 不清除 actionMode，让界面继续显示踏阵面板直到所有击杀都处理完
+        setHighlightedHexes([]);
         return;
       }
-      // 如果点击的不是可踏位置，忽略（或可以弹提示）
-      return;
+      // 没点中候选格 → 落到下面的常规处理，当作一次普通点击
     }
 
     // 在线模式下的部署处理
@@ -1935,39 +1942,6 @@ export const GameBoard: React.FC = () => {
                           )}
                         </div>
                       )}
-
-                      {/* 无双被动技能：踏阵选择面板 */}
-                      {wushuangTacticsActive && wushuangTacticsPlayer === myPlayerRole && (
-                        <div className="mt-3 p-3 panel-sy rounded-lg">
-                          <h4 className="text-sm font-bold mb-2 panel-sy-title">踏阵机会</h4>
-                          <p className="text-xs panel-sy-text mb-2">
-                            {wushuangTacticsKillHexes.length > 0
-                              ? `可踏向 (${wushuangTacticsKillHexes[0].split(',')[0]},${wushuangTacticsKillHexes[0].split(',')[1]}) 位置`
-                              : '没有待踏的击杀'}
-                          </p>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => {
-                                // 点击格子进行踏阵
-                                if (wushuangTacticsKillHexes.length > 0) {
-                                  const [q, r, s] = wushuangTacticsKillHexes[0].split(',').map(Number);
-                                  setHighlightedHexes([{ q, r, s }]);
-                                  // 用户点击格子时会触发 handleHexClick，需要选择目标格子（暂时高亮被击杀位置以示意）
-                                }
-                              }}
-                              className="flex-1 px-2 py-1 btn-sy btn-sy-jade rounded text-xs"
-                            >
-                              选择踏阵格子
-                            </button>
-                            <button
-                              onClick={() => colyseusService.wushuangTactics(null)}
-                              className="flex-1 px-2 py-1 btn-sy btn-sy-ghost rounded text-xs"
-                            >
-                              跳过
-                            </button>
-                          </div>
-                        </div>
-                      )}
                     </>
                   ) : selectedUnit.type === UnitType.BALLISTA ? (
                     /* 弩车：两种攻击方式 */
@@ -3051,6 +3025,58 @@ export const GameBoard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 无双 · 踏阵：踩着自己打出的尸位突进。
+        *
+        * 刻意**不是**模态：踏阵是可选的，玩家应当能直接无视它继续走棋
+        *（服务端在回合结束时把未决的机会作废）。所以这里是一张贴在底部的
+        * 浮窗，而且 pointer-events 只给自己，棋盘照常可点。
+        * 对比紧邻下方的豆饭 —— 那个是强制阶段，服务端会拦住一切指令，
+        * 所以它才必须是模态。 */}
+      {wushuangTacticsActive && wushuangTacticsPlayer === myPlayerRole && wushuangTacticsKillHexes.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+          <div
+            className="rounded-lg px-5 py-3 pointer-events-auto"
+            style={{
+              background: 'linear-gradient(180deg, rgba(26,10,0,0.97) 0%, rgba(13,5,0,0.98) 100%)',
+              border: '1px solid rgba(201,162,39,0.35)',
+              boxShadow: '0 0 30px rgba(201,162,39,0.12)',
+            }}
+          >
+            <h3 className="font-ancient text-lg tracking-widest mb-1" style={{ color: '#C9A227' }}>踏阵</h3>
+            <p className="text-xs font-chinese mb-3" style={{ color: 'rgba(245,230,200,0.85)' }}>
+              点击高亮的空位踏过去（不消耗行动值），或放弃。
+              {wushuangTacticsKillHexes.length > 1 && (
+                <span style={{ color: 'rgba(201,162,39,0.6)' }}>
+                  {' '}共 {wushuangTacticsKillHexes.length} 处可选，只能择一。
+                </span>
+              )}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setHighlightedHexes(
+                  wushuangTacticsKillHexes.map(k => {
+                    const [q, r, s] = k.split(',').map(Number);
+                    return { q, r, s };
+                  })
+                )}
+                className="px-3 py-1 btn-sy btn-sy-jade rounded text-xs"
+              >
+                高亮可踏位置
+              </button>
+              <button
+                onClick={() => {
+                  colyseusService.wushuangTactics(null);
+                  setHighlightedHexes([]);
+                }}
+                className="px-3 py-1 btn-sy btn-sy-ghost rounded text-xs"
+              >
+                放弃
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 太平 · 强制豆饭：队列非空时服务端拦住一切其他指令，所以这里必须是模态 */}
       {(() => {

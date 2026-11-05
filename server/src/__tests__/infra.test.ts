@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ShiyuanRoom } from '../rooms/ShiyuanRoom';
 import { GameStateSchema, UnitSchema, TaipingSchema } from '../schema/GameState';
-import { restoreState, captureState } from '../dev/stateSnapshot';
+import { restoreState, captureState, ARRAY_FIELDS } from '../dev/stateSnapshot';
 
 /**
  * 基础设施的测试：随机源接缝、单位 id 计数器、Schema 结构。
@@ -201,5 +201,33 @@ describe('开发快照与嵌套 Schema', () => {
     b.player1Taiping.pendingRecruit.push('civ99');
     restoreState(b, captureState(a));
     expect(b.player1Taiping.pendingRecruit.length).toBe(0);
+  });
+
+  /**
+   * 顶层每一个 ArraySchema 字段都必须列进 stateSnapshot 的 ARRAY_FIELDS。
+   *
+   * 不在表里的字段走 `state[key] = 普通数组` 那条路。即便 Colyseus 当前版本
+   * 会把它再包成 ArraySchema，也不该指望这个 —— 嵌套 Schema 的同一种写法就是
+   * 实打实会断掉同步的（见上一条测试），两者只隔一个 setter 的实现细节。
+   *
+   * 所以这里直接和 Schema 自身枚举出的集合字段对账，不依赖运行时行为：
+   * 下一个加集合字段的人会在这里被绊住，不用记得 stateSnapshot.ts 存在。
+   *（无双踏阵的 wushuangTacticsKillHexes 当初就是这么漏掉的。）
+   */
+  it('ARRAY_FIELDS 覆盖了顶层所有 ArraySchema 字段', () => {
+    const probe = new GameStateSchema() as unknown as Record<string, unknown>;
+    const collectionFields = Object.keys(probe).filter(k => {
+      const v = probe[k];
+      return v !== null
+        && typeof v === 'object'
+        && typeof (v as { push?: unknown }).push === 'function'
+        && typeof (v as { clear?: unknown }).clear === 'function'
+        && !(v instanceof Map);
+    }).sort();
+
+    // 真的枚举到了东西，否则这条测试在空转（Colyseus 改了字段定义方式就会这样）
+    expect(collectionFields.length).toBeGreaterThan(0);
+
+    expect(collectionFields).toEqual([...ARRAY_FIELDS].sort());
   });
 });

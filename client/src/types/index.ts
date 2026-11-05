@@ -169,6 +169,13 @@ export interface GameState {
   wushuangSelectedDirection: number | null;
   wushuangDiceRolls: number[];
 
+  /** 踏阵：有未决的踏阵机会 */
+  wushuangTacticsActive: boolean;
+  /** 踏阵：机会属于哪一方（即击杀方） */
+  wushuangTacticsPlayer: string;
+  /** 踏阵：候选落点，"q,r,s" 字符串（服务端 ArraySchema 的镜像） */
+  wushuangTacticsKillHexes: string[];
+
   // 太平阵营状态（服务端的嵌套 TaipingSchema，每方一份）
   player1Taiping: TaipingState;
   player2Taiping: TaipingState;

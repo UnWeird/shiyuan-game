@@ -11,12 +11,18 @@ import { GameStateSchema, UnitSchema, TaipingSchema } from '../schema/GameState'
  * 绝不能在正式服打开。
  */
 
-/** 需要特殊处理的集合字段，其余字段都是基本类型，直接赋值 */
-const ARRAY_FIELDS = [
+/**
+ * 需要特殊处理的集合字段，其余字段都是基本类型，直接赋值。
+ *
+ * 导出是为了让 infra.test.ts 能和 Schema 自身枚举出的集合字段对账 ——
+ * 漏一个就在测试里绊住，而不是等到读档时某个字段静默失同步。
+ */
+export const ARRAY_FIELDS = [
   'player1DiceResults',
   'player2DiceResults',
   'battleLog',
   'wushuangDiceRolls',
+  'wushuangTacticsKillHexes',
 ] as const;
 
 /**

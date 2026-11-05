@@ -526,9 +526,14 @@ describe('强制：队列非空期间拦住其他指令', () => {
   it('所有玩家指令都走同一个拦截层', () => {
     // 一条都不能漏：漏掉的那条就是一条绕过强制征募的后门，
     // 而且往往只在特定兵种 / 特定技能下才暴露
+    //
+    // 这个数字是哨兵：加了新指令就会在这里绊一下，逼你想清楚它该不该豁免。
+    // 33 = 32 + wushuangTactics（无双踏阵）。踏阵**不**豁免：同一个玩家不可能
+    // 既是太平（有豆饭队列）又是无双（有踏阵机会），两者永不同时存在，
+    // 所以保持默认拦截既安全又不会真的挡住谁。
     setup();
     const types = registeredTypes();
-    expect(types.length).toBe(32);
+    expect(types.length).toBe(33);
     const exempt = ['taipingRecruit', 'taipingCorrupt', 'surrender'];
     for (const type of types) {
       if (exempt.includes(type)) continue;

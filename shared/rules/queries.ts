@@ -667,8 +667,48 @@ export function getAttackableTargets(unit: UnitLike, units: readonly UnitLike[])
 /**
  * 计算单位的合法移动位置
  * 对于骑兵，返回带有步数信息的结果
+ *
+ * 这一层只负责在底层结果上套「辟易」。为什么是包一层而不是在函数末尾过滤：
+ * 底层 getValidMovesIgnoringBiyi 有 6 个出口（弩车/战车/投石车/骑兵各自提前
+ * return），写在末尾只能盖住最后那条步兵/弓箭手/将领的路径 —— 骑兵和三种机关
+ * 会完全绕过辟易。包一层之后，新增兵种的出口也自动被盖住。
  */
 export function getValidMoves(unit: UnitLike, units: readonly UnitLike[]): { q: number; r: number; s: number; steps?: number }[] {
+  const moves = getValidMovesIgnoringBiyi(unit, units);
+
+  /* ── 辟易：敌方无双的相邻 6 格禁止进入 ──────────────────────────
+   *
+   * 「已相邻的单位不被推出去」不需要额外处理：原地不动从来不是
+   * getValidMoves 的一个选项，所以留下本就合法。这里排除掉的只是
+   * 「主动走进禁区、或在禁区内换一格贴脸」。
+   *
+   * 只看落点、不看路径，与纵深抗击的口径一致。
+   *
+   * 中立单位（平民、中立标记）不受辟易约束：它们不是任何一方的部队，
+   * 而且 owner==='neutral' 时两个无双都满足 `owner !== unit.owner`，
+   * 用 find 取到哪个纯看单位创建顺序 —— 那种随机行为比不生效更糟。
+   */
+  if (unit.owner !== 'player1' && unit.owner !== 'player2') return moves;
+
+  const enemy = unit.owner === 'player1' ? 'player2' : 'player1';
+  const enemyWushuang = units.find(u =>
+    u.owner === enemy && u.type === 'general' && u.generalType === 'wushuang'
+  );
+  if (!enemyWushuang) return moves;
+
+  const zone = { q: enemyWushuang.q, r: enemyWushuang.r, s: enemyWushuang.s };
+
+  // 机关要按整个车身判：半个车身贴着无双也算进了禁区
+  return moves.filter(dest => {
+    const footprint = occupiedHexesOf({
+      ...unit,
+      q: dest.q, r: dest.r, s: dest.s,
+    });
+    return footprint.every(h => hexDistance(h, zone) > 1);
+  });
+}
+
+function getValidMovesIgnoringBiyi(unit: UnitLike, units: readonly UnitLike[]): { q: number; r: number; s: number; steps?: number }[] {
   const MAP_RADIUS = 5;
 
   // 计算行动次数上限（基础2次 + 额外行动次数）
@@ -914,20 +954,6 @@ export function getValidMoves(unit: UnitLike, units: readonly UnitLike[]): { q: 
     // 可以走到棋盘外（handleMoveUnit 正是拿这里的结果做合法性校验的）。
     return !occupied && isInMapRange(hex, MAP_RADIUS) && hexDistance(unitPos, hex) <= finalRange;
   });
-
-  // === 辟易：敌方无双的相邻格无法进入 ===
-  // 禁入检测（"已相邻的不受影响"由于这里只看 <= 1 排除了自己，所以自动满足）
-  const enemyWushuang = units.find(u =>
-    u.owner !== unit.owner &&
-    u.type === 'general' &&
-    u.generalType === 'wushuang'
-  );
-  if (enemyWushuang) {
-    const wushuangPos = { q: enemyWushuang!.q, r: enemyWushuang!.r, s: enemyWushuang!.s };
-    return possibleMoves.filter(hex => hexDistance(hex, wushuangPos) > 1);
-  }
-
-  return possibleMoves;
 }
 
 /* ══════════════════ 太平 · 公共平民 ══════════════════
